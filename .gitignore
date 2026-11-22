@@ -9,6 +9,8 @@ compile_commands.json
 CTestTestfile.cmake
 releases
 build/
+build-3ds/
+build-linux/
 .idea/
 build-i386/
 dist-scripts/flathub/.flatpak-builder/

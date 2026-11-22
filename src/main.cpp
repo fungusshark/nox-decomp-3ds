@@ -11,6 +11,10 @@
 #include <emscripten/emscripten.h>
 #endif
 
+#ifdef __3DS__
+#include "platform_3ds.h"
+#endif
+
 extern "C" const char *progname;
 const char *progname;
 
@@ -39,7 +43,12 @@ extern "C" int main(int argc, char *argv[])
         return 1;
     }
 #else
+#ifdef __3DS__
+    nox_3ds_init();
+    progname = (argc > 0 && argv && argv[0]) ? argv[0] : NOX_3DS_DATA_ROOT "/nox.3dsx";
+#else
     progname = argv[0];
+#endif
 
     // Windows WinMain lpCmdLine normally excludes argv[0].
     cmdline[0] = 0;

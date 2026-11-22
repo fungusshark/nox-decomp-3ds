@@ -111,6 +111,18 @@ static void net_dump_flags(int fd, const char *tag)
 }
 
 
+#ifdef __3DS__
+static char *compat_getcwd_alloc(void)
+{
+    char buf[PATH_MAX];
+    if (getcwd(buf, sizeof(buf))) {
+        return strdup(buf);
+    }
+    return strdup(NOX_3DS_DATA_ROOT);
+}
+#define get_current_dir_name() compat_getcwd_alloc()
+#endif
+
 /* forward decls you already have elsewhere */
 static char *dos_to_unix(const char *path);
 static int casepath(const char *path, char *r);
@@ -494,6 +506,7 @@ int WINAPI WideCharToMultiByte(UINT CodePage, DWORD dwFlags, LPCWSTR lpWideCharS
     DebugBreak();
 }
 
+#ifndef __3DS__
 // Socket functions
 int WINAPI WSAStartup(WORD wVersionRequested, struct WSAData *lpWSAData)
 {
@@ -1129,6 +1142,7 @@ int WINAPI WSAGetLastError()
 
     return last_socket_error;
 }
+#endif /* !__3DS__ */
 
 // Time functions
 // compatGetDateFormatA(Locale=2048, dwFlags=1, lpDate=0x1708c6a4, lpFormat=0x00000000, lpDateStr="nox.str:Warrior", cchDate=256) at compat.c:1001
@@ -1170,8 +1184,10 @@ BOOL WINAPI SystemTimeToFileTime(const SYSTEMTIME *lpSystemTime, LPFILETIME lpFi
     tm.tm_mon = lpSystemTime->wMonth;
     tm.tm_year = lpSystemTime->wYear - 1900;
     tm.tm_isdst = -1;
+#if !defined(__3DS__) && !defined(_WIN32)
     tm.tm_zone = NULL;
     tm.tm_gmtoff = 0;
+#endif
 
     t = mktime(&tm);
     t = (t * 1000 + lpSystemTime->wMilliseconds) * 10000;
@@ -1240,6 +1256,27 @@ DWORD WINAPI GetTickCount()
 // File functions
 static char *dos_to_unix(const char *path)
 {
+#ifdef __3DS__
+    if (!path) return NULL;
+    const char *p = path;
+    if ((p[0] == 'C' || p[0] == 'c') && p[1] == ':')
+        p += 2;
+    /* Normalize slashes first; keep CWD-relative paths relative if chdir succeeded,
+       otherwise resolve under sdmc:/3ds/nox/ via nox_3ds_resolve_path(). */
+    if (p[0] == '/' || p[0] == '\\' ||
+        strncmp(p, "sdmc:", 5) == 0 || strncmp(p, "romfs:", 6) == 0 ||
+        !nox_3ds_get_state()->sdmc_root_ready) {
+        char buf[512];
+        nox_3ds_resolve_path(path, buf, sizeof(buf));
+        return strdup(buf);
+    }
+    char *str = malloc(strlen(p) + 1);
+    int i;
+    for (i = 0; p[i]; i++)
+        str[i] = (p[i] == '\\') ? '/' : p[i];
+    str[i] = 0;
+    return str;
+#else
     int i, len = strlen(path);
     char *str = malloc(len + 1);
 
@@ -1256,6 +1293,7 @@ static char *dos_to_unix(const char *path)
     str[i] = 0;
 
     return str;
+#endif
 }
 
 // ---- FindFirstFileA/FindNextFileA/FindClose (Windows-ish, case-insensitive) ----
@@ -1790,12 +1828,21 @@ int _access(const char *filename, int mode)
 
 static int compat_do_stat(const char *path, struct stat *st)
 {
+#ifdef __3DS__
+    return stat(path, st);
+#else
     // fstatat avoids calling libc stat/__xstat/__stat symbols, so no recursion.
     return fstatat(AT_FDCWD, path, st, 0);
+#endif
 }
 
 static void get_exedir_unix(char *out, size_t outsz)
 {
+#ifdef __3DS__
+    strncpy(out, NOX_3DS_DATA_ROOT, outsz - 1);
+    out[outsz - 1] = 0;
+    return;
+#else
     ssize_t n = readlink("/proc/self/exe", out, outsz - 1);
     if (n > 0) {
         out[n] = 0;
@@ -1815,6 +1862,7 @@ static void get_exedir_unix(char *out, size_t outsz)
     }
 
     out[0] = 0;
+#endif
 }
 
 int _stat(const char *path, struct _stat *buffer)
@@ -1972,6 +2020,12 @@ char *_getcwd(char *buffer, int maxlen)
 // r must have strlen(path) + 2 bytes
 static int casepath(char const *path, char *r)
 {
+#ifdef __3DS__
+    /* 3DS SDMC (FAT32) is case-insensitive and uses sdmc:/ / romfs:/ prefixes. */
+    (void)path;
+    (void)r;
+    return 0;
+#else
     size_t l = strlen(path);
     char *p = alloca(l + 1);
     strcpy(p, path);
@@ -2070,6 +2124,7 @@ static int casepath(char const *path, char *r)
 
     if (d) closedir(d);
     return 1;
+#endif
 }
 
 
@@ -2126,7 +2181,7 @@ FILE *compat_fopen(const char *path, const char *mode)
     char *cdir = get_current_dir_name();
 
     /* Some paths are absolute for some reason */
-    if (strstr(converted, cdir) == converted_ptr) {
+    if (cdir && strstr(converted, cdir) == converted_ptr) {
         converted = converted + strlen(cdir) + 1;
     }
 
@@ -2309,7 +2364,7 @@ DWORD WINAPI WaitForSingleObject(HANDLE hHandle, DWORD dwMilliseconds)
             result = 0;
             if (dwMilliseconds == INFINITE)
                 pthread_join(thr, NULL);
-#if defined(__APPLE__) || defined(__EMSCRIPTEN__)
+#if defined(__APPLE__) || defined(__EMSCRIPTEN__) || defined(__3DS__)
             else
                 pthread_join(thr, NULL);
 #else
@@ -2324,7 +2379,7 @@ DWORD WINAPI WaitForSingleObject(HANDLE hHandle, DWORD dwMilliseconds)
             result = 0;
             if (dwMilliseconds == INFINITE)
                 pthread_mutex_lock(m);
-#if defined(__APPLE__) || defined(__EMSCRIPTEN__)
+#if defined(__APPLE__) || defined(__EMSCRIPTEN__) || defined(__3DS__)
             else
                 pthread_mutex_lock(m);
 #else

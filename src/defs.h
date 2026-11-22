@@ -19,6 +19,10 @@
 #define USE_SDL 1
 #include <SDL2/SDL.h>
 
+#ifdef __3DS__
+#include "platform_3ds.h"
+#endif
+
 #ifdef __EMSCRIPTEN__
 #define wchar_t int16_t
 #endif

@@ -235,8 +235,13 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     NOX_DBG("engine globals before clamp w=%d h=%d", w, h);
 
     // Wine/early init can leave these as 0. Clamp to sane classic default.
+#ifdef __3DS__
+    w = NOX_3DS_LOGICAL_W;
+    h = NOX_3DS_LOGICAL_H;
+#else
     if (w <= 0) w = 1024;
     if (h <= 0) h = 768;
+#endif
 
     // Keep engine globals consistent with what we actually create.
     *(int *)&byte_5D4594[3805496] = w;
@@ -516,6 +521,11 @@ void process_event(const SDL_Event *event)
 //----- (004453A0) --------------------------------------------------------
 int sub_4453A0()
 {
+#ifdef __3DS__
+	if (!nox_3ds_apt_ok()) {
+		exit(0);
+	}
+#endif
 #ifdef USE_SDL
 	SDL_Event event;
 	int n = 0;
