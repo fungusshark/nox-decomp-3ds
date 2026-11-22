@@ -103,7 +103,11 @@ static int nox_gamepad_abs_deadzone_pct(void)
 
 static int nox_gamepad_abs_run_pct(void)
 {
+#ifdef __3DS__
+    return nox_env_int_default("NOX_GAMEPAD_ABS_RUN_PERCENT", 55);
+#else
     return nox_env_int_default("NOX_GAMEPAD_ABS_RUN_PERCENT", 85);
+#endif
 }
 
 // --------------------------
@@ -623,19 +627,6 @@ static struct action resolve_binding(enum phys_input in)
 
     /* Last: base [controls] layer. */
     if (g_layer_count > 0) {
-#ifdef __3DS__
-        const nox_3ds_input_t *in3ds = nox_3ds_input_get();
-        if (in3ds && in3ds->in_gameplay && in3ds->aim_mode == NOX_3DS_AIM_RADIAL) {
-            if (in == IN_UP)    return (struct action){ ACT_KEY, SDL_SCANCODE_TAB };
-            if (in == IN_DOWN)  return (struct action){ ACT_KEY, SDL_SCANCODE_V };
-            if (in == IN_LEFT)  return (struct action){ ACT_KEY, SDL_SCANCODE_X };
-            if (in == IN_RIGHT) return (struct action){ ACT_KEY, SDL_SCANCODE_C };
-            if (in == IN_L2)    return (struct action){ ACT_KEY, SDL_SCANCODE_LSHIFT };
-        } else {
-            if (in == IN_B)     return (struct action){ ACT_MOUSE_RIGHT, 0 };
-            if (in == IN_L2)    return (struct action){ ACT_MOUSE_SLOW, 0 };
-        }
-#endif
         struct action a = g_layers[0].binds[in];
         if (a.type != ACT_NONE) return a;
     }
@@ -907,8 +898,7 @@ static int mouse_right_active(void)
 static int nox_thumbstick_absolute_active(void)
 {
 #ifdef __3DS__
-    const nox_3ds_input_t *in3ds = nox_3ds_input_get();
-    return (in3ds && in3ds->in_gameplay && in3ds->aim_mode == NOX_3DS_AIM_RADIAL) ? 1 : 0;
+    return nox_3ds_input_is_world_mode() ? 1 : 0;
 #else
     struct action la_act = resolve_binding(IN_LEFT_ANALOG);
     int run_held = mouse_right_active() ? 1 : 0;
@@ -1106,12 +1096,8 @@ static void update_left_analog_absolute(void)
             orientation = ((int)((theta + 1.0) * 128.0 + 0.5)) & 255;
         }
 
-        /* Medium stick = walk, far stick (or B held) = run/sprint */
-#ifdef __3DS__
-        if (mag >= run_th || g_cur.b)
-#else
+        /* Medium stick = walk, far stick = run */
         if (mag >= run_th)
-#endif
             move_cmd = 3;
         else
             move_cmd = 1;
@@ -1429,75 +1415,108 @@ static int g_l2_state = 0;
 static int g_r2_state = 0;
 
 #ifdef __3DS__
+/*
+ * Overloaded L + Spell Button -> Shift + Spell (Invert Spell / Cast on Self)
+ * state machine. Nox's InvertSpellTarget (LSHIFT) sets a frame tick via
+ * sub_460630() during input processing, and sub_45F900() flips invertible
+ * spell-bar slots during the HUD draw pass at the end of that frame. Holding
+ * LSHIFT for 1 frame before firing the spell scancode guarantees that even a
+ * simultaneous 1-frame L + Spell tap casts cleanly on self, while holding L
+ * alone for C-Stick ranged free-aim never emits spurious Shift toggles.
+ */
+static int      g_3ds_inv_shift_held    = 0;
+static int      g_3ds_inv_shift_ready   = 0;
+static uint32_t g_3ds_inv_pending_mask  = 0;
+static uint32_t g_3ds_inv_early_up_mask = 0;
+static uint32_t g_3ds_inv_active_mask   = 0;
+
+static const int k_3ds_spell_scancodes[5] = {
+    SDL_SCANCODE_A, /* Slot 1: A */
+    SDL_SCANCODE_S, /* Slot 2: B */
+    SDL_SCANCODE_D, /* Slot 3: X */
+    SDL_SCANCODE_F, /* Slot 4: Y */
+    SDL_SCANCODE_G  /* Slot 5: D-Pad Up */
+};
+
+static int nox_3ds_spell_slot_index(enum phys_input pin)
+{
+    switch (pin) {
+        case IN_A:  return 0;
+        case IN_B:  return 1;
+        case IN_X:  return 2;
+        case IN_Y:  return 3;
+        case IN_UP: return 4;
+        default:    return -1;
+    }
+}
+
+static int nox_3ds_spell_slot_phys_held(int slot_idx)
+{
+    switch (slot_idx) {
+        case 0: return g_cur.a;
+        case 1: return g_cur.b;
+        case 2: return g_cur.x;
+        case 3: return g_cur.y;
+        case 4: return g_cur.dpad_up;
+        default: return 0;
+    }
+}
+
+static void nox_3ds_inv_spell_reset(int emit_releases)
+{
+    if (emit_releases) {
+        for (int s = 0; s < 5; ++s) {
+            if (g_3ds_inv_active_mask & (1u << s)) {
+                nox_ctrl_inject_key_scancode(k_3ds_spell_scancodes[s], 0);
+            }
+        }
+        if (g_3ds_inv_shift_held) {
+            nox_ctrl_inject_key_scancode(SDL_SCANCODE_LSHIFT, 0);
+        }
+    }
+    g_3ds_inv_shift_held    = 0;
+    g_3ds_inv_shift_ready   = 0;
+    g_3ds_inv_pending_mask  = 0;
+    g_3ds_inv_early_up_mask = 0;
+    g_3ds_inv_active_mask   = 0;
+}
+
 static void load_3ds_default_mappings(void)
 {
     reset_mappings();
 
     /*
-     * Full New 3DS Control Scheme:
-     *  - Circle Pad: 360 deg walk/run in gameplay, smooth cursor in menus/UI
-     *  - C-Stick:    Radial aim + camera look-ahead (or Quick-Spell A/S/D/F via SELECT+X)
-     *  - D-Pad:      Gameplay shortcuts (Up=Map, Down=SwapWeapon, Left=HP, Right=MP);
-     *                Menus/Free-Cursor pointer movement
-     *  - Face Btns:  A=Attack/Interact, B=Jump (RMB in menus), X=Trap, Y=Inventory
-     *  - Triggers:   L=Hold Spell/Ability Layer, R=Spellbook, ZL=InvertSpell/MouseSlow, ZR=Attack
-     *  - START:      Hold Utility/Save Layer (D-Right=F2 QuickSave, D-Left=F4 QuickLoad,
-     *                D-Up/Down=Map Zoom, A=Map, B/X/Y/ZR/L=Spell Sets 1-5, ZL=CurePoison, R=Console)
-     *  - SELECT:     Tap=ESC/Pause/SkipMovie; Hold+L/R/ZL/X=3DS system toggles
+     * New 3DS Hybrid Dual-Screen Control Scheme (PC-aligned, zero layer conflicts):
+     *  - Circle Pad:   360 deg hero walk/run movement in gameplay
+     *  - Touch (Bot):  100% of menu, inventory, spellbook, weapon swap & HUD tapping (input_3ds.c)
+     *  - A / B / X / Y: Permanent Spell/Ability Slots 1-4 (A / S / D / F)
+     *  - D-Pad Up:     Spell/Ability Slot 5 (G)
+     *  - D-Pad Down:   Jump (Middle Mouse Click)
+     *  - D-Pad Left:   Quick Mana (C)
+     *  - D-Pad Right:  Quick Heal (X)
+     *  - Start:        Escape / Pause Menu (ESC)
+     *  - Select:       Toggle Minimap (TAB)
+     *  - ZL / ZR:      Previous / Next Spell/Ability Page (W / E)
+     *  - C-Stick + L:  Tight ~18px close aim; hold L for detached Top-Screen ranged free-aim
+     *  - L + Spell:    Overloaded Shift + Spell (Invert Spell / Cast on Self)
+     *  - R:            Left-Click at Top-Screen C-Stick cursor (interact/attack)
+     *  - Weapon Swap:  Handled natively via Bottom-Screen HUD touch (no physical 'V' button)
      */
     g_layers[0].overlay = OVERLAY_CLEAR;
-    g_layers[0].binds[IN_DPAD]        = (struct action){ ACT_MOUSE_MOVEMENT, 0 };
     g_layers[0].binds[IN_LEFT_ANALOG] = (struct action){ ACT_MOUSE_ABSOLUTE, 0 };
-    g_layers[0].binds[IN_RU]          = (struct action){ ACT_KEY, SDL_SCANCODE_A };
-    g_layers[0].binds[IN_RR]          = (struct action){ ACT_KEY, SDL_SCANCODE_S };
-    g_layers[0].binds[IN_RD]          = (struct action){ ACT_KEY, SDL_SCANCODE_D };
-    g_layers[0].binds[IN_RL]          = (struct action){ ACT_KEY, SDL_SCANCODE_F };
-    g_layers[0].binds[IN_A]           = (struct action){ ACT_MOUSE_LEFT, 0 };
-    g_layers[0].binds[IN_B]           = (struct action){ ACT_KEY, SDL_SCANCODE_SPACE };
-    g_layers[0].binds[IN_X]           = (struct action){ ACT_KEY, SDL_SCANCODE_T };
-    g_layers[0].binds[IN_Y]           = (struct action){ ACT_KEY, SDL_SCANCODE_I };
-    g_layers[0].binds[IN_R1]          = (struct action){ ACT_KEY, SDL_SCANCODE_B };
-    g_layers[0].binds[IN_R2]          = (struct action){ ACT_MOUSE_LEFT, 0 };
-    g_layers[0].binds[IN_L2]          = (struct action){ ACT_KEY, SDL_SCANCODE_LSHIFT };
-
-    int spell_grp = ensure_layer("hotkey_spell_group");
-    if (spell_grp >= 0) {
-        g_layers[0].binds[IN_L1] = (struct action){ ACT_HOLD_STATE, spell_grp };
-        g_layers[spell_grp].overlay = OVERLAY_PARENT;
-        g_layers[spell_grp].binds[IN_X]     = (struct action){ ACT_KEY, SDL_SCANCODE_A };
-        g_layers[spell_grp].binds[IN_A]     = (struct action){ ACT_KEY, SDL_SCANCODE_S };
-        g_layers[spell_grp].binds[IN_B]     = (struct action){ ACT_KEY, SDL_SCANCODE_D };
-        g_layers[spell_grp].binds[IN_Y]     = (struct action){ ACT_KEY, SDL_SCANCODE_F };
-        g_layers[spell_grp].binds[IN_R1]    = (struct action){ ACT_KEY, SDL_SCANCODE_G };
-        g_layers[spell_grp].binds[IN_R2]    = (struct action){ ACT_KEY, SDL_SCANCODE_X };
-        g_layers[spell_grp].binds[IN_L2]    = (struct action){ ACT_KEY, SDL_SCANCODE_C };
-        g_layers[spell_grp].binds[IN_UP]    = (struct action){ ACT_KEY, SDL_SCANCODE_W };
-        g_layers[spell_grp].binds[IN_DOWN]  = (struct action){ ACT_KEY, SDL_SCANCODE_E };
-        g_layers[spell_grp].binds[IN_RIGHT] = (struct action){ ACT_KEY, SDL_SCANCODE_R };
-        g_layers[spell_grp].binds[IN_LEFT]  = (struct action){ ACT_KEY, SDL_SCANCODE_B };
-    }
-
-    int start_grp = ensure_layer("hotkey_start_group");
-    if (start_grp >= 0) {
-        g_layers[0].binds[IN_START] = (struct action){ ACT_HOLD_STATE, start_grp };
-        g_layers[start_grp].overlay = OVERLAY_CLEAR;
-        g_layers[start_grp].binds[IN_LEFT]  = (struct action){ ACT_KEY, SDL_SCANCODE_F4 };
-        g_layers[start_grp].binds[IN_RIGHT] = (struct action){ ACT_KEY, SDL_SCANCODE_F2 };
-        g_layers[start_grp].binds[IN_UP]    = (struct action){ ACT_KEY, SDL_SCANCODE_EQUALS };
-        g_layers[start_grp].binds[IN_DOWN]  = (struct action){ ACT_KEY, SDL_SCANCODE_MINUS };
-        g_layers[start_grp].binds[IN_A]     = (struct action){ ACT_KEY, SDL_SCANCODE_TAB };
-        g_layers[start_grp].binds[IN_B]     = (struct action){ ACT_KEY, SDL_SCANCODE_1 };
-        g_layers[start_grp].binds[IN_X]     = (struct action){ ACT_KEY, SDL_SCANCODE_2 };
-        g_layers[start_grp].binds[IN_Y]     = (struct action){ ACT_KEY, SDL_SCANCODE_3 };
-        g_layers[start_grp].binds[IN_R2]    = (struct action){ ACT_KEY, SDL_SCANCODE_4 };
-        g_layers[start_grp].binds[IN_L1]    = (struct action){ ACT_KEY, SDL_SCANCODE_5 };
-        g_layers[start_grp].binds[IN_R1]    = (struct action){ ACT_KEY, SDL_SCANCODE_F1 };
-        g_layers[start_grp].binds[IN_L2]    = (struct action){ ACT_KEY, SDL_SCANCODE_Z };
-        g_layers[start_grp].binds[IN_RU]    = (struct action){ ACT_KEY, SDL_SCANCODE_F1 };
-        g_layers[start_grp].binds[IN_RL]    = (struct action){ ACT_PREV_WORD, 0 };
-        g_layers[start_grp].binds[IN_RR]    = (struct action){ ACT_NEXT_WORD, 0 };
-        g_layers[start_grp].binds[IN_RD]    = (struct action){ ACT_FINISH_TEXT, 0 };
-    }
+    g_layers[0].binds[IN_A]           = (struct action){ ACT_KEY, SDL_SCANCODE_A };
+    g_layers[0].binds[IN_B]           = (struct action){ ACT_KEY, SDL_SCANCODE_S };
+    g_layers[0].binds[IN_X]           = (struct action){ ACT_KEY, SDL_SCANCODE_D };
+    g_layers[0].binds[IN_Y]           = (struct action){ ACT_KEY, SDL_SCANCODE_F };
+    g_layers[0].binds[IN_UP]          = (struct action){ ACT_KEY, SDL_SCANCODE_G };
+    g_layers[0].binds[IN_DOWN]        = (struct action){ ACT_MOUSE_MIDDLE, 0 };
+    g_layers[0].binds[IN_LEFT]        = (struct action){ ACT_KEY, SDL_SCANCODE_C };
+    g_layers[0].binds[IN_RIGHT]       = (struct action){ ACT_KEY, SDL_SCANCODE_X };
+    g_layers[0].binds[IN_START]       = (struct action){ ACT_KEY, SDL_SCANCODE_ESCAPE };
+    g_layers[0].binds[IN_SELECT]      = (struct action){ ACT_KEY, SDL_SCANCODE_TAB };
+    g_layers[0].binds[IN_L2]          = (struct action){ ACT_KEY, SDL_SCANCODE_W };
+    g_layers[0].binds[IN_R2]          = (struct action){ ACT_KEY, SDL_SCANCODE_E };
+    /* L (IN_L1), R (IN_R1), and C-Stick (IN_RU/RD/RL/RR) are handled natively in input_3ds.c */
 }
 #endif
 
@@ -1521,12 +1540,11 @@ static void nox_gamepad_open_if_needed(void)
     g_r2_state = 0;
     g_thumbstick_abs_inverted = 0;
     g_thumbstick_mode_combo_latched = 0;
+    nox_3ds_inv_spell_reset(0);
 
     {
-        char ini_path[1024] = {0};
-        FILE *f = open_cfg_file(ini_path, sizeof(ini_path));
-        if (f) {
-            fclose(f);
+        const char *explicit_ini = getenv("NOX_GAMEPAD_INI");
+        if (explicit_ini && *explicit_ini) {
             ini_load();
         } else {
             load_3ds_default_mappings();
@@ -1608,6 +1626,9 @@ void nox_gamepad_shutdown(void)
     memset(&g_rs_cur, 0, sizeof(g_rs_cur));
     g_right_stick_armed = 1;
     for (int i = 0; i < IN__COUNT; ++i) g_hold_layer_for_in[i] = -1;
+#ifdef __3DS__
+    nox_3ds_inv_spell_reset(0);
+#endif
 }
 
 // --------------------------
@@ -1661,11 +1682,10 @@ static void poll_snapshot(struct pad_snapshot *out)
     out->select = (in3ds.keys_held & NOX_3DS_KEY_SELECT) ? 1 : 0;
     out->guide  = 0;
 
-    /* Ignore L/R/ZL/X while SELECT is held so SELECT+key system toggles never leak game keys. */
-    out->x      = (!out->select && (in3ds.keys_held & NOX_3DS_KEY_X))  ? 1 : 0;
-    out->l1     = (!out->select && (in3ds.keys_held & NOX_3DS_KEY_L))  ? 1 : 0;
-    out->r1     = (!out->select && (in3ds.keys_held & NOX_3DS_KEY_R))  ? 1 : 0;
-    out->l2_btn = (!out->select && (in3ds.keys_held & NOX_3DS_KEY_ZL)) ? 1 : 0;
+    out->x      = (in3ds.keys_held & NOX_3DS_KEY_X)  ? 1 : 0;
+    out->l1     = (in3ds.keys_held & NOX_3DS_KEY_L)  ? 1 : 0;
+    out->r1     = (in3ds.keys_held & NOX_3DS_KEY_R)  ? 1 : 0;
+    out->l2_btn = (in3ds.keys_held & NOX_3DS_KEY_ZL) ? 1 : 0;
     out->r2_btn = (in3ds.keys_held & NOX_3DS_KEY_ZR) ? 1 : 0;
     out->lt     = out->l2_btn ? 32767 : 0;
     out->rt     = out->r2_btn ? 32767 : 0;
@@ -1838,20 +1858,9 @@ void nox_gamepad_update(void)
     g_rs_prev = g_rs_cur;
     poll_snapshot(&g_cur);
 #ifdef __3DS__
-    nox_3ds_input_process_twin_stick_and_touch();
-    {
-        const nox_3ds_input_t *in3ds = nox_3ds_input_get();
-        if (in3ds && (in3ds->cstick_mode == NOX_3DS_CSTICK_SPELL_CAST || g_cur.start)) {
-            update_right_stick_dirs(&g_rs_cur, g_cur.rx, g_cur.ry);
-        } else {
-            memset(&g_rs_cur, 0, sizeof(g_rs_cur));
-            g_right_stick_armed = 1;
-        }
-        /* Clean SELECT tap -> ESC (suppressed if a SELECT+L/R/ZL/X system toggle was used). */
-        if (in3ds && edge_up(g_cur.select, g_prev.select) && !in3ds->select_combo_used) {
-            inject_key_tap(SDL_SCANCODE_ESCAPE);
-        }
-    }
+    nox_3ds_input_process_hybrid();
+    memset(&g_rs_cur, 0, sizeof(g_rs_cur));
+    g_right_stick_armed = 1;
 #else
     update_right_stick_dirs(&g_rs_cur, g_cur.rx, g_cur.ry);
 #endif
@@ -1971,8 +1980,48 @@ void nox_gamepad_update(void)
 
     update_left_analog_absolute();
 
-    // Mouse movement from left analog / dpad
+#ifndef __3DS__
+    // Mouse movement from left analog / dpad (on 3DS, touch strictly handles UI cursor)
     do_mouse_movement(now_ms);
+#endif
+
+#ifdef __3DS__
+    const int inv_world_mode = nox_3ds_input_is_world_mode() ? 1 : 0;
+    uint32_t inv_fired_this_frame = 0;
+
+    if (!inv_world_mode) {
+        nox_3ds_inv_spell_reset(1);
+    } else {
+        /* 1 full frame has passed since LSHIFT went down, so sub_45F900() has inverted the bar */
+        if (g_3ds_inv_shift_held && !g_3ds_inv_shift_ready) {
+            g_3ds_inv_shift_ready = 1;
+        }
+
+        /* Release previously fired inverted spells whose button is no longer held */
+        for (int s = 0; s < 5; ++s) {
+            uint32_t bit = (1u << s);
+            if ((g_3ds_inv_active_mask & bit) &&
+                ((g_3ds_inv_early_up_mask & bit) || !nox_3ds_spell_slot_phys_held(s))) {
+                nox_ctrl_inject_key_scancode(k_3ds_spell_scancodes[s], 0);
+                g_3ds_inv_active_mask   &= ~bit;
+                g_3ds_inv_early_up_mask &= ~bit;
+            }
+        }
+
+        /* Once LSHIFT is armed, fire any pending L + Spell presses */
+        if (g_3ds_inv_shift_ready && g_3ds_inv_pending_mask) {
+            for (int s = 0; s < 5; ++s) {
+                uint32_t bit = (1u << s);
+                if (g_3ds_inv_pending_mask & bit) {
+                    nox_ctrl_inject_key_scancode(k_3ds_spell_scancodes[s], 1);
+                    g_3ds_inv_pending_mask &= ~bit;
+                    g_3ds_inv_active_mask  |= bit;
+                    inv_fired_this_frame   |= bit;
+                }
+            }
+        }
+    }
+#endif
 
     // Now: process normal edge actions
     for (unsigned i = 0; i < sizeof(buttons)/sizeof(buttons[0]); ++i) {
@@ -1992,6 +2041,46 @@ void nox_gamepad_update(void)
             continue;
         }
 
+#ifdef __3DS__
+        /* Overloaded L + Spell Button -> Shift + Spell (Invert Spell / Cast on Self) */
+        if (inv_world_mode) {
+            int slot_idx = nox_3ds_spell_slot_index(buttons[i].in);
+            if (slot_idx >= 0) {
+                uint32_t bit = (1u << slot_idx);
+                if (down_edge && g_cur.l1) {
+                    if (!g_3ds_inv_shift_held) {
+                        nox_ctrl_inject_key_scancode(SDL_SCANCODE_LSHIFT, 1);
+                        g_3ds_inv_shift_held  = 1;
+                        g_3ds_inv_shift_ready = 0;
+                    }
+                    if (g_3ds_inv_shift_ready) {
+                        nox_ctrl_inject_key_scancode(k_3ds_spell_scancodes[slot_idx], 1);
+                        g_3ds_inv_active_mask   |= bit;
+                        g_3ds_inv_early_up_mask &= ~bit;
+                        inv_fired_this_frame    |= bit;
+                    } else {
+                        g_3ds_inv_pending_mask  |= bit;
+                        g_3ds_inv_early_up_mask &= ~bit;
+                    }
+                    continue;
+                }
+                if (up_edge) {
+                    if ((g_3ds_inv_pending_mask & bit) || (inv_fired_this_frame & bit)) {
+                        /* Quick 1-frame tap: let spell stay DOWN for 1 full frame, release next frame */
+                        g_3ds_inv_early_up_mask |= bit;
+                        continue;
+                    }
+                    if (g_3ds_inv_active_mask & bit) {
+                        nox_ctrl_inject_key_scancode(k_3ds_spell_scancodes[slot_idx], 0);
+                        g_3ds_inv_active_mask   &= ~bit;
+                        g_3ds_inv_early_up_mask &= ~bit;
+                        continue;
+                    }
+                }
+            }
+        }
+#endif
+
         if (a.type == ACT_PREV_WORD || a.type == ACT_NEXT_WORD || a.type == ACT_FINISH_TEXT || a.type == ACT_CANCEL_TEXT) {
             if (down_edge) exec_action_press(a, now_ms);
         } else {
@@ -1999,6 +2088,17 @@ void nox_gamepad_update(void)
             if (up_edge)   exec_action_edge(a, 0);
         }
     }
+
+#ifdef __3DS__
+    /* Release synthetic LSHIFT as soon as all inverted spell casts have completed */
+    if (g_3ds_inv_shift_held &&
+        g_3ds_inv_pending_mask == 0 &&
+        g_3ds_inv_active_mask == 0) {
+        nox_ctrl_inject_key_scancode(SDL_SCANCODE_LSHIFT, 0);
+        g_3ds_inv_shift_held  = 0;
+        g_3ds_inv_shift_ready = 0;
+    }
+#endif
 
     // Repeat prev/next when held for right stick left/right (as per your sample INI)
     {

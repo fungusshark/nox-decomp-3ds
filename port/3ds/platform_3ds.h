@@ -1,6 +1,14 @@
 #ifndef NOX_PLATFORM_3DS_H
 #define NOX_PLATFORM_3DS_H
 
+/*
+ * src/proto.h wraps the entire engine header include chain in #pragma pack(push, 1).
+ * Reset packing to natural ARM EABI alignment inside this bridge header so structs
+ * shared between src/*.c and port/3ds/*.c ALWAYS have identical binary layouts.
+ */
+#pragma pack(push)
+#pragma pack()
+
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
@@ -23,6 +31,24 @@ extern "C" {
 #define NOX_3DS_BOT_H           240
 #define NOX_3DS_HEAP_CAP_BYTES  (110u * 1024u * 1024u)
 
+/* Centered 5:3 gameplay viewport (640x384) inside 640x480 logical space.
+ * Hardware PICA200 downscales 640x384 -> 400x240 via GPU_LINEAR for full
+ * horizontal FOV with exact 5:3 aspect ratio. Center stays (320, 240). */
+#define NOX_3DS_VP_W            640
+#define NOX_3DS_VP_H            384
+#define NOX_3DS_VP_LEFT         ((NOX_3DS_LOGICAL_W - NOX_3DS_VP_W) / 2)  /* 0   */
+#define NOX_3DS_VP_TOP          ((NOX_3DS_LOGICAL_H - NOX_3DS_VP_H) / 2)  /* 48  */
+#define NOX_3DS_VP_RIGHT        (NOX_3DS_VP_LEFT + NOX_3DS_VP_W - 1)      /* 639 */
+#define NOX_3DS_VP_BOTTOM       (NOX_3DS_VP_TOP  + NOX_3DS_VP_H - 1)      /* 431 */
+
+/* Dark obsidian slate RGB555 backdrop for Bottom Screen UI (lets translucent
+ * darkened panels from sub_49CF10 stand out cleanly against the background). */
+#define NOX_3DS_BOT_BG_RGB555   ((uint16_t)((4u << 10) | (4u << 5) | 5u))
+
+/* C-Stick aiming geometry (in 640x384 Top Screen logical pixels; 1.6x physical) */
+#define NOX_3DS_AIM_CLOSE_RADIUS 24.0f /* ~15px physical tight radius around hero */
+#define NOX_3DS_FREE_AIM_SPEED   12.0f /* max px/frame when L ranged aim held */
+
 /* =========================================================================
  * 2. Hardware Lifecycle, Paths & Diagnostics (platform_3ds.c)
  * ========================================================================= */
@@ -36,22 +62,29 @@ typedef enum {
     NOX_3DS_CSTICK_SPELL_CAST = 1
 } nox_3ds_cstick_mode_t;
 
+typedef enum {
+    NOX_3DS_GUI_ALL     = 0, /* Render all root GUI windows */
+    NOX_3DS_GUI_BG_ONLY = 1, /* Render ONLY MainBG.wnd (Main Menu art -> Top) */
+    NOX_3DS_GUI_NO_BG   = 2  /* Render all windows except MainBG.wnd (-> Bottom) */
+} nox_3ds_gui_filter_t;
+
 typedef struct {
     bool     is_new_3ds;
     bool     romfs_mounted;
     bool     sdmc_root_ready;
-    bool     wide_stretch;        /* false = 320x240 4:3, true = 400x240 */
-    bool     bottom_console_mode; /* true in M1-M5, toggleable in M6 */
-    bool     touch_to_aim;        /* gameplay upper touchscreen aim toggle */
-    nox_3ds_aim_mode_t    aim_mode;    /* radial twin-stick vs free-cursor */
-    nox_3ds_cstick_mode_t cstick_mode; /* radial aim+camera vs quick-spell cast */
+    bool     wide_stretch;        /* unused in dual-screen 1:1 mode, kept for compat */
+    bool     bottom_console_mode; /* true during boot before citro2d takes GFX_BOTTOM */
+    bool     touch_to_aim;        /* false in dual-screen mode (touch is strict bottom UI) */
+    nox_3ds_aim_mode_t    aim_mode;
+    nox_3ds_cstick_mode_t cstick_mode;
     uint32_t fps;
     uint32_t linear_free_bytes;
     uint32_t heap_used_bytes;
 } nox_3ds_state_t;
 
-bool     nox_3ds_init(void);             /* osSetSpeedupEnable(true), gfx, console, non-fatal romfs, chdir */
-void     nox_3ds_shutdown(void);         /* net/video shutdown, romfsExit, gfxExit */
+bool     nox_3ds_init(void);             /* osSetSpeedupEnable(true), gfx, boot console, romfs, chdir */
+void     nox_3ds_console_detach(void);   /* hand GFX_BOTTOM from boot console to citro2d */
+void     nox_3ds_shutdown(void);         /* net/video shutdown, console exit prompt, romfsExit, gfxExit */
 bool     nox_3ds_apt_ok(void);           /* aptMainLoop() wrapper */
 uint32_t nox_3ds_get_ticks_ms(void);     /* osGetTime() relative to startup */
 uint64_t nox_3ds_get_perf_counter(void); /* svcGetSystemTick() */
@@ -64,8 +97,27 @@ nox_3ds_state_t       *nox_3ds_state_mut(void);
 void     nox_3ds_resolve_path(const char *path, char *out, size_t out_sz);
 
 /* =========================================================================
- * 3. Software Framebuffer & PICA200 Video Bridge (video_3ds.c)
+ * 3. Dual-Screen Software Framebuffer & PICA200 Video Bridge (video_3ds.c & draw.c)
  * ========================================================================= */
+typedef struct {
+    const void *pixels;
+    int         w;
+    int         h;
+    int         pitch;
+    uint32_t    sdl_format;
+    int         crop_x;       /* source sub-rect inside pixels (0,0,w,h = full) */
+    int         crop_y;
+    int         crop_w;
+    int         crop_h;
+    bool        is_linear;
+    bool        fill_screen;  /* true = fill full target; false = letterbox aspect */
+} nox_3ds_screen_frame_t;
+
+#if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
+_Static_assert(offsetof(nox_3ds_screen_frame_t, crop_x) == 20, "ABI pack guard failed on nox_3ds_screen_frame_t");
+_Static_assert(sizeof(nox_3ds_screen_frame_t) == 40, "Unexpected sizeof(nox_3ds_screen_frame_t)");
+#endif
+
 bool  nox_3ds_video_init(int logical_w, int logical_h);
 void  nox_3ds_video_shutdown(void);
 bool  nox_3ds_video_is_active(void);
@@ -73,6 +125,8 @@ void *nox_3ds_linear_alloc(size_t size);
 void  nox_3ds_linear_free(void *ptr);
 void  nox_3ds_video_set_gamma(float gamma);
 void  nox_3ds_video_toggle_wide(void);
+void  nox_3ds_video_present_dual(const nox_3ds_screen_frame_t *top,
+                                 const nox_3ds_screen_frame_t *bottom);
 void  nox_3ds_video_present(const void *pixels, int w, int h, int pitch,
                             uint32_t sdl_format, bool is_linear);
 int   nox_3ds_blit_scaled_16(const void *src_pixels, int sw_surf, int sh_surf, int spitch,
@@ -81,8 +135,24 @@ int   nox_3ds_blit_scaled_16(const void *src_pixels, int sw_surf, int sh_surf, i
                              void *dst_pixels, int dw_surf, int dh_surf, int dpitch,
                              int dx, int dy, int dw, int dh);
 
+/* Dual-screen software buffer & GUI split helpers (implemented in src/draw.c) */
+void nox_3ds_swbuf_begin_bottom(uint16_t clear_rgb555);
+void nox_3ds_swbuf_end_bottom(void);
+void nox_3ds_set_top_crop(int x, int y, int w, int h, bool fill_screen);
+void nox_3ds_blit_cursor_to_top(void);
+void nox_3ds_blit_cursor_to_bottom(void);
+void nox_3ds_set_gui_filter(nox_3ds_gui_filter_t filter);
+nox_3ds_gui_filter_t nox_3ds_get_gui_filter(void);
+void nox_3ds_set_world_cursor_state(int cursor_id, const void *tooltip_wstr);
+int  nox_3ds_get_world_cursor_id(void);
+const void *nox_3ds_get_world_tooltip(void);
+void nox_3ds_capture_top_splash(void);
+bool nox_3ds_has_top_splash(void);
+bool nox_3ds_present_top_splash(void);
+void nox_3ds_skip_default_cursor_blit(void);
+
 /* =========================================================================
- * 4. Twin-Stick, Touch & Button Input Bridge (input_3ds.c)
+ * 4. Hybrid Dual-Screen Touch, C-Stick & Button Input Bridge (input_3ds.c)
  * ========================================================================= */
 #define NOX_3DS_KEY_A       (1u << 0)
 #define NOX_3DS_KEY_B       (1u << 1)
@@ -101,11 +171,11 @@ int   nox_3ds_blit_scaled_16(const void *src_pixels, int sw_surf, int sh_surf, i
 #define NOX_3DS_KEY_TOUCH   (1u << 20)
 
 typedef struct {
-    float deadzone;     /* normalized C-Stick deadzone (0.0..0.9, default 0.15) */
-    float curve_exp;    /* non-linear exponent tuned for New 3DS nub (default 1.85) */
+    float deadzone;     /* normalized C-Stick deadzone (0.0..0.9, default 0.14) */
+    float curve_exp;    /* non-linear exponent tuned for New 3DS nub (default 1.75) */
     float sensitivity;  /* scalar multiplier (default 1.0) */
-    float min_radius;   /* inner radial aim radius in 640x480 pixels (default 56.0) */
-    float max_radius;   /* outer radial aim/camera look-ahead radius (default 210.0) */
+    float close_radius; /* fixed close-aim radius around character (default 18.0 px) */
+    float free_speed;   /* max px/frame in L-held ranged free-aim (default 9.0 px/frame) */
 } nox_3ds_cstick_cfg_t;
 
 typedef struct {
@@ -122,10 +192,12 @@ typedef struct {
     uint16_t touch_x;  /* 0..319 */
     uint16_t touch_y;  /* 0..239 */
     bool     in_gameplay;
-    bool     select_combo_used;
-    nox_3ds_aim_mode_t    aim_mode;
-    nox_3ds_cstick_mode_t cstick_mode;
-    bool     touch_to_aim;
+    bool     ranged_aim_held;   /* L modifier held: detached top-screen free aim */
+    bool     bottom_touch_frame;/* true when this frame routes pointer/click to Bottom UI */
+    int      world_aim_x;       /* 120..519 (Top viewport coords inside 640x480) */
+    int      world_aim_y;       /* 120..359 */
+    int      bottom_touch_x;    /* 0..639 (Bottom UI coords mapped from 320x240) */
+    int      bottom_touch_y;    /* 0..479 */
     nox_3ds_cstick_cfg_t cstick_cfg;
 } nox_3ds_input_t;
 
@@ -133,10 +205,17 @@ void nox_3ds_input_init(void);
 void nox_3ds_input_poll(nox_3ds_input_t *out);
 const nox_3ds_input_t *nox_3ds_input_get(void);
 void nox_3ds_input_set_cstick_params(float deadzone, float curve_exp, float sensitivity);
-void nox_3ds_input_toggle_aim_mode(void);
-void nox_3ds_input_toggle_cstick_mode(void);
-void nox_3ds_input_toggle_touch_aim(void);
 bool nox_3ds_is_gameplay_active(void);
+bool nox_3ds_input_is_world_mode(void);
+bool nox_3ds_input_is_bottom_touch_frame(void);
+bool nox_3ds_input_is_ranged_aim_held(void);
+bool nox_3ds_input_is_cstick_or_r_active(void);
+bool nox_3ds_input_is_touch_move_active(void);
+bool nox_3ds_input_is_cpad_move_active(void);
+void nox_3ds_input_notify_bottom_ui_hit(bool hit_ui);
+void nox_3ds_input_get_world_aim(int *out_x, int *out_y);
+void nox_3ds_input_get_bottom_touch(int *out_x, int *out_y);
+void nox_3ds_input_process_hybrid(void);
 void nox_3ds_input_process_twin_stick_and_touch(void);
 
 /* =========================================================================
@@ -191,5 +270,7 @@ static inline void     nox_write_f64(void *p, double v)   { __builtin_memcpy(p, 
 #ifdef __cplusplus
 }
 #endif
+
+#pragma pack(pop)
 
 #endif /* NOX_PLATFORM_3DS_H */

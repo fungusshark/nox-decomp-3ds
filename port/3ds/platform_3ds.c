@@ -14,13 +14,23 @@
 u32 __stacksize__ = 1024 * 1024;
 
 static nox_3ds_state_t g_3ds_state;
+static PrintConsole g_boot_console;
 static bool g_initialized = false;
 static bool g_shutdown_done = false;
+static bool g_console_detached = false;
 static u64 g_start_ms = 0;
 
 struct nox_3ds_mutex {
     RecursiveLock lock;
 };
+
+/* Swallow stdout tile writes once citro2d takes ownership of GFX_BOTTOM. */
+static bool nox_3ds_console_sink(void *con, int c)
+{
+    (void)con;
+    (void)c;
+    return true;
+}
 
 bool nox_3ds_init(void)
 {
@@ -31,15 +41,15 @@ bool nox_3ds_init(void)
     g_start_ms = osGetTime();
 
     gfxInitDefault();
-    consoleInit(GFX_BOTTOM, NULL);
+    consoleInit(GFX_BOTTOM, &g_boot_console);
     consoleDebugInit(debugDevice_CONSOLE);
     setvbuf(stdout, NULL, _IONBF, 0);
     setvbuf(stderr, NULL, _IONBF, 0);
 
     memset(&g_3ds_state, 0, sizeof(g_3ds_state));
     g_3ds_state.bottom_console_mode = true;
-    g_3ds_state.wide_stretch = false;
-    g_3ds_state.touch_to_aim = true;
+    g_3ds_state.wide_stretch = true;
+    g_3ds_state.touch_to_aim = false;
     g_3ds_state.aim_mode = NOX_3DS_AIM_RADIAL;
     g_3ds_state.cstick_mode = NOX_3DS_CSTICK_AIM_CAMERA;
 
@@ -51,7 +61,7 @@ bool nox_3ds_init(void)
     g_3ds_state.linear_free_bytes = (uint32_t)linearSpaceFree();
     g_3ds_state.heap_used_bytes = (uint32_t)mallinfo().uordblks;
 
-    printf("=== Nox New 3DS Port (M3) ===\n");
+    printf("=== Nox New 3DS Port (Dual-Screen UI) ===\n");
     printf("[3ds] Model: %s\n", g_3ds_state.is_new_3ds ? "New 3DS (804MHz + L2)" : "WARNING: Old 3DS (268MHz)");
     printf("[3ds] Stack: %u KB | linearFree: %u KB\n",
            (unsigned)(__stacksize__ / 1024u),
@@ -84,8 +94,26 @@ bool nox_3ds_init(void)
 
     atexit(nox_3ds_shutdown);
     g_initialized = true;
+    g_console_detached = false;
     gspWaitForVBlank();
     return true;
+}
+
+void nox_3ds_console_detach(void)
+{
+    if (g_console_detached)
+        return;
+
+    /* Prevent libctru PrintConsole from writing CPU RGB565 glyphs into GFX_BOTTOM
+     * while citro2d owns the bottom screen in BGR8 double-buffered GPU mode. */
+    g_boot_console.PrintChar = nox_3ds_console_sink;
+    consoleDebugInit(debugDevice_SVC);
+    gfxSetScreenFormat(GFX_BOTTOM, GSP_BGR8_OES);
+    gfxSetDoubleBuffering(GFX_BOTTOM, true);
+    gfxSwapBuffersGpu();
+    gspWaitForVBlank();
+    g_3ds_state.bottom_console_mode = false;
+    g_console_detached = true;
 }
 
 void nox_3ds_shutdown(void)
@@ -96,6 +124,12 @@ void nox_3ds_shutdown(void)
 
     nox_3ds_video_shutdown();
     nox_3ds_net_shutdown();
+
+    /* Restore bottom console so shutdown diagnostics are visible before exit. */
+    consoleInit(GFX_BOTTOM, NULL);
+    consoleDebugInit(debugDevice_CONSOLE);
+    g_console_detached = false;
+    g_3ds_state.bottom_console_mode = true;
 
     printf("\n[3ds] Engine exited. Press START to exit.\n");
     gfxFlushBuffers();
@@ -121,7 +155,7 @@ bool nox_3ds_apt_ok(void)
     if (!aptMainLoop()) {
         return false;
     }
-    /* Only swap via GSP CPU buffers before citro3d owns the top screen. */
+    /* Only swap via GSP CPU buffers before citro3d owns the screens. */
     if (!nox_3ds_video_is_active()) {
         gfxFlushBuffers();
         gfxSwapBuffers();

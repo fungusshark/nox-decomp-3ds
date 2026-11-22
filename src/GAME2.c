@@ -22835,6 +22835,17 @@ void sub_46B740()
     sub_477610(0);
   else
     sub_477610(14);
+#ifdef __3DS__
+  /* Dual-Screen Input Routing:
+   * In World Mode when not touching the Bottom Screen, sub_4309F0() holds Top-Screen
+   * C-Stick aim coordinates and R World Left-Click. Bypass Bottom-Screen GUI hit-testing
+   * so aiming/attacking on the Top Screen never accidentally clicks Bottom-Screen UI. */
+  if ( nox_3ds_input_is_world_mode() && !nox_3ds_input_is_bottom_touch_frame() )
+  {
+    v63 = 1;
+    goto LABEL_3DS_WORLD_HOVER;
+  }
+#endif
   if ( *(_DWORD *)&byte_5D4594[1064904] )
   {
     sub_477610(0);
@@ -23180,6 +23191,20 @@ LABEL_123:
       sub_46B4C0((int)v1, 17, v60, 0);
     *(_DWORD *)&byte_5D4594[1064900] = v1;
   }
+#ifdef __3DS__
+  /* Bottom-Screen touch frames:
+   *  - Touching a UI widget (v1 != NULL, captured widget, or dragging item) stays in UI mode.
+   *  - Touching empty space on the Bottom Screen shows the cursor there and moves the hero. */
+  if ( nox_3ds_input_is_world_mode() && nox_3ds_input_is_bottom_touch_frame() )
+  {
+    bool hit_ui = (v1 != 0) || (sub_477600() != 0) || (*(_DWORD *)&byte_5D4594[1064916] != 0);
+    nox_3ds_input_notify_bottom_ui_hit(hit_ui);
+    if ( !sub_477600() )
+      v66[0] = 0;
+    goto LABEL_201;
+  }
+LABEL_3DS_WORLD_HOVER:
+#endif
   if ( sub_4356B0() == 3
     && !*(_DWORD *)&byte_5D4594[1064940]
     && !sub_4372B0()
@@ -23207,6 +23232,11 @@ LABEL_123:
         || *(_DWORD *)(v44 + 112) & 2 && *(_BYTE *)(v44 + 116) & 8
         || *(_DWORD *)(v44 + 112) & 2 && *(_BYTE *)(v44 + 280) & 0x10 )
       {
+#ifdef __3DS__
+        /* Bottom-Screen GUI windows live on a separate display and never occlude Top-Screen world hover */
+        v63 = 1;
+        goto LABEL_175;
+#endif
         v46 = sub_4676A0();
         v47 = *(_DWORD *)&byte_5D4594[1064888];
         if ( *(_DWORD *)&byte_5D4594[1064888] )
@@ -23324,6 +23354,14 @@ LABEL_175:
     }
   }
 LABEL_201:
+#ifdef __3DS__
+  if ( nox_3ds_input_is_world_mode() && !nox_3ds_input_is_bottom_touch_frame() )
+  {
+    nox_3ds_set_world_cursor_state(
+      *(_DWORD *)&byte_5D4594[1097200],
+      &byte_5D4594[1096676]);
+  }
+#endif
   v58 = v66[1];
   v59 = v66[2];
   v2[3].field_0 = v66[0];
@@ -23437,6 +23475,10 @@ int sub_46C2E0()
   int v4; // esi
   int result; // eax
   int v6; // esi
+#ifdef __3DS__
+  nox_3ds_gui_filter_t gui_filter = nox_3ds_get_gui_filter();
+  int main_bg_wnd = *(_DWORD *)&byte_5D4594[1307300];
+#endif
 
   v0 = *(_DWORD *)&byte_5D4594[1064892];
   v1 = *(_DWORD *)&byte_5D4594[1064892];
@@ -23447,8 +23489,15 @@ int sub_46C2E0()
       v2 = *(_DWORD *)(v1 + 392);
       if ( *(_BYTE *)(v1 + 4) & 0x40 )
       {
-        sub_46C370((_DWORD *)v1);
-        v0 = *(_DWORD *)&byte_5D4594[1064892];
+#ifdef __3DS__
+        if ( (gui_filter == NOX_3DS_GUI_ALL)
+          || (gui_filter == NOX_3DS_GUI_BG_ONLY && v1 == main_bg_wnd)
+          || (gui_filter == NOX_3DS_GUI_NO_BG && v1 != main_bg_wnd) )
+#endif
+        {
+          sub_46C370((_DWORD *)v1);
+          v0 = *(_DWORD *)&byte_5D4594[1064892];
+        }
       }
       v1 = v2;
     }
@@ -23462,8 +23511,15 @@ int sub_46C2E0()
       v4 = *(_DWORD *)(v3 + 392);
       if ( !(*(_BYTE *)(v3 + 4) & 0x60) )
       {
-        sub_46C370((_DWORD *)v3);
-        v0 = *(_DWORD *)&byte_5D4594[1064892];
+#ifdef __3DS__
+        if ( (gui_filter == NOX_3DS_GUI_ALL)
+          || (gui_filter == NOX_3DS_GUI_BG_ONLY && v3 == main_bg_wnd)
+          || (gui_filter == NOX_3DS_GUI_NO_BG && v3 != main_bg_wnd) )
+#endif
+        {
+          sub_46C370((_DWORD *)v3);
+          v0 = *(_DWORD *)&byte_5D4594[1064892];
+        }
       }
       v3 = v4;
     }
@@ -23476,7 +23532,14 @@ int sub_46C2E0()
     {
       v6 = *(_DWORD *)(result + 392);
       if ( *(_BYTE *)(result + 4) & 0x20 )
-        sub_46C370((_DWORD *)result);
+      {
+#ifdef __3DS__
+        if ( (gui_filter == NOX_3DS_GUI_ALL)
+          || (gui_filter == NOX_3DS_GUI_BG_ONLY && result == main_bg_wnd)
+          || (gui_filter == NOX_3DS_GUI_NO_BG && result != main_bg_wnd) )
+#endif
+          sub_46C370((_DWORD *)result);
+      }
       result = v6;
     }
     while ( v6 );
@@ -27894,6 +27957,15 @@ int __cdecl sub_472600(int a1, int a2)
   }
   sub_434560(0);
   sub_49F7F0();
+#ifdef __3DS__
+  /* Bottom-Screen Minimap: larger 220x220 box positioned cleanly above the HUD bar */
+  v3 = 220;
+  yTop = 76;
+  v4 = yTop * 2;
+  sub_49F6F0(0, 0, *(int *)&byte_5D4594[3805496], *(int *)&byte_5D4594[3807120]);
+  v5 = 0;
+  sub_49CF10(0, yTop, v3, v3);
+#else
   v3 = *(_DWORD *)&byte_5D4594[3805496] / 6;
   v4 = *(_DWORD *)&byte_5D4594[3807120] - *(_DWORD *)&byte_5D4594[3805496] / 6;
   yTop = v4 / 2;
@@ -27916,6 +27988,7 @@ int __cdecl sub_472600(int a1, int a2)
       sub_49CF10(v5, v4 / 2, v3 - v5, v3);
     }
   }
+#endif
   sub_434560(1);
   sub_434460(*(int *)&byte_5D4594[2650656]);
   sub_434580(0x5Au);
@@ -28679,11 +28752,16 @@ int sub_4738E0()
   result = 1;
   if ( *(_DWORD *)&byte_5D4594[1556112] != 1 )
   {
+#ifndef __3DS__
+    /* On 3DS, the minimap (sub_4725C0) is routed to the Bottom Screen pass in mainloop() */
     if ( byte_5D4594[1096424] & 1 )
     {
       v1 = sub_45A6F0(*(int *)&byte_5D4594[2616328]);
       sub_4725C0((int)v1);
     }
+#else
+    (void)v1;
+#endif
     result = sub_445530();
   }
   return result;
@@ -30077,6 +30155,13 @@ int4 *__cdecl sub_475810(int *a1)
   *(_DWORD *)&byte_5D4594[3799496] = 0;
   v2 = a1[1];
   v39 = *a1;
+#ifdef __3DS__
+  /* Top Screen crops strictly to the 400x240 viewport; skip outer letterbox fill & border */
+  *(_DWORD *)&byte_5D4594[3799468] = 0;
+  *(_DWORD *)&byte_5D4594[3799524] = 0;
+  (void)v2;
+  (void)v39;
+#else
   if ( v39 )
   {
     *(_DWORD *)&byte_5D4594[3799468] = 1;
@@ -30099,6 +30184,7 @@ int4 *__cdecl sub_475810(int *a1)
   {
     *(_DWORD *)&byte_5D4594[3799468] = 0;
   }
+#endif
   sub_437260();
   v5 = v1[12];
   if ( v5 )
@@ -30766,6 +30852,19 @@ int __cdecl sub_476700(int a1, int a2)
 
   v2 = a2;
   v3 = sub_437250();
+#ifdef __3DS__
+  /* Lock gameplay world viewport to centered 5:3 640x384 (GPU_LINEAR -> 400x240) */
+  *(_DWORD *)v3 = NOX_3DS_VP_LEFT;
+  *((_DWORD *)v3 + 1) = NOX_3DS_VP_TOP;
+  *((_DWORD *)v3 + 2) = NOX_3DS_VP_RIGHT;
+  *((_DWORD *)v3 + 3) = NOX_3DS_VP_BOTTOM;
+  *((_DWORD *)v3 + 8) = NOX_3DS_VP_W;
+  *((_DWORD *)v3 + 9) = NOX_3DS_VP_H;
+  *(_DWORD *)&byte_5D4594[1193188] = 1;
+  *(_DWORD *)&byte_5D4594[3799524] = 1;
+  (void)v2;
+  return 1;
+#endif
   v4 = *((_DWORD *)v3 + 8);
   if ( a2 )
   {
@@ -62848,16 +62947,17 @@ int __cdecl sub_4A0570(int *a1, char *a2)
   char *v2; // eax
   char *v3; // eax
   char *v4; // eax
-  int v6; // [esp+0h] [ebp-8h]
-  int v7; // [esp+4h] [ebp-4h]
+  int r = 0;
+  int g = 0;
+  int b = 0;
 
   v2 = strtok(a2, (const char *)&byte_587000[167520]);
-  LOBYTE(v7) = atoi(v2);
+  if (v2) r = atoi(v2) & 0xFF;
   v3 = strtok(0, (const char *)&byte_587000[167528]);
-  LOBYTE(v6) = atoi(v3);
+  if (v3) g = atoi(v3) & 0xFF;
   v4 = strtok(0, (const char *)&byte_587000[167536]);
-  LOBYTE(a2) = atoi(v4);
-  *a1 = sub_4344A0(v7, v6, (int)a2);
+  if (v4) b = atoi(v4) & 0xFF;
+  *a1 = sub_4344A0(r, g, b);
   return 1;
 }
 // 4A05C7: variable 'v7' is possibly undefined

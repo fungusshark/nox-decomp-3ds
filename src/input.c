@@ -231,6 +231,19 @@ void nox_ctrl_set_thumbstick_jump(int jump)
     if (jump) g_thumbstick_jump = 1;
 }
 
+static int g_touch_move_active = 0;
+static int g_touch_move_orientation = 0;
+static int g_touch_move_cmd = 0;
+
+void nox_ctrl_set_touch_move(int active, int orientation, int move_cmd)
+{
+    g_touch_move_active = active ? 1 : 0;
+    g_touch_move_orientation = orientation & 255;
+    if (move_cmd != 1 && move_cmd != 3)
+        move_cmd = 0;
+    g_touch_move_cmd = move_cmd;
+}
+
 void nox_ctrl_set_radial_aim(int active, int orientation, int screen_x, int screen_y)
 {
     g_radial_aim_active = active ? 1 : 0;
@@ -1339,6 +1352,11 @@ int __cdecl sub_42D6B0(_DWORD *a3, int a4)
       switch ( *(_DWORD *)(i + 4 * j + 36) )
       {
         case 1:
+#ifdef __3DS__
+          /* Bottom-screen touchscreen clicks never trigger Top-Screen world actions */
+          if (nox_3ds_input_is_bottom_touch_frame())
+            break;
+#endif
           v9 = sub_477620();
           switch ( v9 )
           {
@@ -1594,18 +1612,21 @@ int __cdecl sub_42D6B0(_DWORD *a3, int a4)
     }
   }
 #if defined(USE_SDL) && !defined(__EMSCRIPTEN__)
-    if (g_thumbstick_move_active || g_radial_aim_active)
+    if (g_thumbstick_move_active || g_touch_move_active || g_radial_aim_active)
     {
         int *vp;
         int screen_x, screen_y;
         int world_x, world_y;
+        int move_active = g_thumbstick_move_active || g_touch_move_active;
+        int move_orient = g_thumbstick_move_active ? g_thumbstick_orientation : g_touch_move_orientation;
+        int move_cmd    = g_thumbstick_move_active ? g_thumbstick_move_cmd    : g_touch_move_cmd;
 
-        if (g_thumbstick_move_active)
+        if (move_active)
         {
             /* Keep the movement facing/orientation and move command */
-            sub_42E670(1, g_thumbstick_orientation);
-            if (g_thumbstick_move_cmd)
-                sub_42E670(2, g_thumbstick_move_cmd);
+            sub_42E670(1, move_orient);
+            if (move_cmd)
+                sub_42E670(2, move_cmd);
         }
         else if (g_radial_aim_active)
         {
@@ -1613,12 +1634,11 @@ int __cdecl sub_42D6B0(_DWORD *a3, int a4)
             sub_42E670(1, g_radial_aim_orientation);
         }
 
-        if (g_radial_aim_active)
-        {
-            screen_x = g_radial_aim_x;
-            screen_y = g_radial_aim_y;
-        }
-        else
+        if (move_active
+#ifdef __3DS__
+            && !nox_3ds_input_is_cstick_or_r_active()
+#endif
+           )
         {
             int radius;
             double ang;
@@ -1637,14 +1657,25 @@ int __cdecl sub_42D6B0(_DWORD *a3, int a4)
                 screen_y = gm->field_4;
             }
 
-            ang = (((double)g_thumbstick_orientation / 128.0) - 1.0) * M_PI;
-            radius = (g_thumbstick_move_cmd == 3) ? 140 : 80;
+            ang = (((double)move_orient / 128.0) - 1.0) * M_PI;
+            radius = (move_cmd == 3) ? 180 : 85;
 
             dx = -cos(ang) * (double)radius;
             dy = -sin(ang) * (double)radius;
 
             screen_x += (int)lrint(dx);
             screen_y += (int)lrint(dy);
+        }
+        else if (g_radial_aim_active)
+        {
+            screen_x = g_radial_aim_x;
+            screen_y = g_radial_aim_y;
+        }
+        else
+        {
+            int2 *gm = sub_4309F0();
+            screen_x = gm ? gm->field_0 : 320;
+            screen_y = gm ? gm->field_4 : 240;
         }
 
         {

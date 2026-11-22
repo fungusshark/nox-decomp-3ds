@@ -3,6 +3,10 @@
 
 #include "SDL_stdinc.h"
 
+/* Protect SDL shim structs from src/proto.h's #pragma pack(push, 1). */
+#pragma pack(push)
+#pragma pack()
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -438,5 +442,7 @@ SDL_bool SDL_AtomicCAS(SDL_atomic_t *a, int oldval, int newval);
 #ifdef __cplusplus
 }
 #endif
+
+#pragma pack(pop)
 
 #endif

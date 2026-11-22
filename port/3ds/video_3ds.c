@@ -11,19 +11,24 @@
 #define SDL_FMT_RGB565   0x15151002u
 #define SDL_FMT_RGBA5551 0x15421002u
 
-static bool              s_video_inited = false;
-static C3D_RenderTarget *s_top_target = NULL;
-static C3D_Tex           s_tex;
-static bool              s_tex_inited = false;
-static bool              s_tex_in_vram = false;
-static GPU_TEXCOLOR      s_tex_fmt = GPU_RGBA5551;
-static Tex3DS_SubTexture s_subtex;
-static uint16_t         *s_staging = NULL;
-static float             s_gamma = 1.0f;
+typedef struct {
+    C3D_Tex                  tex;
+    uint16_t                *staging;
+    bool                     inited;
+    bool                     in_vram;
+    GPU_TEXCOLOR             fmt;
+    GPU_TEXTURE_FILTER_PARAM filter;
+} nox_3ds_tex_slot_t;
+
+static bool               s_video_inited = false;
+static C3D_RenderTarget  *s_top_target = NULL;
+static C3D_RenderTarget  *s_bot_target = NULL;
+static nox_3ds_tex_slot_t s_top_slot;
+static nox_3ds_tex_slot_t s_bot_slot;
+static float              s_gamma = 1.0f;
 
 static uint32_t          s_frame_count = 0;
 static uint32_t          s_fps_last_ms = 0;
-static uint32_t          s_diag_last_ms = 0;
 
 static GPU_TEXCOLOR gpu_fmt_for_sdl(uint32_t sdl_format)
 {
@@ -39,35 +44,188 @@ static GX_TRANSFER_FORMAT gx_fmt_for_sdl(uint32_t sdl_format)
     return GX_TRANSFER_FMT_RGB5A1;
 }
 
-static bool ensure_texture(GPU_TEXCOLOR fmt)
+static bool ensure_tex_slot(nox_3ds_tex_slot_t *slot, GPU_TEXCOLOR fmt, const char *label)
 {
-    if (s_tex_inited && s_tex_fmt == fmt)
+    if (slot->inited && slot->fmt == fmt)
         return true;
 
-    if (s_tex_inited) {
-        C3D_TexDelete(&s_tex);
-        s_tex_inited = false;
+    if (slot->inited) {
+        C3D_TexDelete(&slot->tex);
+        slot->inited = false;
     }
 
-    s_tex_in_vram = C3D_TexInitVRAM(&s_tex, NOX_3DS_TEX_W, NOX_3DS_TEX_H, fmt);
-    if (!s_tex_in_vram) {
-        if (!C3D_TexInit(&s_tex, NOX_3DS_TEX_W, NOX_3DS_TEX_H, fmt)) {
-            fprintf(stderr, "[video3ds] ERROR: C3D_TexInit(%ux%u, fmt=%d) failed\n",
-                    NOX_3DS_TEX_W, NOX_3DS_TEX_H, (int)fmt);
+    slot->in_vram = C3D_TexInitVRAM(&slot->tex, NOX_3DS_TEX_W, NOX_3DS_TEX_H, fmt);
+    if (!slot->in_vram) {
+        if (!C3D_TexInit(&slot->tex, NOX_3DS_TEX_W, NOX_3DS_TEX_H, fmt)) {
+            fprintf(stderr, "[video3ds] ERROR: C3D_TexInit(%s %ux%u, fmt=%d) failed\n",
+                    label, NOX_3DS_TEX_W, NOX_3DS_TEX_H, (int)fmt);
             return false;
         }
     }
 
-    C3D_TexSetFilter(&s_tex, GPU_LINEAR, GPU_LINEAR);
-    C3D_TexSetWrap(&s_tex, GPU_CLAMP_TO_EDGE, GPU_CLAMP_TO_EDGE);
-    s_tex_fmt = fmt;
-    s_tex_inited = true;
+    slot->filter = GPU_LINEAR;
+    C3D_TexSetFilter(&slot->tex, GPU_LINEAR, GPU_LINEAR);
+    C3D_TexSetWrap(&slot->tex, GPU_CLAMP_TO_EDGE, GPU_CLAMP_TO_EDGE);
+    slot->fmt = fmt;
+    slot->inited = true;
 
-    printf("[video3ds] Texture %ux%u allocated (%s, fmt=%s)\n",
-           NOX_3DS_TEX_W, NOX_3DS_TEX_H,
-           s_tex_in_vram ? "VRAM" : "FCRAM",
-           (fmt == GPU_RGB565) ? "RGB565" : "RGBA5551");
+    fprintf(stderr, "[video3ds] %s tex %ux%u (%s, %s)\n",
+            label, NOX_3DS_TEX_W, NOX_3DS_TEX_H,
+            slot->in_vram ? "VRAM" : "FCRAM",
+            (fmt == GPU_RGB565) ? "RGB565" : "RGBA5551");
     return true;
+}
+
+static bool prepare_frame_slot(nox_3ds_tex_slot_t *slot,
+                               const nox_3ds_screen_frame_t *frame,
+                               const char *label,
+                               const void **out_xfer_src,
+                               GX_TRANSFER_FORMAT *out_gx_fmt)
+{
+    if (!frame || !frame->pixels || frame->w <= 0 || frame->h <= 0 || frame->pitch <= 0)
+        return false;
+
+    GPU_TEXCOLOR gpu_fmt = gpu_fmt_for_sdl(frame->sdl_format);
+    GX_TRANSFER_FORMAT gx_fmt = gx_fmt_for_sdl(frame->sdl_format);
+    if (!ensure_tex_slot(slot, gpu_fmt, label))
+        return false;
+
+    int w = frame->w;
+    int h = frame->h;
+    if (w > NOX_3DS_TEX_W) w = NOX_3DS_TEX_W;
+    if (h > NOX_3DS_TEX_H) h = NOX_3DS_TEX_H;
+
+    const void *xfer_src = NULL;
+    if (frame->is_linear && frame->pitch == NOX_3DS_TEX_W * 2) {
+        GSPGPU_FlushDataCache((void *)frame->pixels, (u32)(frame->pitch * h));
+        xfer_src = frame->pixels;
+    } else {
+        if (!slot->staging) {
+            slot->staging = (uint16_t *)linearAlloc((size_t)NOX_3DS_TEX_W * (size_t)NOX_3DS_TEX_H * 2u);
+            if (!slot->staging)
+                return false;
+            memset(slot->staging, 0, (size_t)NOX_3DS_TEX_W * (size_t)NOX_3DS_TEX_H * 2u);
+        }
+        const uint8_t *src_row = (const uint8_t *)frame->pixels;
+        uint8_t *dst_row = (uint8_t *)slot->staging;
+        const size_t copy_bytes = (size_t)w * 2u;
+        for (int y = 0; y < h; ++y) {
+            memcpy(dst_row, src_row, copy_bytes);
+            src_row += frame->pitch;
+            dst_row += NOX_3DS_TEX_W * 2;
+        }
+        GSPGPU_FlushDataCache(slot->staging, (u32)(NOX_3DS_TEX_W * h * 2));
+        xfer_src = slot->staging;
+    }
+
+    *out_xfer_src = xfer_src;
+    *out_gx_fmt = gx_fmt;
+    return true;
+}
+
+static void enqueue_frame_upload(nox_3ds_tex_slot_t *slot,
+                                 const void *xfer_src,
+                                 GX_TRANSFER_FORMAT gx_fmt)
+{
+    const u32 xfer_flags =
+        GX_TRANSFER_FLIP_VERT(0) |
+        GX_TRANSFER_OUT_TILED(1) |
+        GX_TRANSFER_RAW_COPY(0) |
+        GX_TRANSFER_IN_FORMAT(gx_fmt) |
+        GX_TRANSFER_OUT_FORMAT(gx_fmt) |
+        GX_TRANSFER_SCALING(GX_TRANSFER_SCALE_NO);
+
+    C3D_SyncDisplayTransfer(
+        (u32 *)xfer_src,
+        GX_BUFFER_DIM(NOX_3DS_TEX_W, NOX_3DS_TEX_H),
+        (u32 *)slot->tex.data,
+        GX_BUFFER_DIM(NOX_3DS_TEX_W, NOX_3DS_TEX_H),
+        xfer_flags
+    );
+}
+
+static void build_subtex(Tex3DS_SubTexture *subtex, const nox_3ds_screen_frame_t *frame)
+{
+    int cx = frame->crop_x;
+    int cy = frame->crop_y;
+    int cw = (frame->crop_w > 0) ? frame->crop_w : frame->w;
+    int ch = (frame->crop_h > 0) ? frame->crop_h : frame->h;
+
+    if (cx < 0) cx = 0;
+    if (cy < 0) cy = 0;
+    if (cx + cw > NOX_3DS_TEX_W) cw = NOX_3DS_TEX_W - cx;
+    if (cy + ch > NOX_3DS_TEX_H) ch = NOX_3DS_TEX_H - cy;
+    if (cw <= 0) cw = 1;
+    if (ch <= 0) ch = 1;
+
+    /*
+     * PICA200 / citro2d maps texture row 0 to V = 1.0 (top) and row (TEX_H - 1)
+     * to V = 0.0 (bottom). With GX_TRANSFER_FLIP_VERT(0), source row y lands at
+     * V = (TEX_H - y) / TEX_H. Keeping top > bottom ensures subtex is unrotated.
+     */
+    subtex->width  = (u16)cw;
+    subtex->height = (u16)ch;
+    subtex->left   = (float)cx / (float)NOX_3DS_TEX_W;
+    subtex->right  = (float)(cx + cw) / (float)NOX_3DS_TEX_W;
+    subtex->top    = (float)(NOX_3DS_TEX_H - cy) / (float)NOX_3DS_TEX_H;
+    subtex->bottom = (float)(NOX_3DS_TEX_H - (cy + ch)) / (float)NOX_3DS_TEX_H;
+}
+
+static void draw_screen_pass(C3D_RenderTarget *target,
+                             nox_3ds_tex_slot_t *slot,
+                             const nox_3ds_screen_frame_t *frame,
+                             int target_w, int target_h,
+                             u32 clear_color)
+{
+    C2D_TargetClear(target, clear_color);
+    C2D_SceneBegin(target);
+
+    if (!frame || !slot->inited)
+        return;
+
+    Tex3DS_SubTexture subtex;
+    build_subtex(&subtex, frame);
+
+    /* Use crisp nearest-neighbor when rendering native 1:1 400x240 gameplay,
+     * and smooth bilinear filtering when scaling 640x480 -> 400x240 or 320x240. */
+    GPU_TEXTURE_FILTER_PARAM want_filter =
+        (subtex.width == (u16)target_w && subtex.height == (u16)target_h)
+            ? GPU_NEAREST
+            : GPU_LINEAR;
+    if (slot->filter != want_filter) {
+        C3D_TexSetFilter(&slot->tex, want_filter, want_filter);
+        slot->filter = want_filter;
+    }
+
+    float dst_w = (float)target_w;
+    float dst_h = (float)target_h;
+    if (!frame->fill_screen && subtex.height > 0) {
+        float src_aspect = (float)subtex.width / (float)subtex.height;
+        float dst_aspect = dst_w / dst_h;
+        if (src_aspect < dst_aspect) {
+            dst_w = dst_h * src_aspect;
+        } else if (src_aspect > dst_aspect) {
+            dst_h = dst_w / src_aspect;
+        }
+    }
+
+    float draw_x  = ((float)target_w - dst_w) * 0.5f;
+    float draw_y  = ((float)target_h - dst_h) * 0.5f;
+    float scale_x = dst_w / (float)subtex.width;
+    float scale_y = dst_h / (float)subtex.height;
+
+    C2D_Image img;
+    img.tex    = &slot->tex;
+    img.subtex = &subtex;
+
+    if (s_gamma < 0.98f) {
+        C2D_ImageTint tint;
+        C2D_SetTintMode(C2D_TintMult);
+        C2D_PlainImageTint(&tint, C2D_Color32f(s_gamma, s_gamma, s_gamma, 1.0f), 1.0f);
+        C2D_DrawImageAt(img, draw_x, draw_y, 0.0f, &tint, scale_x, scale_y);
+    } else {
+        C2D_DrawImageAt(img, draw_x, draw_y, 0.0f, NULL, scale_x, scale_y);
+    }
 }
 
 bool nox_3ds_video_init(int logical_w, int logical_h)
@@ -77,6 +235,9 @@ bool nox_3ds_video_init(int logical_w, int logical_h)
 
     if (s_video_inited)
         return true;
+
+    /* Hand GFX_BOTTOM cleanly from boot PrintConsole to citro2d BGR8 double-buffer. */
+    nox_3ds_console_detach();
 
     if (!C3D_Init(C3D_DEFAULT_CMDBUF_SIZE)) {
         fprintf(stderr, "[video3ds] ERROR: C3D_Init failed\n");
@@ -90,57 +251,57 @@ bool nox_3ds_video_init(int logical_w, int logical_h)
     C2D_Prepare();
 
     s_top_target = C2D_CreateScreenTarget(GFX_TOP, GFX_LEFT);
-    if (!s_top_target) {
-        fprintf(stderr, "[video3ds] ERROR: C2D_CreateScreenTarget failed\n");
-        C2D_Fini();
-        C3D_Fini();
-        return false;
-    }
-
-    if (!ensure_texture(GPU_RGBA5551)) {
+    s_bot_target = C2D_CreateScreenTarget(GFX_BOTTOM, GFX_LEFT);
+    if (!s_top_target || !s_bot_target) {
+        fprintf(stderr, "[video3ds] ERROR: C2D_CreateScreenTarget failed (top=%p bot=%p)\n",
+                (void *)s_top_target, (void *)s_bot_target);
         C2D_Fini();
         C3D_Fini();
         s_top_target = NULL;
+        s_bot_target = NULL;
         return false;
     }
 
-    /*
-     * PICA200 / citro2d maps texture memory row 0 to V = 1.0 (top) and row
-     * (TEX_H - 1) to V = 0.0 (bottom). With GX_TRANSFER_FLIP_VERT(0), source
-     * row 0 lands at V = 1.0 and source row (LOGICAL_H - 1) lands at
-     * V = (TEX_H - LOGICAL_H) / TEX_H = 32/512.
-     * Keeping top = 1.0f > bottom keeps Tex3DS_SubTextureRotated() == false.
-     */
-    s_subtex.width  = NOX_3DS_LOGICAL_W;
-    s_subtex.height = NOX_3DS_LOGICAL_H;
-    s_subtex.left   = 0.0f;
-    s_subtex.right  = (float)NOX_3DS_LOGICAL_W / (float)NOX_3DS_TEX_W;
-    s_subtex.top    = 1.0f;
-    s_subtex.bottom = (float)(NOX_3DS_TEX_H - NOX_3DS_LOGICAL_H) / (float)NOX_3DS_TEX_H;
+    memset(&s_top_slot, 0, sizeof(s_top_slot));
+    memset(&s_bot_slot, 0, sizeof(s_bot_slot));
+
+    if (!ensure_tex_slot(&s_top_slot, GPU_RGBA5551, "Top") ||
+        !ensure_tex_slot(&s_bot_slot, GPU_RGBA5551, "Bottom")) {
+        nox_3ds_video_shutdown();
+        return false;
+    }
 
     s_fps_last_ms = nox_3ds_get_ticks_ms();
-    s_diag_last_ms = s_fps_last_ms;
     s_frame_count = 0;
     s_video_inited = true;
 
-    printf("[video3ds] Top target 400x240 active (60Hz VSync, bottom console diagnostics)\n");
+    fprintf(stderr, "[video3ds] Dual-screen citro2d active: Top 400x240 + Bottom 320x240\n");
     return true;
 }
 
 void nox_3ds_video_shutdown(void)
 {
-    if (!s_video_inited)
+    if (!s_video_inited && !s_top_target && !s_bot_target)
         return;
 
-    if (s_staging) {
-        linearFree(s_staging);
-        s_staging = NULL;
+    if (s_top_slot.staging) {
+        linearFree(s_top_slot.staging);
+        s_top_slot.staging = NULL;
     }
-    if (s_tex_inited) {
-        C3D_TexDelete(&s_tex);
-        s_tex_inited = false;
+    if (s_bot_slot.staging) {
+        linearFree(s_bot_slot.staging);
+        s_bot_slot.staging = NULL;
+    }
+    if (s_top_slot.inited) {
+        C3D_TexDelete(&s_top_slot.tex);
+        s_top_slot.inited = false;
+    }
+    if (s_bot_slot.inited) {
+        C3D_TexDelete(&s_bot_slot.tex);
+        s_bot_slot.inited = false;
     }
     s_top_target = NULL;
+    s_bot_target = NULL;
     C2D_Fini();
     C3D_Fini();
     s_video_inited = false;
@@ -180,98 +341,42 @@ void nox_3ds_video_toggle_wide(void)
 {
     nox_3ds_state_t *st = nox_3ds_state_mut();
     st->wide_stretch = !st->wide_stretch;
-    printf("[video3ds] Aspect: %s\n", st->wide_stretch ? "400x240 Wide" : "320x240 (4:3)");
 }
 
-void nox_3ds_video_present(const void *pixels, int w, int h, int pitch,
-                            uint32_t sdl_format, bool is_linear)
+void nox_3ds_video_present_dual(const nox_3ds_screen_frame_t *top,
+                                const nox_3ds_screen_frame_t *bottom)
 {
-    if (!pixels || w <= 0 || h <= 0 || pitch <= 0)
-        return;
-
     if (!s_video_inited) {
         if (!nox_3ds_video_init(NOX_3DS_LOGICAL_W, NOX_3DS_LOGICAL_H))
             return;
     }
 
-    GPU_TEXCOLOR gpu_fmt = gpu_fmt_for_sdl(sdl_format);
-    GX_TRANSFER_FORMAT gx_fmt = gx_fmt_for_sdl(sdl_format);
-    if (!ensure_texture(gpu_fmt))
-        return;
-
-    if (w > NOX_3DS_TEX_W) w = NOX_3DS_TEX_W;
-    if (h > NOX_3DS_TEX_H) h = NOX_3DS_TEX_H;
-
-    s_subtex.width  = (u16)w;
-    s_subtex.height = (u16)h;
-    s_subtex.left   = 0.0f;
-    s_subtex.right  = (float)w / (float)NOX_3DS_TEX_W;
-    s_subtex.top    = 1.0f;
-    s_subtex.bottom = (float)(NOX_3DS_TEX_H - h) / (float)NOX_3DS_TEX_H;
-
-    const void *xfer_src = NULL;
-    if (is_linear && pitch == NOX_3DS_TEX_W * 2) {
-        GSPGPU_FlushDataCache((void *)pixels, (u32)(pitch * h));
-        xfer_src = pixels;
-    } else {
-        if (!s_staging) {
-            s_staging = (uint16_t *)linearAlloc((size_t)NOX_3DS_TEX_W * (size_t)NOX_3DS_TEX_H * 2u);
-            if (!s_staging)
-                return;
-            memset(s_staging, 0, (size_t)NOX_3DS_TEX_W * (size_t)NOX_3DS_TEX_H * 2u);
-        }
-        const uint8_t *src_row = (const uint8_t *)pixels;
-        uint8_t *dst_row = (uint8_t *)s_staging;
-        const size_t copy_bytes = (size_t)w * 2u;
-        for (int y = 0; y < h; ++y) {
-            memcpy(dst_row, src_row, copy_bytes);
-            src_row += pitch;
-            dst_row += NOX_3DS_TEX_W * 2;
-        }
-        GSPGPU_FlushDataCache(s_staging, (u32)(NOX_3DS_TEX_W * h * 2));
-        xfer_src = s_staging;
-    }
-
-    const u32 xfer_flags =
-        GX_TRANSFER_FLIP_VERT(0) |
-        GX_TRANSFER_OUT_TILED(1) |
-        GX_TRANSFER_RAW_COPY(0) |
-        GX_TRANSFER_IN_FORMAT(gx_fmt) |
-        GX_TRANSFER_OUT_FORMAT(gx_fmt) |
-        GX_TRANSFER_SCALING(GX_TRANSFER_SCALE_NO);
-
-    C3D_SyncDisplayTransfer(
-        (u32 *)xfer_src,
-        GX_BUFFER_DIM(NOX_3DS_TEX_W, NOX_3DS_TEX_H),
-        (u32 *)s_tex.data,
-        GX_BUFFER_DIM(NOX_3DS_TEX_W, NOX_3DS_TEX_H),
-        xfer_flags
-    );
+    const void *top_src = NULL;
+    const void *bot_src = NULL;
+    GX_TRANSFER_FORMAT top_gx_fmt = GX_TRANSFER_FMT_RGB5A1;
+    GX_TRANSFER_FORMAT bot_gx_fmt = GX_TRANSFER_FMT_RGB5A1;
+    bool top_ready = prepare_frame_slot(&s_top_slot, top, "Top", &top_src, &top_gx_fmt);
+    bool bot_ready = prepare_frame_slot(&s_bot_slot, bottom, "Bottom", &bot_src, &bot_gx_fmt);
 
     if (C3D_FrameBegin(C3D_FRAME_SYNCDRAW)) {
-        const nox_3ds_state_t *st = nox_3ds_get_state();
-        C2D_TargetClear(s_top_target, C2D_Color32(0, 0, 0, 255));
-        C2D_SceneBegin(s_top_target);
+        if (top_ready)
+            enqueue_frame_upload(&s_top_slot, top_src, top_gx_fmt);
+        if (bot_ready)
+            enqueue_frame_upload(&s_bot_slot, bot_src, bot_gx_fmt);
 
-        C2D_Image img;
-        img.tex = &s_tex;
-        img.subtex = &s_subtex;
+        draw_screen_pass(
+            s_top_target, &s_top_slot,
+            top_ready ? top : NULL,
+            NOX_3DS_TOP_W, NOX_3DS_TOP_H,
+            C2D_Color32(0, 0, 0, 255)
+        );
 
-        float dst_w = st->wide_stretch ? (float)NOX_3DS_TOP_W : 320.0f;
-        float dst_h = (float)NOX_3DS_TOP_H;
-        float draw_x = ((float)NOX_3DS_TOP_W - dst_w) * 0.5f;
-        float draw_y = 0.0f;
-        float scale_x = dst_w / (float)w;
-        float scale_y = dst_h / (float)h;
-
-        if (s_gamma < 0.98f) {
-            C2D_ImageTint tint;
-            C2D_SetTintMode(C2D_TintMult);
-            C2D_PlainImageTint(&tint, C2D_Color32f(s_gamma, s_gamma, s_gamma, 1.0f), 1.0f);
-            C2D_DrawImageAt(img, draw_x, draw_y, 0.0f, &tint, scale_x, scale_y);
-        } else {
-            C2D_DrawImageAt(img, draw_x, draw_y, 0.0f, NULL, scale_x, scale_y);
-        }
+        draw_screen_pass(
+            s_bot_target, &s_bot_slot,
+            bot_ready ? bottom : NULL,
+            NOX_3DS_BOT_W, NOX_3DS_BOT_H,
+            C2D_Color32(16, 16, 20, 255)
+        );
 
         C3D_FrameEnd(0);
     }
@@ -285,25 +390,32 @@ void nox_3ds_video_present(const void *pixels, int w, int h, int pitch,
         s_frame_count = 0;
         s_fps_last_ms = now_ms;
     }
+}
 
-    if (now_ms - s_diag_last_ms >= 5000u) {
-        const nox_3ds_state_t *st = nox_3ds_get_state();
-        s_diag_last_ms = now_ms;
-        printf("[3ds] %u FPS | aim=%s cstk=%s | %s | linFree=%uKB | heap=%.1fMB\n",
-               (unsigned)st->fps,
-               (st->aim_mode == NOX_3DS_AIM_RADIAL) ? "Radial" : "Cursor",
-               (st->cstick_mode == NOX_3DS_CSTICK_AIM_CAMERA) ? "Aim" : "Spell",
-               st->wide_stretch ? "400x240" : "4:3",
-               (unsigned)(st->linear_free_bytes / 1024u),
-               (double)st->heap_used_bytes / (1024.0 * 1024.0));
-    }
+void nox_3ds_video_present(const void *pixels, int w, int h, int pitch,
+                           uint32_t sdl_format, bool is_linear)
+{
+    nox_3ds_screen_frame_t top;
+    memset(&top, 0, sizeof(top));
+    top.pixels      = pixels;
+    top.w           = w;
+    top.h           = h;
+    top.pitch       = pitch;
+    top.sdl_format  = sdl_format;
+    top.is_linear   = is_linear;
+    top.crop_x      = 0;
+    top.crop_y      = 0;
+    top.crop_w      = w;
+    top.crop_h      = h;
+    top.fill_screen = true;
+    nox_3ds_video_present_dual(&top, NULL);
 }
 
 int nox_3ds_blit_scaled_16(const void *src_pixels, int sw_surf, int sh_surf, int spitch,
-                             bool has_ckey, uint16_t ckey,
-                             int sx, int sy, int sw, int sh,
-                             void *dst_pixels, int dw_surf, int dh_surf, int dpitch,
-                             int dx, int dy, int dw, int dh)
+                           bool has_ckey, uint16_t ckey,
+                           int sx, int sy, int sw, int sh,
+                           void *dst_pixels, int dw_surf, int dh_surf, int dpitch,
+                           int dx, int dy, int dw, int dh)
 {
     if (!src_pixels || !dst_pixels || sw <= 0 || sh <= 0 || dw <= 0 || dh <= 0)
         return 0;
