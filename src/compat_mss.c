@@ -1,3 +1,14 @@
+#ifdef __3DS__
+/*
+ * On Nintendo 3DS, the Miles Sound System (AIL_*) implementation is provided by
+ * port/3ds/audio_3ds.c using the 24-channel libctru ndsp API (linearAlloc +
+ * DSP_FlushDataCache, 16 IMA-ADPCM SFX voices, 1 looping ADPCM music stream,
+ * 1 MP3-in-WAV/PCM dialog stream, synchronous AIL_serve() timers, PR #502
+ * handle guards, and sdmc:/3ds/dspfirm.cdc diagnostics).
+ */
+typedef int nox_compat_mss_3ds_tu_placeholder;
+#else
+
 #ifdef __APPLE__
 #include <OpenAL/al.h>
 #include <OpenAL/alc.h>
@@ -118,9 +129,22 @@ struct _STREAM
 struct _TIMER
 {
     unsigned int interval;
+    Uint32 next_fire_ms;
+    int running;
     AILTIMERCB cb;
     U32 user;
+    struct _TIMER *next;
 };
+
+static HTIMER g_timer_head = NULL;
+static S32 g_ail_prefs[64];
+static int g_ail_in_serve = 0;
+static char g_ail_last_err[128] = "No error";
+
+static inline int mss_valid_ptr(const void *p)
+{
+    return p != NULL && p != (const void *)(intptr_t)-1;
+}
 
 // https://wiki.multimedia.cx/index.php/IMA_ADPCM
 int ima_index_table[16] = {
@@ -330,7 +354,11 @@ static void stream_unqueue_buffers(HSTREAM S)
 
 DXDEC HSAMPLE AILCALL AIL_allocate_sample_handle (HDIGDRIVER dig)
 {
+    if (!mss_valid_ptr(dig))
+        return NULL;
     HSAMPLE sample = calloc(1, sizeof(*sample));
+    if (!sample)
+        return NULL;
     sample->dig = dig;
     // fprintf(stderr, "%s\n", __FUNCTION__);
 
@@ -472,7 +500,8 @@ DXDEC S32 AILCALL AIL_digital_handle_reacquire(HDIGDRIVER drvr)
 
 DXDEC void AILCALL AIL_end_sample (HSAMPLE S)
 {
-    // fprintf(stderr, "%s\n", __FUNCTION__);
+    if (!mss_valid_ptr(S) || !mss_valid_ptr(S->dig))
+        return;
 
     SDL_LockMutex(S->dig->mutex);
     if (S->playing)
@@ -485,13 +514,15 @@ DXDEC void AILCALL AIL_end_sample (HSAMPLE S)
 
 DXDEC S32 AILCALL AIL_get_preference (U32 number)
 {
-    // fprintf(stderr, "%s: %d\n", __FUNCTION__, number);
+    if (number < 64u)
+        return g_ail_prefs[number];
     return 0;
 }
 
 DXDEC void AILCALL AIL_init_sample (HSAMPLE S)
 {
-    // fprintf(stderr, "%s\n", __FUNCTION__);
+    if (!mss_valid_ptr(S) || !mss_valid_ptr(S->dig))
+        return;
     SDL_LockMutex(S->dig->mutex);
 
     S->current = 0;
@@ -509,15 +540,16 @@ DXDEC void AILCALL AIL_init_sample (HSAMPLE S)
 
 DXDEC char FAR *AILCALL AIL_last_error (void)
 {
-    // fprintf(stderr, "%s\n", __FUNCTION__);
-    DebugBreak();
-    return 0;
+    return g_ail_last_err;
 }
 
 DXDEC void AILCALL AIL_load_sample_buffer (HSAMPLE S, U32 buff_num, void const FAR *buffer, U32 len)
 {
+    if (!mss_valid_ptr(S) || !mss_valid_ptr(S->dig) || buff_num >= 2u)
+        return;
+    if (len > 0 && !buffer)
+        return;
     struct _SAMPLE_BUFFER *sb = &S->buffers[buff_num];
-    // fprintf(stderr, "%s: %08X, %d, %08X, %d\n", __FUNCTION__, (int)S, buff_num, (int)buffer, len);
     SDL_LockMutex(S->dig->mutex);
     sb->buffer = buffer;
     sb->length = len;
@@ -1016,49 +1048,89 @@ DXDEC void AILCALL AIL_pause_stream(HSTREAM stream, S32 onoff)
 
 DXDEC AILSAMPLECB AILCALL AIL_register_EOB_callback (HSAMPLE S, AILSAMPLECB EOB)
 {
+    if (!mss_valid_ptr(S))
+        return NULL;
     AILSAMPLECB prev = S->eob;
-    // fprintf(stderr, "%s: %08X, %08X\n", __FUNCTION__, (int)S, (int)EOB);
     S->eob = EOB;
     return prev;
 }
 
 DXDEC AILSAMPLECB AILCALL AIL_register_EOS_callback (HSAMPLE S, AILSAMPLECB EOS)
 {
+    if (!mss_valid_ptr(S))
+        return NULL;
     AILSAMPLECB prev = S->eos;
-    // fprintf(stderr, "%s: %08X, %08X\n", __FUNCTION__, (int)S, (int)EOS);
     S->eos = EOS;
     return prev;
 }
 
 DXDEC HTIMER AILCALL AIL_register_timer (AILTIMERCB fn)
 {
+    if (!fn)
+        return (HTIMER)(intptr_t)-1;
     HTIMER timer = calloc(1, sizeof(*timer));
-    // fprintf(stderr, "%s %08x\n", __FUNCTION__, (int)fn);
+    if (!timer)
+        return (HTIMER)(intptr_t)-1;
     timer->cb = fn;
+    timer->interval = 33;
+    timer->next = g_timer_head;
+    g_timer_head = timer;
     return timer;
 }
 
 DXDEC void AILCALL AIL_release_sample_handle (HSAMPLE S)
 {
-    // fprintf(stderr, "%s\n", __FUNCTION__);
-    DebugBreak();
+    if (!mss_valid_ptr(S) || !mss_valid_ptr(S->dig))
+        return;
+
+    HDIGDRIVER dig = S->dig;
+    SDL_LockMutex(dig->mutex);
+    S->playing = 0;
+    if (S->source) {
+        alSourceStop(S->source);
+        sample_drain_buffers(S);
+    }
+    HSAMPLE *pp = &dig->sample_head;
+    while (*pp && *pp != S)
+        pp = &(*pp)->next;
+    if (*pp == S)
+        *pp = S->next;
+    SDL_UnlockMutex(dig->mutex);
+
+    if (S->source)
+        alDeleteSources(1, &S->source);
+    if (S->hwbuf[0] || S->hwbuf[1])
+        alDeleteBuffers(2, S->hwbuf);
+    free(S);
 }
 
 DXDEC void AILCALL AIL_release_timer_handle (HTIMER timer)
 {
-    // fprintf(stderr, "%s\n", __FUNCTION__);
-    DebugBreak();
+    if (!mss_valid_ptr(timer))
+        return;
+    timer->running = 0;
+    HTIMER *pp = &g_timer_head;
+    while (*pp && *pp != timer)
+        pp = &(*pp)->next;
+    if (*pp == timer)
+        *pp = timer->next;
+    free(timer);
 }
 
 DXDEC void AILCALL AIL_resume_sample (HSAMPLE S)
 {
-    // fprintf(stderr, "%s\n", __FUNCTION__);
-    DebugBreak();
+    if (!mss_valid_ptr(S) || !mss_valid_ptr(S->dig))
+        return;
+    SDL_LockMutex(S->dig->mutex);
+    if (S->source)
+        alSourcePlay(S->source);
+    SDL_UnlockMutex(S->dig->mutex);
 }
 
 DXDEC S32 AILCALL AIL_sample_buffer_ready (HSAMPLE S)
 {
-    // fprintf(stderr, "%s: %08X\n", __FUNCTION__, (int)S);
+    if (!mss_valid_ptr(S))
+        return -1;
     if (S->ready == 0)
         return -1;
     else if (S->ready-- == 2)
@@ -1068,23 +1140,48 @@ DXDEC S32 AILCALL AIL_sample_buffer_ready (HSAMPLE S)
 
 DXDEC S32 AILCALL AIL_sample_user_data (HSAMPLE S, U32 index)
 {
-    // fprintf(stderr, "%s\n", __FUNCTION__);
+    if (!mss_valid_ptr(S) || index >= 8u)
+        return 0;
     return S->user[index];
 }
 
 DXDEC void AILCALL AIL_serve(void)
 {
-    // fprintf(stderr, "%s\n", __FUNCTION__);
+    if (g_ail_in_serve)
+        return;
+    g_ail_in_serve = 1;
+
+    Uint32 now = SDL_GetTicks();
+    for (HTIMER t = g_timer_head; t; t = t->next) {
+        if (!t->running || !t->cb)
+            continue;
+        if ((Sint32)(now - t->next_fire_ms) >= 0) {
+            unsigned int iv = t->interval ? t->interval : 33u;
+            if (now - t->next_fire_ms > 200u)
+                t->next_fire_ms = now + iv;
+            else
+                t->next_fire_ms += iv;
+            t->cb(t->user);
+        }
+    }
+
+    g_ail_in_serve = 0;
 }
 
 DXDEC S32 AILCALL AIL_set_preference (U32 number, S32 value)
 {
-    // fprintf(stderr, "%s: %d = %d\n", __FUNCTION__, number, value);
+    if (number < 64u) {
+        S32 prev = g_ail_prefs[number];
+        g_ail_prefs[number] = value;
+        return prev;
+    }
     return 0;
 }
 
 DXDEC void AILCALL AIL_set_sample_adpcm_block_size(HSAMPLE S, U32 blocksize)
 {
+    if (!mss_valid_ptr(S))
+        return;
     // Miles should always set this; but be defensive.
     if (blocksize < (S->stereo ? 8u : 4u)) blocksize = (S->stereo ? 8u : 4u);
     if (blocksize > 2048u) blocksize = 2048u; // keep decoded[] safe
@@ -1093,42 +1190,54 @@ DXDEC void AILCALL AIL_set_sample_adpcm_block_size(HSAMPLE S, U32 blocksize)
 
 DXDEC void AILCALL AIL_set_sample_pan (HSAMPLE S, S32 pan)
 {
+    if (!mss_valid_ptr(S))
+        return;
+    if (pan < 0) pan = 0;
+    if (pan > 127) pan = 127;
     float pos[3] = { (pan - 63) / 64.0f, 0, 0 };
-    pos[2] = sqrtf(1 - pos[0] * pos[0]);
+    float sq = 1.0f - pos[0] * pos[0];
+    pos[2] = sq > 0.0f ? sqrtf(sq) : 0.0f;
     alSourcefv(S->source, AL_POSITION, pos);
-    // fprintf(stderr, "%d -> %f, %f, %f\n", pan, pos[0], pos[1], pos[2]);
-    // fprintf(stderr, "%s: %08X, %d\n", __FUNCTION__, (int)S, pan);
 }
 
 DXDEC void AILCALL AIL_set_sample_playback_rate (HSAMPLE S, S32 playback_rate)
 {
-    // fprintf(stderr, "%s: %08X, %d\n", __FUNCTION__, (int)S, playback_rate);
-    S->playback_rate = playback_rate;
+    if (!mss_valid_ptr(S))
+        return;
+    S->playback_rate = playback_rate > 0 ? (unsigned int)playback_rate : 22050u;
 }
 
 DXDEC void AILCALL AIL_set_sample_type (HSAMPLE S, S32 format, U32 flags)
 {
-    // fprintf(stderr, "%s: %08X %d %d\n", __FUNCTION__, (int)S, format, flags);
-    if (flags)
-        DebugBreak();
+    (void)flags;
+    if (!mss_valid_ptr(S))
+        return;
     S->stereo = format & 2;
     S->adpcm = format & 4;
 }
 
 DXDEC void AILCALL AIL_set_sample_user_data (HSAMPLE S, U32 index, S32 value)
 {
-    // fprintf(stderr, "%s, %d, %08X\n", __FUNCTION__, index, value);
+    if (!mss_valid_ptr(S) || index >= 8u)
+        return;
     S->user[index] = value;
 }
 
 DXDEC void AILCALL AIL_set_sample_volume (HSAMPLE S, S32 volume)
 {
-    // fprintf(stderr, "%s: %08X, %d\n", __FUNCTION__, (int)S, volume);
+    if (!mss_valid_ptr(S))
+        return;
+    if (volume < 0) volume = 0;
+    if (volume > 127) volume = 127;
     alSourcef(S->source, AL_GAIN, volume / 127.0f);
 }
 
 DXDEC void AILCALL AIL_set_stream_position(HSTREAM stream,S32 offset)
 {
+    if (!mss_valid_ptr(stream) || !mss_valid_ptr(stream->dig) || !stream->file || !stream->seek)
+        return;
+    if (offset < 0)
+        offset = 0;
     SDL_LockMutex(stream->dig->mutex);
     stream->chunk_size = 0;
     stream->chunk_pos = 0;
@@ -1140,69 +1249,81 @@ DXDEC void AILCALL AIL_set_stream_position(HSTREAM stream,S32 offset)
 
 DXDEC void AILCALL AIL_set_stream_volume(HSTREAM stream,S32 volume)
 {
-    // fprintf(stderr, "%s\n", __FUNCTION__);
+    if (!mss_valid_ptr(stream))
+        return;
+    if (volume < 0) volume = 0;
+    if (volume > 127) volume = 127;
     alSourcef(stream->source, AL_GAIN, volume / 127.0f);
 }
 
 DXDEC void AILCALL AIL_set_timer_frequency (HTIMER timer, U32 hertz)
 {
-    // fprintf(stderr, "%s %d\n", __FUNCTION__, hertz);
-    timer->interval = 1000.0 / hertz;
+    if (!mss_valid_ptr(timer))
+        return;
+    timer->interval = (hertz > 0u) ? (unsigned int)(1000.0 / hertz) : 33u;
+    if (timer->interval == 0u)
+        timer->interval = 1u;
 }
 
 DXDEC void AILCALL AIL_shutdown (void)
 {
-    // fprintf(stderr, "%s\n", __FUNCTION__);
-    DebugBreak();
+    while (g_timer_head) {
+        HTIMER t = g_timer_head;
+        g_timer_head = t->next;
+        free(t);
+    }
 }
 
 DXDEC void AILCALL AIL_start_stream(HSTREAM stream)
 {
+    if (!mss_valid_ptr(stream))
+        return;
     stream->playing = 1;
-}
-
-static Uint32 timer_callback(Uint32 interval, void *param)
-{
-    HTIMER timer = param;
-    
-    timer->cb(timer->user);
-    return timer->interval;
 }
 
 DXDEC void AILCALL AIL_start_timer (HTIMER timer)
 {
-    // fprintf(stderr, "%s\n", __FUNCTION__);
-    SDL_AddTimer(timer->interval, timer_callback, timer);
+    if (!mss_valid_ptr(timer))
+        return;
+    timer->running = 1;
+    timer->next_fire_ms = SDL_GetTicks() + timer->interval;
 }
 
 DXDEC S32 AILCALL AIL_startup (void)
 {
-    // fprintf(stderr, "%s\n", __FUNCTION__);
     return 0;
 }
 
 DXDEC void AILCALL AIL_stop_sample (HSAMPLE S)
 {
-    // fprintf(stderr, "%s\n", __FUNCTION__);
-    DebugBreak();
+    if (!mss_valid_ptr(S) || !mss_valid_ptr(S->dig))
+        return;
+    SDL_LockMutex(S->dig->mutex);
+    if (S->source)
+        alSourcePause(S->source);
+    SDL_UnlockMutex(S->dig->mutex);
 }
 
 DXDEC void AILCALL AIL_stop_timer (HTIMER timer)
 {
-    // fprintf(stderr, "%s\n", __FUNCTION__);
-    DebugBreak();
+    if (!mss_valid_ptr(timer))
+        return;
+    timer->running = 0;
 }
 
 DXDEC S32 AILCALL AIL_stream_position(HSTREAM stream)
 {
-    unsigned int result;
-    result = stream->tell(stream);
-    return result;
+    if (!mss_valid_ptr(stream) || !stream->tell)
+        return 0;
+    return (S32)stream->tell(stream);
 }
 
 DXDEC S32 AILCALL AIL_stream_status(HSTREAM stream)
 {
-    // fprintf(stderr, "%s\n", __FUNCTION__);
+    if (!mss_valid_ptr(stream))
+        return 2;
+    if (!g_ail_in_serve)
+        AIL_serve();
     return stream->playing ? 4 : 2;
 }
 
@@ -1487,3 +1608,5 @@ DXDEC S32 AILCALL AIL_waveOutOpen (HDIGDRIVER FAR *pdrvr, LPHWAVEOUT FAR *lphWav
     *pdrvr = dig;
     return 0;
 }
+
+#endif /* !__3DS__ */

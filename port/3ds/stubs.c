@@ -4,8 +4,6 @@
 
 #include <SDL2/SDL.h>
 #include <GL/gl.h>
-#include <AL/al.h>
-#include <AL/alc.h>
 
 #include <ctype.h>
 #include <errno.h>
@@ -386,41 +384,8 @@ void glVertexAttribPointer(GLuint index, GLint size, GLenum type, GLboolean norm
 void glViewport(GLint x, GLint y, GLsizei width, GLsizei height) { (void)x; (void)y; (void)width; (void)height; LOG_STUB(); }
 
 /* =========================================================================
- * 3. OpenAL Stubs
+ * 3. OpenAL Stubs Removed (Replaced by libctru ndsp in port/3ds/audio_3ds.c)
  * ========================================================================= */
-static int g_al_device = 1;
-static int g_al_context = 1;
-static ALuint g_al_next_id = 1;
-
-ALCdevice *alcOpenDevice(const ALCchar *devicename) { (void)devicename; LOG_STUB(); return (ALCdevice *)&g_al_device; }
-ALCcontext *alcCreateContext(ALCdevice *device, const ALCint *attrlist) { (void)device; (void)attrlist; LOG_STUB(); return (ALCcontext *)&g_al_context; }
-ALCboolean alcMakeContextCurrent(ALCcontext *context) { (void)context; LOG_STUB(); return AL_TRUE; }
-
-void alGenSources(ALsizei n, ALuint *sources) { LOG_STUB(); for (ALsizei i = 0; i < n; ++i) sources[i] = g_al_next_id++; }
-void alDeleteSources(ALsizei n, const ALuint *sources) { (void)n; (void)sources; LOG_STUB(); }
-void alGenBuffers(ALsizei n, ALuint *buffers) { LOG_STUB(); for (ALsizei i = 0; i < n; ++i) buffers[i] = g_al_next_id++; }
-void alDeleteBuffers(ALsizei n, const ALuint *buffers) { (void)n; (void)buffers; LOG_STUB(); }
-void alBufferData(ALuint buffer, ALenum format, const ALvoid *data, ALsizei size, ALsizei freq) { (void)buffer; (void)format; (void)data; (void)size; (void)freq; LOG_STUB(); }
-void alSourcePlay(ALuint source) { (void)source; LOG_STUB(); }
-void alSourcePause(ALuint source) { (void)source; LOG_STUB(); }
-void alSourceStop(ALuint source) { (void)source; LOG_STUB(); }
-void alSourcef(ALuint source, ALenum param, ALfloat value) { (void)source; (void)param; (void)value; LOG_STUB(); }
-void alSourcefv(ALuint source, ALenum param, const ALfloat *values) { (void)source; (void)param; (void)values; LOG_STUB(); }
-void alSourceQueueBuffers(ALuint source, ALsizei nb, const ALuint *buffers) { (void)source; (void)nb; (void)buffers; LOG_STUB(); }
-void alSourceUnqueueBuffers(ALuint source, ALsizei nb, ALuint *buffers) { (void)source; (void)nb; (void)buffers; LOG_STUB(); }
-void alGetSourcei(ALuint source, ALenum param, ALint *value)
-{
-    (void)source;
-    LOG_STUB();
-    if (!value) return;
-    if (param == AL_BUFFERS_PROCESSED) *value = 2;
-    else if (param == AL_SOURCE_STATE) *value = AL_STOPPED;
-    else *value = 0;
-}
-void alListenerf(ALenum param, ALfloat value) { (void)param; (void)value; LOG_STUB(); }
-void alListener3f(ALenum param, ALfloat v1, ALfloat v2, ALfloat v3) { (void)param; (void)v1; (void)v2; (void)v3; LOG_STUB(); }
-ALenum alGetError(void) { LOG_STUB(); return AL_NO_ERROR; }
-const ALchar *alGetString(ALenum param) { (void)param; LOG_STUB(); return "3DS-OpenAL-Stub"; }
 
 /* =========================================================================
  * 4. Control Server & Netextras Stubs (Loopback sockets live in net_loopback_3ds.c)

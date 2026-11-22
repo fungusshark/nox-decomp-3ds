@@ -91,6 +91,7 @@ bool nox_3ds_init(void)
 
     nox_3ds_net_init();
     nox_3ds_input_init();
+    nox_3ds_audio_init();
 
     atexit(nox_3ds_shutdown);
     g_initialized = true;
@@ -122,6 +123,7 @@ void nox_3ds_shutdown(void)
         return;
     g_shutdown_done = true;
 
+    nox_3ds_audio_shutdown();
     nox_3ds_video_shutdown();
     nox_3ds_net_shutdown();
 

@@ -72,6 +72,7 @@ typedef struct {
     bool     is_new_3ds;
     bool     romfs_mounted;
     bool     sdmc_root_ready;
+    bool     dsp_audio_ready;     /* true if sdmc:/3ds/dspfirm.cdc present and ndspInit() OK */
     bool     wide_stretch;        /* unused in dual-screen 1:1 mode, kept for compat */
     bool     bottom_console_mode; /* true during boot before citro2d takes GFX_BOTTOM */
     bool     touch_to_aim;        /* false in dual-screen mode (touch is strict bottom UI) */
@@ -138,6 +139,7 @@ int   nox_3ds_blit_scaled_16(const void *src_pixels, int sw_surf, int sh_surf, i
 /* Dual-screen software buffer & GUI split helpers (implemented in src/draw.c) */
 void nox_3ds_swbuf_begin_bottom(uint16_t clear_rgb555);
 void nox_3ds_swbuf_end_bottom(void);
+bool nox_3ds_is_bottom_swbuf_active(void);
 void nox_3ds_set_top_crop(int x, int y, int w, int h, bool fill_screen);
 void nox_3ds_blit_cursor_to_top(void);
 void nox_3ds_blit_cursor_to_bottom(void);
@@ -219,7 +221,15 @@ void nox_3ds_input_process_hybrid(void);
 void nox_3ds_input_process_twin_stick_and_touch(void);
 
 /* =========================================================================
- * 5. In-Memory UDP Loopback Transport (net_loopback_3ds.c, NO socInit)
+ * 5. Audio Bridge: Miles AIL -> libctru 24-ch ndsp (audio_3ds.c)
+ * ========================================================================= */
+bool nox_3ds_audio_init(void);           /* Check sdmc:/3ds/dspfirm.cdc, ndspInit(), 24-ch setup */
+void nox_3ds_audio_shutdown(void);       /* Drain/clear all 24 channels, ndspExit(), free linear pools */
+void nox_3ds_audio_pump(void);           /* Refill ndsp wave buffers (invoked from AIL_serve()) */
+bool nox_3ds_audio_is_available(void);   /* True if DSP firmware present and ndspInit() succeeded */
+
+/* =========================================================================
+ * 6. In-Memory UDP Loopback Transport (net_loopback_3ds.c, NO socInit)
  * ========================================================================= */
 void nox_3ds_net_init(void);
 void nox_3ds_net_shutdown(void);

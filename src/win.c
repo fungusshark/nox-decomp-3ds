@@ -526,6 +526,8 @@ int sub_4453A0()
 		exit(0);
 	}
 #endif
+	/* OpenNox PR #376: pump synchronous Miles timers & audio backend on main thread */
+	AIL_serve();
 #ifdef USE_SDL
 	SDL_Event event;
 	int n = 0;
