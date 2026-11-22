@@ -52120,20 +52120,31 @@ LABEL_24:
         v25 = (int *)sub_437250();
         sub_431720(v25);
 
-        if ( do_present && world_mode && nox_3ds_input_is_cstick_or_r_active() )
+        if ( do_present && world_mode &&
+             (nox_3ds_input_is_cstick_or_r_active() ||
+              nox_3ds_input_is_touch_move_active() ||
+              ((nox_3ds_get_world_cursor_id() != 0 && nox_3ds_get_world_cursor_id() != 14) &&
+               !nox_3ds_input_is_bottom_touch_frame())) )
         {
-          int aim_x = NOX_3DS_LOGICAL_W / 2;
-          int aim_y = NOX_3DS_LOGICAL_H / 2;
+          int aim_x = saved_mx;
+          int aim_y = saved_my;
+          int aim_cid = 14;
           const uint16_t *wtip;
-          nox_3ds_input_get_world_aim(&aim_x, &aim_y);
+          if ( nox_3ds_input_is_cstick_or_r_active() || !nox_3ds_input_is_touch_move_active() )
+          {
+            nox_3ds_input_get_world_aim(&aim_x, &aim_y);
+            aim_cid = nox_3ds_get_world_cursor_id();
+          }
           gm->field_0 = aim_x;
           gm->field_4 = aim_y;
-          *(_DWORD *)&byte_5D4594[1097200] = nox_3ds_get_world_cursor_id();
+          *(_DWORD *)&byte_5D4594[1097200] = aim_cid;
 
           sub_437260(); /* clip cursor text & world tooltip cleanly to top viewport */
           sub_477A30(*(int *)&byte_5D4594[2523948], aim_x, aim_y);
 
-          wtip = (const uint16_t *)nox_3ds_get_world_tooltip();
+          wtip = (!nox_3ds_input_is_touch_move_active() || nox_3ds_input_is_cstick_or_r_active())
+                 ? (const uint16_t *)nox_3ds_get_world_tooltip()
+                 : NULL;
           if ( wtip && *wtip && *(_DWORD *)&byte_587000[80840] == 1 )
           {
             int tw = 0, th = 0, tx, ty;
@@ -52155,16 +52166,6 @@ LABEL_24:
 
           gm->field_0 = saved_mx;
           gm->field_4 = saved_my;
-          *(_DWORD *)&byte_5D4594[1097200] = saved_cid;
-        }
-        else if ( do_present && world_mode && nox_3ds_input_is_cpad_move_active() )
-        {
-          /* Circle Pad moving: show directional movement arrow at virtual move cursor */
-          *(_DWORD *)&byte_5D4594[1097200] = 14;
-          sub_437260();
-          sub_477A30(*(int *)&byte_5D4594[2523948], saved_mx, saved_my);
-          sub_4AD170();
-          nox_3ds_blit_cursor_to_top();
           *(_DWORD *)&byte_5D4594[1097200] = saved_cid;
         }
         else if ( do_present )

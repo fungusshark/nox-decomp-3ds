@@ -360,8 +360,7 @@ void nox_3ds_input_process_hybrid(void)
 
         float cnx = 0.0f, cny = 0.0f, cmag = 0.0f;
         bool cstick_active = compute_cstick_curved(&cnx, &cny, &cmag);
-        bool r_held_now    = (g_in.keys_held & NOX_3DS_KEY_R) != 0;
-        g_cstick_or_r_active = (cstick_active || l_held || r_held_now);
+        g_cstick_or_r_active = (cstick_active || l_held);
 
         if (l_held) {
             /* Entering L-ranged mode: start detached cursor from current close-aim point */

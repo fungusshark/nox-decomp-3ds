@@ -1445,9 +1445,11 @@ void sdl_present()
         return;
 #ifdef __3DS__
     if (!g_3ds_cursor_already_blitted && !g_present_is_movie) {
+        g_3ds_cursor_dst = g_backbuffer1;
         sub_48BE50(1);
         sub_48B5D0(0, 0);
         sub_48BE50(0);
+        g_3ds_cursor_dst = NULL;
     }
     nox_3ds_video_set_gamma(draw_gamma);
     {
@@ -2641,8 +2643,9 @@ int sdl_unk1(int a1)
 #endif
 
 #ifdef __3DS__
-        SDL_Surface *cursor_dst = g_3ds_cursor_dst ? g_3ds_cursor_dst : g_backbuffer1;
-        if (SDL_BlitScaled(g_cursor_surf, &src, cursor_dst, &dst))
+        if (!g_3ds_cursor_dst)
+            return 0;
+        if (SDL_BlitScaled(g_cursor_surf, &src, g_3ds_cursor_dst, &dst))
 			return 0;
 #else
         if (SDL_BlitScaled(g_cursor_surf, &src, g_backbuffer1, &dst))

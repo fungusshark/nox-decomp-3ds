@@ -31440,6 +31440,10 @@ void sub_476FA0()
   v0 = sub_4309F0();
   sub_437250();
   v1 = *v0;
+#ifdef __3DS__
+  if ( nox_3ds_input_is_world_mode() && !nox_3ds_input_is_bottom_touch_frame() )
+    nox_3ds_input_get_world_aim(&v1.field_0, &v1.field_4);
+#endif
   sub_473970(&v1, &v1);
   *(_DWORD *)&byte_5D4594[1096640] = 0;
   *(_DWORD *)&byte_5D4594[1096644] = 0;

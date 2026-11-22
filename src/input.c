@@ -1657,14 +1657,36 @@ int __cdecl sub_42D6B0(_DWORD *a3, int a4)
                 screen_y = gm->field_4;
             }
 
-            ang = (((double)move_orient / 128.0) - 1.0) * M_PI;
-            radius = (move_cmd == 3) ? 180 : 85;
+#ifdef __3DS__
+            if (g_touch_move_active && !g_thumbstick_move_active)
+            {
+                int bx = 320, by = 240;
+                int vp_l = 0, vp_t = 48, vp_r = 639, vp_b = 431;
+                if (vp && (vp[2] - vp[0]) > 0 && (vp[3] - vp[1]) > 0)
+                {
+                    vp_l = vp[0]; vp_t = vp[1];
+                    vp_r = vp[2]; vp_b = vp[3];
+                }
+                nox_3ds_input_get_bottom_touch(&bx, &by);
+                screen_x += (bx - 320);
+                screen_y += ((by - 240) * (vp_b - vp_t + 1)) / 480;
+                if (screen_x < vp_l) screen_x = vp_l;
+                if (screen_x > vp_r) screen_x = vp_r;
+                if (screen_y < vp_t) screen_y = vp_t;
+                if (screen_y > vp_b) screen_y = vp_b;
+            }
+            else
+#endif
+            {
+                ang = (((double)move_orient / 128.0) - 1.0) * M_PI;
+                radius = (move_cmd == 3) ? 180 : 85;
 
-            dx = -cos(ang) * (double)radius;
-            dy = -sin(ang) * (double)radius;
+                dx = -cos(ang) * (double)radius;
+                dy = -sin(ang) * (double)radius;
 
-            screen_x += (int)lrint(dx);
-            screen_y += (int)lrint(dy);
+                screen_x += (int)lrint(dx);
+                screen_y += (int)lrint(dy);
+            }
         }
         else if (g_radial_aim_active)
         {
