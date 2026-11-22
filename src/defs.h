@@ -23,6 +23,31 @@
 #include "platform_3ds.h"
 #endif
 
+#ifndef NOX_ALIGN_HELPERS_DEFINED
+#define NOX_ALIGN_HELPERS_DEFINED
+#include <stdint.h>
+#if defined(__GNUC__) || defined(__clang__)
+#define NOX_ALIGN4  __attribute__((aligned(4)))
+#define NOX_ALIGN16 __attribute__((aligned(16)))
+#else
+#define NOX_ALIGN4
+#define NOX_ALIGN16
+#endif
+
+static inline uint16_t nox_read_u16(const void *p) { uint16_t v; memcpy(&v, p, 2); return v; }
+static inline int16_t  nox_read_s16(const void *p) { int16_t v;  memcpy(&v, p, 2); return v; }
+static inline uint32_t nox_read_u32(const void *p) { uint32_t v; memcpy(&v, p, 4); return v; }
+static inline int32_t  nox_read_s32(const void *p) { int32_t v;  memcpy(&v, p, 4); return v; }
+static inline uint64_t nox_read_u64(const void *p) { uint64_t v; memcpy(&v, p, 8); return v; }
+static inline float    nox_read_f32(const void *p) { float v;    memcpy(&v, p, 4); return v; }
+static inline double   nox_read_f64(const void *p) { double v;   memcpy(&v, p, 8); return v; }
+static inline void     nox_write_u16(void *p, uint16_t v) { memcpy(p, &v, 2); }
+static inline void     nox_write_u32(void *p, uint32_t v) { memcpy(p, &v, 4); }
+static inline void     nox_write_u64(void *p, uint64_t v) { memcpy(p, &v, 8); }
+static inline void     nox_write_f32(void *p, float v)    { memcpy(p, &v, 4); }
+static inline void     nox_write_f64(void *p, double v)   { memcpy(p, &v, 8); }
+#endif
+
 #ifdef __EMSCRIPTEN__
 #define wchar_t int16_t
 #endif

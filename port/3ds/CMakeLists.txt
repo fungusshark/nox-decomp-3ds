@@ -9,13 +9,20 @@ if (NOT NINTENDO_3DS)
 endif()
 
 # Mandatory ARM11 / Nox decomp diagnostics and ABI flags
+# NOTE: -fsigned-char is CRITICAL on ARM (where plain char defaults to unsigned)
+# because IDA-decompiled x86 code compares `char` sentinels against -1 / < 0
+# (e.g. WallMap's 0xFF terminator `if (v22 == -1) return 1;` in sub_429B20).
 add_compile_options(
     -g
     -O2
     -Wcast-align
     -fshort-wchar
+    -fsigned-char
     -fno-strict-aliasing
     -fno-strict-overflow
+    -fno-tree-vectorize
+    -fno-aggressive-loop-optimizations
+    -U_FORTIFY_SOURCE
     -fcommon
     -Wno-error=int-conversion
     -Wno-error=incompatible-pointer-types
@@ -47,6 +54,7 @@ add_executable(nox
     "${CMAKE_CURRENT_SOURCE_DIR}/platform_3ds.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/video_3ds.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/input_3ds.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/net_loopback_3ds.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/stubs.c"
 )
 

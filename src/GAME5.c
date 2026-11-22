@@ -9752,9 +9752,9 @@ int sub_5521A0()
         }
         while ( v8 );
         v9 = v6 / v5;
-        if ( *(short *)(v13 + 105) != -1 && v9 < *(unsigned __int16 *)(v13 + 105) )
+        if ( nox_read_s16(v13 + 105) != -1 && v9 < nox_read_u16(v13 + 105) )
           sub_5523E0(0, v0);
-        if ( *(short *)(v13 + 107) != -1 && v9 > *(unsigned __int16 *)(v13 + 107) )
+        if ( nox_read_s16(v13 + 107) != -1 && v9 > nox_read_u16(v13 + 107) )
 LABEL_24:
           sub_5523E0(1, v0);
         sub_552380(v0);
@@ -10222,7 +10222,7 @@ int __cdecl sub_552A80(unsigned int a1, char a2)
   int v31; // [esp+20h] [ebp-11Ch]
   int v32; // [esp+24h] [ebp-118h]
   int v33; // [esp+28h] [ebp-114h]
-  struct sockaddr to; // [esp+2Ch] [ebp-110h]
+  struct sockaddr_in to; // [esp+2Ch] [ebp-110h]
   char buf[256]; // [esp+3Ch] [ebp-100h]
 
   /* Refresh lobby server-info from the normal network/game thread. */
@@ -10247,7 +10247,7 @@ LABEL_10:
       v24 = *(char **)(v2 + 36);
       v4 = *(_DWORD *)v2;
       v33 = 1;
-      v5 = sub_552020(v4, v24, v25, 0, &to, &tolen);
+      v5 = sub_552020(v4, v24, v25, 0, (struct sockaddr *)&to, &tolen);
       v6 = v5;
       if ( v5 == -1 )
         goto LABEL_8;
@@ -10269,7 +10269,7 @@ LABEL_10:
           if ( v6 > 0 )
           {
             nox_netextras_on_host_serverinfo(buf, (size_t)v6);
-            v6 = sendto(*(_DWORD *)v2, buf, v6, 0, &to, tolen);
+            v6 = sendto(*(_DWORD *)v2, buf, v6, 0, (struct sockaddr *)&to, tolen);
             sub_553F40(v6, 1);
           }
         }
@@ -10366,7 +10366,7 @@ LABEL_29:
         v6 = sub_553210(a1, *(unsigned __int8 **)(v2 + 40), *(_DWORD *)(v2 + 36) - *(_DWORD *)(v2 + 40), (int)buf);
         if ( v6 > 0 )
         {
-          v6 = sub_551F90(*(_DWORD *)v2, buf, v6, 0, &to, tolen);
+          v6 = sub_551F90(*(_DWORD *)v2, buf, v6, 0, (struct sockaddr *)&to, tolen);
           sub_553F40(v6, 1);
         }
         goto LABEL_48;
@@ -10802,7 +10802,7 @@ LABEL_108:
               v65 = v64;
               *(_BYTE *)(*(_DWORD *)&byte_5D4594[4 * v6 + 3843788] + 148) = 0;
               v66 = *(_DWORD *)&byte_5D4594[4 * v6 + 3843788] + 4;
-              *(_QWORD *)v66 = *(_QWORD *)v74;
+              memcpy((void *)v66, v74, 8);
               *(_DWORD *)(v66 + 8) = v75;
               *(_DWORD *)(v66 + 12) = v76;
               LOBYTE(v66) = a3;
@@ -11185,7 +11185,7 @@ LABEL_97:
         byte_5D4594[v54 + 2500089] = 0;
         byte_5D4594[v54 + 2500088] = 0;
         v55 = &byte_5D4594[68 * v53 + 2500092];
-        *(_QWORD *)v55 = *(_QWORD *)v74;
+        memcpy(v55, v74, 8);
         *((_DWORD *)v55 + 2) = v75;
         *((_DWORD *)v55 + 3) = v76;
         return sub_552340(v53, v4);
@@ -11737,7 +11737,7 @@ int __cdecl sub_554380(size_t *a1)
   struct hostent *v10; // eax
   u_short v11; // [esp-4h] [ebp-1B8h]
   u_short v12; // [esp-4h] [ebp-1B8h]
-  struct sockaddr name; // [esp+14h] [ebp-1A0h]
+  struct sockaddr_in name; // [esp+14h] [ebp-1A0h]
   struct WSAData WSAData; // [esp+24h] [ebp-190h]
 
   if ( !a1 )
@@ -11784,23 +11784,20 @@ LABEL_17:
       if ( v7 < 1024 || v7 > 0x10000 )
         a1[2] = 18590;
       v11 = *((_WORD *)a1 + 4);
-      *(_WORD *)name.sa_data = 0;
-      name.sa_family = 2;
-      *(_DWORD *)&name.sa_data[2] = 0;
-      *(_DWORD *)&name.sa_data[6] = 0;
-      *(_DWORD *)&name.sa_data[10] = 0;
+      memset(&name, 0, sizeof(name));
+      name.sin_family = 2;
       v8 = htons(v11);
       v9 = *((_WORD *)a1 + 4);
-      *(_DWORD *)&name.sa_data[2] = 0;
-      *(_WORD *)name.sa_data = v8;
+      name.sin_addr.s_addr = 0;
+      name.sin_port = v8;
       *(_WORD *)&byte_5D4594[3843636] = v9;
-      while ( bind(*v5, &name, 16) == -1 )
+      while ( bind(*v5, (struct sockaddr *)&name, 16) == -1 )
       {
         if ( WSAGetLastError() != 10048 )
           goto LABEL_17;
         v12 = *((_WORD *)a1 + 4) + 1;
         ++a1[2];
-        *(_WORD *)name.sa_data = htons(v12);
+        name.sin_port = htons(v12);
       }
 
       /* netextras: host socket successfully bound */
@@ -11811,7 +11808,7 @@ LABEL_17:
         v10 = gethostbyname((const char *)&byte_5D4594[3843660]);
         if ( v10 )
         {
-          *(_DWORD *)&byte_5D4594[3843632] = **(_DWORD **)v10->h_addr_list;
+          *(_DWORD *)&byte_5D4594[3843632] = nox_read_u32(*(const void **)v10->h_addr_list);
           strcpy((char *)&byte_5D4594[3843644], inet_ntoa(*(struct in_addr *)&byte_5D4594[3843632]));
         }
       }
@@ -11950,7 +11947,7 @@ int __cdecl sub_554760(int a1, char *cp, int hostshort, int a4, int a5)
   int v10; // esi
   char v11; // al
   char v12; // [esp+12h] [ebp-1B2h]
-  struct sockaddr name; // [esp+14h] [ebp-1B0h]
+  struct sockaddr_in name; // [esp+14h] [ebp-1B0h]
   WORD v14[2]; // [esp+24h] [ebp-1A0h]
   int v15; // [esp+28h] [ebp-19Ch]
   struct WSAData WSAData; // [esp+34h] [ebp-190h]
@@ -11981,7 +11978,7 @@ int __cdecl sub_554760(int a1, char *cp, int hostshort, int a4, int a5)
       WSACleanup();
       return -4;
     }
-    v8 = **(_DWORD **)v9->h_addr_list;
+    v8 = nox_read_u32(*(const void **)v9->h_addr_list);
   }
   else
   {
@@ -11990,24 +11987,23 @@ int __cdecl sub_554760(int a1, char *cp, int hostshort, int a4, int a5)
   v15 = 0;
   v14[0] = 2;
   v14[1] = htons(hostshort);
-  v5[1] = *(_DWORD *)v14;
+  v5[1] = (int)nox_read_u32(v14);
   v5[2] = v8;
   v5[3] = 0;
   v5[4] = 0;
   v10 = sub_40A420();
-  name.sa_family = 2;
-  *(_DWORD *)&name.sa_data[6] = 0;
-  *(_DWORD *)&name.sa_data[10] = 0;
-  *(_WORD *)name.sa_data = htons(v10);
-  *(_DWORD *)&name.sa_data[2] = 0;
-  while ( bind(*v5, &name, 16) == -1 )
+  memset(&name, 0, sizeof(name));
+  name.sin_family = 2;
+  name.sin_port = htons(v10);
+  name.sin_addr.s_addr = 0;
+  while ( bind(*v5, (struct sockaddr *)&name, 16) == -1 )
   {
     if ( WSAGetLastError() != 10048 )
     {
       WSACleanup();
       return -1;
     }
-    *(_WORD *)name.sa_data = htons(++v10);
+    name.sin_port = htons(++v10);
   }
   *(_DWORD *)&byte_5D4594[3844304] = 0;
   v12 = 0;
@@ -12098,7 +12094,7 @@ void sub_554B30()
 int __cdecl sub_554B40(u_short hostshort)
 {
   int result; // eax
-  struct sockaddr name; // [esp+4h] [ebp-1A4h]
+  struct sockaddr_in name; // [esp+4h] [ebp-1A4h]
   char optval[4]; // [esp+14h] [ebp-194h]
   struct WSAData WSAData; // [esp+18h] [ebp-190h]
 
@@ -12123,12 +12119,11 @@ int __cdecl sub_554B40(u_short hostshort)
       }
       else
       {
-        name.sa_family = 2;
-        *(_DWORD *)&name.sa_data[6] = 0;
-        *(_DWORD *)&name.sa_data[10] = 0;
-        *(_WORD *)name.sa_data = htons(hostshort);
-        *(_DWORD *)&name.sa_data[2] = 0;
-        if ( bind(*(SOCKET *)&byte_5D4594[2513920], &name, 16) == -1 )
+        memset(&name, 0, sizeof(name));
+        name.sin_family = 2;
+        name.sin_port = htons(hostshort);
+        name.sin_addr.s_addr = 0;
+        if ( bind(*(SOCKET *)&byte_5D4594[2513920], (struct sockaddr *)&name, 16) == -1 )
         {
           WSACleanup();
           result = -1;
@@ -12182,23 +12177,22 @@ int __cdecl sub_554C80(u_short hostshort, char *buf, int a3)
 {
   int v3; // esi
   int result; // eax
-  struct sockaddr to; // [esp+4h] [ebp-10h]
+  struct sockaddr_in to; // [esp+4h] [ebp-10h]
 
   v3 = 0;
   if ( !*(_DWORD *)&byte_5D4594[2513916] )
     return -17;
-  to.sa_family = 2;
-  *(_DWORD *)&to.sa_data[6] = 0;
-  *(_DWORD *)&to.sa_data[10] = 0;
-  *(_WORD *)to.sa_data = htons(hostshort);
-  *(_DWORD *)&to.sa_data[2] = -1;
+  memset(&to, 0, sizeof(to));
+  to.sin_family = 2;
+  to.sin_port = htons(hostshort);
+  to.sin_addr.s_addr = 0xFFFFFFFFu;
   if ( !buf
     || (unsigned __int16)a3 < 2u
     || (nox_netextras_on_discovery_ping_send(*(SOCKET *)&byte_5D4594[2513920],
                                             buf,
                                             (unsigned __int16)a3,
                                             (unsigned)hostshort),
-        (result = sendto(*(SOCKET *)&byte_5D4594[2513920], buf, (unsigned __int16)a3, 0, &to, 16),
+        (result = sendto(*(SOCKET *)&byte_5D4594[2513920], buf, (unsigned __int16)a3, 0, (struct sockaddr *)&to, 16),
          v3 = result,
          result != -1)) )
   {
@@ -12353,9 +12347,9 @@ int __cdecl sub_554D70(char a1)
   int fromlen; // [esp+14h] [ebp-21Ch]
   int v11; // [esp+18h] [ebp-218h]
   int v12; // [esp+1Ch] [ebp-214h]
-  struct sockaddr from; // [esp+20h] [ebp-210h]
+  struct sockaddr_in from; // [esp+20h] [ebp-210h]
   char buf[256]; // [esp+30h] [ebp-200h]
-  char in[256]; // [esp+130h] [ebp-100h]
+  NOX_ALIGN4 char in[256]; // [esp+130h] [ebp-100h]
 
   fromlen = 16;
   if ( !*(_DWORD *)&byte_5D4594[2513916] )
@@ -12386,13 +12380,13 @@ LABEL_8:
                    (int)*(SOCKET *)&byte_5D4594[2513920],
                    buf,
                    sizeof(buf),
-                   &from,
+                   (struct sockaddr *)&from,
                    (socklen_t *)&fromlen
                  );
         if ( fr >= 0 )
           v2 = fr;
         else
-          v2 = recvfrom(*(SOCKET *)&byte_5D4594[2513920], buf, 256, 0, &from, &fromlen);
+          v2 = recvfrom(*(SOCKET *)&byte_5D4594[2513920], buf, 256, 0, (struct sockaddr *)&from, &fromlen);
       }
 
 
@@ -12409,7 +12403,7 @@ LABEL_8:
       if ( buf[2] < 0x20u )
       {
         qmemcpy(in, &from, fromlen);
-        if ( v3 == 13 || sub_43B300() == *(_DWORD *)&from.sa_data[2] )
+        if ( v3 == 13 || (unsigned int)sub_43B300() == from.sin_addr.s_addr )
         {
           switch ( (unsigned __int8)v12 )
           {
@@ -12422,7 +12416,7 @@ LABEL_8:
                 {
                   if ( *(_DWORD *)&byte_5D4594[2513928] )
                   {
-                    LOWORD(v6) = ntohs(*(u_short *)&in[2]);
+                    LOWORD(v6) = ntohs(nox_read_u16(&in[2]));
                     if ( (*(int (__cdecl **)(_DWORD, _DWORD, _DWORD, _DWORD))&byte_5D4594[2513928])(
                            v5,
                            v6,
@@ -12442,8 +12436,8 @@ LABEL_8:
               {
                 sub_43AF90(4);
                 buf[2] = 18;
-                v7 = htons(*(u_short *)from.sa_data);
-                sub_555010(*(int *)&from.sa_data[2], v7, buf, 8);
+                v7 = htons(from.sin_port);
+                sub_555010((int)from.sin_addr.s_addr, v7, buf, 8);
               }
               break;
             case 0x13u:
@@ -12505,19 +12499,18 @@ int __cdecl sub_555010(int a1, u_short hostshort, char *buf, int a4)
 {
   int v4; // esi
   int result; // eax
-  struct sockaddr to; // [esp+4h] [ebp-10h]
+  struct sockaddr_in to; // [esp+4h] [ebp-10h]
 
   v4 = 0;
   if ( !*(_DWORD *)&byte_5D4594[2513916] )
     return -17;
-  to.sa_family = 2;
-  *(_DWORD *)&to.sa_data[6] = 0;
-  *(_DWORD *)&to.sa_data[10] = 0;
-  *(_WORD *)to.sa_data = htons(hostshort);
-  *(_DWORD *)&to.sa_data[2] = a1;
+  memset(&to, 0, sizeof(to));
+  to.sin_family = 2;
+  to.sin_port = htons(hostshort);
+  to.sin_addr.s_addr = (uint32_t)a1;
   if ( !buf
     || (unsigned __int16)a4 < 2u
-    || (result = sendto(*(SOCKET *)&byte_5D4594[2513920], buf, (unsigned __int16)a4, 0, &to, 16),
+    || (result = sendto(*(SOCKET *)&byte_5D4594[2513920], buf, (unsigned __int16)a4, 0, (struct sockaddr *)&to, 16),
         v4 = result,
         result != -1) )
   {
@@ -14002,19 +13995,19 @@ double sub_56FE30()
 {
   double v0; // st7
 
-  *(_QWORD *)&byte_5D4594[2516412] = *(_QWORD *)&byte_5D4594[2516404];
-  *(_QWORD *)&byte_5D4594[2516404] = *(_QWORD *)&byte_5D4594[2516396];
-  *(_DWORD *)&byte_5D4594[2516396] = *(_DWORD *)&byte_5D4594[2516388];
-  *(_DWORD *)&byte_5D4594[2516400] = *(_DWORD *)&byte_5D4594[2516392];
-  v0 = *(double *)&byte_5D4594[2516388] * *(double *)&byte_581450[11376]
-     + *(double *)&byte_5D4594[2516404] * *(double *)&byte_581450[11368]
-     + *(double *)&byte_5D4594[2516412] * *(double *)&byte_581450[11360]
-     + *(double *)&byte_5D4594[2516412] * *(double *)&byte_581450[11352]
-     + *(double *)&byte_5D4594[2516420];
+  nox_write_u64(&byte_5D4594[2516412], nox_read_u64(&byte_5D4594[2516404]));
+  nox_write_u64(&byte_5D4594[2516404], nox_read_u64(&byte_5D4594[2516396]));
+  nox_write_u32(&byte_5D4594[2516396], nox_read_u32(&byte_5D4594[2516388]));
+  nox_write_u32(&byte_5D4594[2516400], nox_read_u32(&byte_5D4594[2516392]));
+  v0 = nox_read_f64(&byte_5D4594[2516388]) * nox_read_f64(&byte_581450[11376])
+     + nox_read_f64(&byte_5D4594[2516404]) * nox_read_f64(&byte_581450[11368])
+     + nox_read_f64(&byte_5D4594[2516412]) * nox_read_f64(&byte_581450[11360])
+     + nox_read_f64(&byte_5D4594[2516412]) * nox_read_f64(&byte_581450[11352])
+     + nox_read_f64(&byte_5D4594[2516420]);
   floor(v0);
-  *(double *)&byte_5D4594[2516388] = v0 - v0;
-  *(double *)&byte_5D4594[2516420] = v0 * *(double *)&byte_581450[11344];
-  return *(double *)&byte_5D4594[2516388];
+  nox_write_f64(&byte_5D4594[2516388], v0 - v0);
+  nox_write_f64(&byte_5D4594[2516420], v0 * nox_read_f64(&byte_581450[11344]));
+  return nox_read_f64(&byte_5D4594[2516388]);
 }
 
 //----- (0056FF00) --------------------------------------------------------
@@ -14034,7 +14027,7 @@ void __cdecl sub_56FF00(int a1)
     v2 += 8;
     v3 = (((v1 << 13) ^ (unsigned int)v1) >> 17) ^ (v1 << 13) ^ v1;
     v1 = (32 * v3) ^ v3;
-    *((double *)v2 - 1) = (double)(unsigned int)v1 * *(double *)&byte_581450[11344];
+    nox_write_f64(v2 - 8, (double)(unsigned int)v1 * nox_read_f64(&byte_581450[11344]));
   }
   while ( (int)v2 < (int)&byte_5D4594[2516428] );
   v4 = 19;
@@ -14333,20 +14326,18 @@ SOCKET sub_578E10()
   SOCKET result; // eax
   unsigned __int8 *v1; // eax
   u_long argp; // [esp+4h] [ebp-14h]
-  struct sockaddr name; // [esp+8h] [ebp-10h]
+  struct sockaddr_in name; // [esp+8h] [ebp-10h]
 
-  *(_WORD *)&name.sa_data[6] = 0;
-  *(_DWORD *)&name.sa_data[8] = 0;
+  memset(&name, 0, sizeof(name));
   argp = 1;
-  name.sa_family = 2;
-  *(_WORD *)&name.sa_data[12] = 0;
-  *(_WORD *)name.sa_data = htons(*(u_short *)&byte_5D4594[2523736]);
-  *(_DWORD *)&name.sa_data[2] = 0;
+  name.sin_family = 2;
+  name.sin_port = htons(*(u_short *)&byte_5D4594[2523736]);
+  name.sin_addr.s_addr = 0;
   result = socket(2, 1, 0);
   *(_DWORD *)&byte_587000[311480] = result;
   if ( result != -1 )
   {
-    if ( bind(result, &name, 16) == -1 )
+    if ( bind(result, (struct sockaddr *)&name, 16) == -1 )
     {
       result = -2;
     }
@@ -14456,15 +14447,12 @@ int sub_578FF0()
   char *v7; // [esp-4h] [ebp-A4h]
   u_long argp; // [esp+8h] [ebp-98h]
   int addrlen; // [esp+Ch] [ebp-94h]
-  struct sockaddr addr; // [esp+10h] [ebp-90h]
+  struct sockaddr_in addr; // [esp+10h] [ebp-90h]
   char buf[128]; // [esp+20h] [ebp-80h]
 
-  *(_DWORD *)addr.sa_data = 0;
-  *(_DWORD *)&addr.sa_data[4] = 0;
-  addr.sa_family = 2;
-  *(_DWORD *)&addr.sa_data[8] = 0;
+  memset(&addr, 0, sizeof(addr));
+  addr.sin_family = 2;
   v0 = 0;
-  *(_WORD *)&addr.sa_data[12] = 0;
   result = (int)&byte_5D4594[2516484];
   while ( *(int *)result != -1 )
   {
@@ -14476,7 +14464,7 @@ int sub_578FF0()
   if ( v0 != -1 )
   {
     addrlen = 16;
-    v2 = accept(*(SOCKET *)&byte_587000[311480], &addr, &addrlen);
+    v2 = accept(*(SOCKET *)&byte_587000[311480], (struct sockaddr *)&addr, &addrlen);
     if ( v2 == -1 )
     {
       result = WSAGetLastError();
@@ -14487,7 +14475,7 @@ int sub_578FF0()
     {
       v3 = 1044 * v0;
       argp = 1;
-      *(_DWORD *)&byte_5D4594[v3 + 2517520] = *(_DWORD *)&addr.sa_data[2];
+      *(_DWORD *)&byte_5D4594[v3 + 2517520] = addr.sin_addr.s_addr;
       if ( ioctlsocket(v2, -2147195266, &argp) == -1 )
         sub_578F20(-5);
       ++*(_WORD *)&byte_5D4594[2523738];
@@ -16861,7 +16849,12 @@ int __cdecl sub_57BC50(char *a1, char *a2)
   v2 = fopen(a1, (const char *)&byte_587000[313152]);
   v3 = v2;
   if ( !v2 )
+  {
+#ifdef __3DS__
+    printf("[solo] sub_57BC50: fopen('%s','rb') FAILED\n", a1);
+#endif
     return 0;
+  }
   fseek(v2, 0, 2);
   v4 = ftell(v3);
   fseek(v3, 0, 0);
@@ -16871,7 +16864,18 @@ int __cdecl sub_57BC50(char *a1, char *a2)
   v7 = (char *)malloc(v12);
   v8 = v7;
   if ( !v6 || !v7 )
+  {
+#ifdef __3DS__
+    printf("[solo] sub_57BC50: OOM comp=%u (%p) uncomp=%u (%p)\n",
+           (unsigned)v5, (void *)v6, (unsigned)v12, (void *)v7);
+#endif
+    if ( v6 )
+      free(v6);
+    if ( v8 )
+      free(v8);
+    fclose(v3);
     return 0;
+  }
   sub_40ADD0(v6, 1u, (size_t)v5, v3);
   fclose(v3);
   a1 = v5;
@@ -16885,11 +16889,21 @@ int __cdecl sub_57BC50(char *a1, char *a2)
   sub_578C40(v9);
   v10 = fopen(a2, (const char *)&byte_587000[313156]);
   if ( !v10 )
+  {
+#ifdef __3DS__
+    printf("[solo] sub_57BC50: fopen('%s','wb') FAILED\n", a2);
+#endif
+    free(v6);
+    free(v8);
     return 0;
+  }
   fwrite(v8, v12, 1u, v10);
   fclose(v10);
   free(v6);
   free(v8);
+#ifdef __3DS__
+  printf("[solo] sub_57BC50: extracted '%s' (%u bytes)\n", a2, (unsigned)v12);
+#endif
   return 1;
 }
 

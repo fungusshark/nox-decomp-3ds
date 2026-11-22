@@ -149,15 +149,15 @@ void CONNECT_PREPARE (sm_args_t *args)
   v1 = sub_431770();
   nox_wcscpy((wchar_t *)v1, (const wchar_t *)&byte_5D4594[2661908]);
   v1[66] = byte_5D4594[2661958];
-  *(_WORD *)(v1 + 71) = *(_WORD *)&byte_5D4594[2661888];
+  nox_write_u16(v1 + 71, nox_read_u16(&byte_5D4594[2661888]));
   v1[73] = byte_5D4594[2661890];
-  *((_WORD *)v1 + 34) = *(_WORD *)&byte_5D4594[2661891];
+  nox_write_u16(v1 + 68, nox_read_u16(&byte_5D4594[2661891]));
   v1[70] = byte_5D4594[2661893];
-  *((_WORD *)v1 + 37) = *(_WORD *)&byte_5D4594[2661894];
+  nox_write_u16(v1 + 74, nox_read_u16(&byte_5D4594[2661894]));
   v1[76] = byte_5D4594[2661896];
-  *(_WORD *)(v1 + 77) = *(_WORD *)&byte_5D4594[2661897];
+  nox_write_u16(v1 + 77, nox_read_u16(&byte_5D4594[2661897]));
   v1[79] = byte_5D4594[2661899];
-  *((_WORD *)v1 + 40) = *(_WORD *)&byte_5D4594[2661900];
+  nox_write_u16(v1 + 80, nox_read_u16(&byte_5D4594[2661900]));
   v1[82] = byte_5D4594[2661902];
   v1[83] = byte_5D4594[2661903];
   v1[84] = byte_5D4594[2661904];
@@ -166,8 +166,8 @@ void CONNECT_PREPARE (sm_args_t *args)
   v1[87] = byte_5D4594[2661907];
   v1[67] = byte_5D4594[2661959];
   sub_48D740();
-  *(_DWORD *)&Data[97] = v5;
-  *(_DWORD *)&Data[101] = v4;
+  nox_write_u32(&Data[97], (uint32_t)v5);
+  nox_write_u32(&Data[101], (uint32_t)v4);
   sub_420120(&Data[105]);
   if ( !sub_43AF70() )
     sub_40E0D0((int)&Data[105], (LPCSTR)&byte_587000[86344], 0);
@@ -176,7 +176,7 @@ void CONNECT_PREPARE (sm_args_t *args)
     Data[152] |= 0x80u;
   strcpy((char *)&Data[142], (const char *)&byte_5D4594[2660099]);
   strcpy((char *)&Data[128], sub_41FA40());
-  *(_DWORD *)&Data[138] = *(_DWORD *)&byte_5D4594[2660032];
+  nox_write_u32(&Data[138], nox_read_u32(&byte_5D4594[2660032]));
   qmemcpy(Data, v1, 0x61u);
 
   if ( sub_40A5C0(1) )
@@ -227,7 +227,7 @@ void NET_CONNECT (sm_args_t *args)
   int v10; // esi
   char v11; // al
   char v12; // [esp+12h] [ebp-1B2h]
-  struct sockaddr name; // [esp+14h] [ebp-1B0h]
+  struct sockaddr_in name; // [esp+14h] [ebp-1B0h]
   WORD v14[2]; // [esp+24h] [ebp-1A0h]
   int v15; // [esp+28h] [ebp-19Ch]
   struct WSAData WSAData; // [esp+34h] [ebp-190h]
@@ -262,7 +262,7 @@ void NET_CONNECT (sm_args_t *args)
       WSACleanup();
       GOTO_NET_CONNECT_THEN(-4);
     }
-    v8 = **(_DWORD **)v9->h_addr_list;
+    v8 = nox_read_u32(*(const void **)v9->h_addr_list);
   }
   else
   {
@@ -271,24 +271,23 @@ void NET_CONNECT (sm_args_t *args)
   v15 = 0;
   v14[0] = 2;
   v14[1] = htons(hostshort);
-  v5[1] = *(_DWORD *)v14;
+  v5[1] = (int)nox_read_u32(v14);
   v5[2] = v8;
   v5[3] = 0;
   v5[4] = 0;
   v10 = sub_40A420();
-  name.sa_family = 2;
-  *(_DWORD *)&name.sa_data[6] = 0;
-  *(_DWORD *)&name.sa_data[10] = 0;
-  *(_WORD *)name.sa_data = htons(v10);
-  *(_DWORD *)&name.sa_data[2] = 0;
-  while ( bind(*v5, &name, 16) == -1 )
+  memset(&name, 0, sizeof(name));
+  name.sin_family = 2;
+  name.sin_port = htons(v10);
+  name.sin_addr.s_addr = 0;
+  while ( bind(*v5, (struct sockaddr *)&name, 16) == -1 )
   {
     if ( WSAGetLastError() != 10048 )
     {
       WSACleanup();
       GOTO_NET_CONNECT_THEN(-1);
     }
-    *(_WORD *)name.sa_data = htons(++v10);
+    name.sin_port = htons(++v10);
   }
   *(_DWORD *)&byte_5D4594[3844304] = 0;
   v12 = 0;
@@ -393,6 +392,11 @@ void CONNECT_RESULT (sm_args_t *args)
   int v28;
   int result = args->connect_result.result;
 
+#ifdef __3DS__
+  printf("[sm] CONNECT_RESULT result=%d flags=(1:%d,2:%d,2048:%d,0x2000:%d)\n",
+         result, sub_40A5C0(1) != 0, sub_40A5C0(2) != 0,
+         sub_40A5C0(2048) != 0, sub_40A5C0(0x2000) != 0);
+#endif
   if (result)
   {
     sub_40A540(0x100000);
@@ -430,7 +434,12 @@ void CONNECT_RESULT (sm_args_t *args)
           if ( !v26 )
             sub_43BEF0(640, 480, v25);
           if ( !sub_43BF10(0) )
+          {
+#ifdef __3DS__
+            printf("[sm] ERROR: sub_43BF10(0) returned 0!\n");
+#endif
             return;
+          }
         }
         if ( sub_435CC0() )
         {
@@ -447,8 +456,26 @@ void CONNECT_RESULT (sm_args_t *args)
           sub_43E290();
           return;
         }
+#ifdef __3DS__
+        else
+        {
+          printf("[sm] ERROR: sub_435CC0() failed -> falling back to f(0)\n");
+        }
+#endif
       }
+#ifdef __3DS__
+      else
+      {
+        printf("[sm] ERROR: sub_4D17F0() failed -> falling back to f(0)\n");
+      }
+#endif
     }
+#ifdef __3DS__
+    else
+    {
+      printf("[sm] ERROR: sub_4D38D0() == 1 -> falling back to f(0)\n");
+    }
+#endif
   }
 
   f(0);
@@ -505,16 +532,29 @@ void f(int reentrant)
       if ( sub_40A5C0(1) )
       {
         if ( !sub_4D1660() )
+        {
+#ifdef __3DS__
+          printf("[sm] ERROR: sub_4D1660() failed in f(1)!\n");
+#endif
           return;
+        }
       }
       if ( !sub_4357D0(g_a1, g_a2) )
+      {
+#ifdef __3DS__
+        printf("[sm] ERROR: sub_4357D0(%d, %d) failed in f(1)!\n", g_a1, g_a2);
+#endif
         return;
+      }
       if ( sub_40A5C0(1) && sub_40A5C0(0x400000) && (byte_5D4594[2650636] & 1) == 1 )
       {
         v23 = sub_409E10();
         sub_4D39F0(v23);
         if ( !sub_4D4320() )
         {
+#ifdef __3DS__
+          printf("[sm] ERROR: sub_4D4320() failed in f(1)!\n");
+#endif
           sub_4D12E0(0);
           return;
         }

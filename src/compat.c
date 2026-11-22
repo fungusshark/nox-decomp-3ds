@@ -35,7 +35,11 @@
 
 
 #ifndef COMPAT_STAT_LOG
+#ifdef __3DS__
+#define COMPAT_STAT_LOG 0
+#else
 #define COMPAT_STAT_LOG 1
+#endif
 #endif
 
 #if COMPAT_STAT_LOG
@@ -1193,14 +1197,16 @@ BOOL WINAPI SystemTimeToFileTime(const SYSTEMTIME *lpSystemTime, LPFILETIME lpFi
     t = (t * 1000 + lpSystemTime->wMilliseconds) * 10000;
     lpFileTime->dwLowDateTime = t & 0xffffffff;
     lpFileTime->dwHighDateTime = t >> 32;
+    return TRUE;
 }
 
 LONG WINAPI CompareFileTime(const FILETIME *lpFileTime1, const FILETIME *lpFileTime2)
 {
     if (lpFileTime1->dwHighDateTime != lpFileTime2->dwHighDateTime)
-        return (LONG)lpFileTime1->dwHighDateTime - (LONG)lpFileTime2->dwHighDateTime;
+        return (lpFileTime1->dwHighDateTime < lpFileTime2->dwHighDateTime) ? -1 : 1;
     if (lpFileTime1->dwLowDateTime != lpFileTime2->dwLowDateTime)
-        return (LONG)lpFileTime1->dwLowDateTime - (LONG)lpFileTime2->dwLowDateTime;
+        return (lpFileTime1->dwLowDateTime < lpFileTime2->dwLowDateTime) ? -1 : 1;
+    return 0;
 }
 
 VOID WINAPI GetLocalTime(LPSYSTEMTIME lpSystemTime)
@@ -1271,10 +1277,16 @@ static char *dos_to_unix(const char *path)
         return strdup(buf);
     }
     char *str = malloc(strlen(p) + 1);
-    int i;
-    for (i = 0; p[i]; i++)
-        str[i] = (p[i] == '\\') ? '/' : p[i];
-    str[i] = 0;
+    int i, o = 0;
+    for (i = 0; p[i]; i++) {
+        char c = (p[i] == '\\') ? '/' : p[i];
+        if (c == '/' && o > 0 && str[o - 1] == '/')
+            continue;
+        str[o++] = c;
+    }
+    while (o > 1 && str[o - 1] == '/' && !(o >= 2 && str[o - 2] == ':'))
+        o--;
+    str[o] = 0;
     return str;
 #else
     int i, len = strlen(path);
@@ -1586,7 +1598,7 @@ BOOL WINAPI FindClose(HANDLE hFindFile)
 HANDLE WINAPI CreateFileA(LPCSTR lpFileName, DWORD dwDesiredAccess, DWORD dwShareMode, LPSECURITY_ATTRIBUTES lpSecurityAttributes, DWORD dwCreationDisposition, DWORD dwFlagsAndAttributes, HANDLE hTemplateFile)
 {
     char *converted = dos_to_unix(lpFileName);
-    int fd, flags;
+    int fd, flags = O_RDONLY;
 
     switch (dwDesiredAccess)
     {
@@ -1699,6 +1711,8 @@ BOOL WINAPI CopyFileA(LPCSTR lpExistingFileName, LPCSTR lpNewFileName, BOOL bFai
     if (wfd < 0)
     {
 error:
+        if (wfd >= 0)
+            close(wfd);
         close(rfd);
         return FALSE;
     }
@@ -1724,10 +1738,35 @@ BOOL WINAPI DeleteFileA(LPCSTR lpFileName)
 
 BOOL WINAPI MoveFileA(LPCSTR lpExistingFileName, LPCSTR lpNewFileName)
 {
-    char *converted = dos_to_unix(lpExistingFileName);
-    free(converted);
-    dprintf("%s\n", __FUNCTION__);
-    DebugBreak();
+    if (!lpExistingFileName || !lpNewFileName)
+        return FALSE;
+
+    char *src_ptr = dos_to_unix(lpExistingFileName);
+    char *dst_ptr = dos_to_unix(lpNewFileName);
+    if (!src_ptr || !dst_ptr) {
+        free(src_ptr);
+        free(dst_ptr);
+        return FALSE;
+    }
+
+    char *src_case = alloca(strlen(src_ptr) + 2);
+    const char *src_use = casepath(src_ptr, src_case) ? src_case : src_ptr;
+
+    char *dst_case = alloca(strlen(dst_ptr) + 2);
+    const char *dst_use = casepath(dst_ptr, dst_case) ? dst_case : dst_ptr;
+
+    int rc = rename(src_use, dst_use);
+    if (rc != 0) {
+        /* Fallback: copy + delete if rename fails across mount/overwrite semantics */
+        if (CopyFileA(lpExistingFileName, lpNewFileName, FALSE)) {
+            DeleteFileA(lpExistingFileName);
+            rc = 0;
+        }
+    }
+
+    free(src_ptr);
+    free(dst_ptr);
+    return (rc == 0) ? TRUE : FALSE;
 }
 
 BOOL WINAPI CreateDirectoryA(LPCSTR lpPathName, LPSECURITY_ATTRIBUTES lpSecurityAttributes)
@@ -1980,11 +2019,43 @@ int _stat(const char *path, struct _stat *buffer)
     return 0;
 }
 
+static void ensure_parent_dirs(const char *unix_path)
+{
+    if (!unix_path || !*unix_path)
+        return;
+    char tmp[PATH_MAX];
+    snprintf(tmp, sizeof(tmp), "%s", unix_path);
+    size_t len = strlen(tmp);
+    while (len > 1 && tmp[len - 1] == '/') {
+        tmp[--len] = '\0';
+    }
+    for (char *p = tmp + 1; *p; ++p) {
+        if (*p == '/') {
+            if (p > tmp && p[-1] == ':')
+                continue;
+            *p = '\0';
+            mkdir(tmp, 0777);
+            *p = '/';
+        }
+    }
+}
+
 int _mkdir(const char *path)
 {
     int result;
     char *converted = dos_to_unix(path);
+    size_t len = strlen(converted);
+    while (len > 1 && converted[len - 1] == '/') {
+        converted[--len] = '\0';
+    }
     result = mkdir(converted, 0777);
+    if (result != 0 && errno == ENOENT) {
+        ensure_parent_dirs(converted);
+        result = mkdir(converted, 0777);
+    }
+    if (result != 0 && errno == EEXIST) {
+        result = 0;
+    }
     free(converted);
     return result;
 }
@@ -2002,12 +2073,34 @@ char *_getcwd(char *buffer, int maxlen)
 {
     int i;
 
-    if (maxlen < 2)
+    if (maxlen < 3)
         return NULL;
 
+#ifdef __3DS__
+    char tmp[PATH_MAX];
+    if (!getcwd(tmp, sizeof(tmp)))
+        snprintf(tmp, sizeof(tmp), "%s", NOX_3DS_DATA_ROOT);
+
+    const char *p = tmp;
+    if (strncmp(p, "sdmc:", 5) == 0)
+        p += 5;
+
+    size_t plen = strlen(p);
+    while (plen > 1 && p[plen - 1] == '/')
+        plen--;
+
+    if ((int)(plen + 3) > maxlen)
+        return NULL;
+
+    buffer[0] = 'C';
+    buffer[1] = ':';
+    memcpy(buffer + 2, p, plen);
+    buffer[2 + plen] = '\0';
+#else
     strcpy(buffer, "C:");
     if (!getcwd(buffer + 2, maxlen - 2))
         return NULL;
+#endif
 
     for (i = 0; buffer[i]; i++)
         if (buffer[i] == '/')
@@ -2175,14 +2268,21 @@ FILE *compat_fopen(const char *path, const char *mode)
     FILE *result;
     char *converted = dos_to_unix(path);
     char *converted_ptr = converted;
+#ifndef __3DS__
     fprintf(stderr, "compat_fopen: fcaseopen(%s)\n", converted);
+#endif
 
     char *r = alloca(strlen(converted) + 2);
     char *cdir = get_current_dir_name();
 
     /* Some paths are absolute for some reason */
-    if (cdir && strstr(converted, cdir) == converted_ptr) {
-        converted = converted + strlen(cdir) + 1;
+    if (cdir) {
+        size_t clen = strlen(cdir);
+        while (clen > 1 && cdir[clen - 1] == '/')
+            clen--;
+        if (strncmp(converted, cdir, clen) == 0 && converted[clen] == '/') {
+            converted = converted + clen + 1;
+        }
     }
 
     free(cdir);
@@ -2192,6 +2292,11 @@ FILE *compat_fopen(const char *path, const char *mode)
 
     /* Call the real C library fopen (macro undefined above) */
     result = fopen(r, mode);
+
+    if (!result && mode && (strchr(mode, 'w') || strchr(mode, 'a'))) {
+        ensure_parent_dirs(r);
+        result = fopen(r, mode);
+    }
 
     if (!result) {
         fprintf(stderr,
@@ -2206,11 +2311,14 @@ FILE *compat_fopen(const char *path, const char *mode)
                     "compat_fopen: fallback fopen(%s, %s) = %p\n",
                     path, mode ? mode : "(null)", (void *)result);
         }
-    } else {
+    }
+#ifndef __3DS__
+    else {
         fprintf(stderr,
                 "compat_fopen: fopen(%s, %s) = %p\n",
                 r, orig_mode, (void *)result);
     }
+#endif
 
     free(converted_ptr);
     return result;

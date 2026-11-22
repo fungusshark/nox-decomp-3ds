@@ -289,9 +289,10 @@ void nox_3ds_video_present(const void *pixels, int w, int h, int pitch,
     if (now_ms - s_diag_last_ms >= 5000u) {
         const nox_3ds_state_t *st = nox_3ds_get_state();
         s_diag_last_ms = now_ms;
-        printf("[3ds] %u FPS | aim=%s | %s | linFree=%uKB | heap=%.1fMB\n",
+        printf("[3ds] %u FPS | aim=%s cstk=%s | %s | linFree=%uKB | heap=%.1fMB\n",
                (unsigned)st->fps,
                (st->aim_mode == NOX_3DS_AIM_RADIAL) ? "Radial" : "Cursor",
+               (st->cstick_mode == NOX_3DS_CSTICK_AIM_CAMERA) ? "Aim" : "Spell",
                st->wide_stretch ? "400x240" : "4:3",
                (unsigned)(st->linear_free_bytes / 1024u),
                (double)st->heap_used_bytes / (1024.0 * 1024.0));

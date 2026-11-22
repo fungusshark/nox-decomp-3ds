@@ -20281,18 +20281,18 @@ int sub_416500()
   memset(&byte_5D4594[371380], 0, 0x74u);
   memset(&byte_5D4594[371516], 0, 0xA8u);
   byte_5D4594[371684] = 0;
-  *(_WORD *)&byte_5D4594[371621] = -1;
-  *(_WORD *)&byte_5D4594[371623] = -1;
+  nox_write_u16(&byte_5D4594[371621], (uint16_t)-1);
+  nox_write_u16(&byte_5D4594[371623], (uint16_t)-1);
   result = 0;
   *(_DWORD *)&byte_5D4594[371688] = 0;
   byte_5D4594[371617] = -1;
   byte_5D4594[371568] = 32;
   byte_5D4594[371569] = 32;
-  *(_DWORD *)&byte_5D4594[371578] = 1;
-  *(_DWORD *)&byte_5D4594[371574] = 0;
-  *(_DWORD *)&byte_5D4594[371582] = 0;
-  *(_DWORD *)&byte_5D4594[371586] = 0;
-  *(_DWORD *)&byte_5D4594[371590] = 20;
+  nox_write_u32(&byte_5D4594[371578], 1u);
+  nox_write_u32(&byte_5D4594[371574], 0u);
+  nox_write_u32(&byte_5D4594[371582], 0u);
+  nox_write_u32(&byte_5D4594[371586], 0u);
+  nox_write_u32(&byte_5D4594[371590], 20u);
   *(_DWORD *)&byte_5D4594[371696] = 0;
   return result;
 }
@@ -21308,9 +21308,9 @@ char *__cdecl sub_4175C0(int a1)
   for ( i = (int)result; result; i = (int)result )
   {
     v4[0] = 106;
-    *(_WORD *)&v4[1] = *(_WORD *)(i + 2060);
+    nox_write_u16(&v4[1], nox_read_u16((const void *)(i + 2060)));
     v3 = *(unsigned __int8 *)(a1 + 2064);
-    *(_DWORD *)&v4[3] = *(_DWORD *)(i + 3680) & 0x423;
+    nox_write_u32(&v4[3], nox_read_u32((const void *)(i + 3680)) & 0x423u);
     sub_4E5390(v3, (int)v4, 7, 0, 0);
     result = sub_416EE0(i);
   }
@@ -21327,8 +21327,8 @@ int __cdecl sub_417630(int a1)
   v1 = *(_WORD *)(a1 + 2060);
   v2 = *(_DWORD *)(a1 + 3680) & 0x423;
   v4[0] = 106;
-  *(_WORD *)&v4[1] = v1;
-  *(_DWORD *)&v4[3] = v2;
+  nox_write_u16(&v4[1], (uint16_t)v1);
+  nox_write_u32(&v4[3], (uint32_t)v2);
   return sub_4E5390(255, (int)v4, 7, 0, 0);
 }
 
@@ -34528,6 +34528,7 @@ int __cdecl sub_426910(char *a1, int a2, int a3)
   *(_DWORD *)&byte_5D4594[739988] = result;
   if ( result )
   {
+    sub_409560();
     result = sub_408D40(result, a3);
     if ( result )
     {
@@ -34543,7 +34544,19 @@ int __cdecl sub_426910(char *a1, int a2, int a3)
         result = 1;
       }
     }
+#ifdef __3DS__
+    else
+    {
+      printf("[solo] sub_426910: sub_408D40('%s', key=%d) FAILED\n", a1 ? a1 : "(null)", a3);
+    }
+#endif
   }
+#ifdef __3DS__
+  else
+  {
+    printf("[solo] sub_426910: sub_408CC0('%s', mode=%d) FAILED\n", a1 ? a1 : "(null)", v3);
+  }
+#endif
   return result;
 }
 
@@ -36973,14 +36986,14 @@ int __cdecl sub_429B20(_DWORD *a1)
   struc_19 *v12; // eax
   int v13; // eax
   int v14; // eax
-  char v15; // bl
+  signed char v15; // bl
   char v16; // bl
   unsigned __int8 *v17; // esi
   int v18; // edi
   unsigned __int8 *v19; // eax
   unsigned __int8 *v20; // edi
   unsigned __int8 *v21; // ebx
-  char v22; // [esp+2h] [ebp-3Ah]
+  signed char v22; // [esp+2h] [ebp-3Ah]
   char v23; // [esp+3h] [ebp-39h]
   int v24; // [esp+4h] [ebp-38h]
   int v25; // [esp+8h] [ebp-34h]
@@ -37001,7 +37014,12 @@ int __cdecl sub_429B20(_DWORD *a1)
   v28 = 7;
   sub_426AC0(&v28, 2u);
   if ( (__int16)v28 > 7 )
+  {
+#ifdef __3DS__
+    printf("[solo] WallMap: bad version %d\n", (int)(__int16)v28);
+#endif
     return 0;
+  }
   if ( (__int16)v28 < 6 )
     return sub_42A150(v28, a1);
   v2 = a1;
@@ -37079,7 +37097,13 @@ int __cdecl sub_429B20(_DWORD *a1)
         }
         v17 = (unsigned __int8 *)sub_410250(v18, (unsigned __int8)a1);
         if ( !v17 )
+        {
+#ifdef __3DS__
+          printf("[solo] WallMap: sub_410250(%d, %d) returned NULL (pool=%p)\n",
+                 v18, (int)(unsigned __int8)a1, *(void **)&byte_5D4594[251548]);
+#endif
           return 0;
+        }
       }
       *v17 = v24;
 LABEL_46:
@@ -40812,6 +40836,9 @@ int __cdecl sub_42EE30(int a1)
   *(_DWORD *)&byte_5D4594[787204] = result;
   if ( result )
   {
+#ifdef __3DS__
+    setvbuf((FILE *)result, NULL, _IOFBF, 65536);
+#endif
     v3 = (int *)sub_42F0B0(a1);
     v4 = v3;
     if ( v3 )
@@ -40838,8 +40865,12 @@ int __cdecl sub_42EE30(int a1)
         *(_DWORD *)&byte_5D4594[787152] = malloc(12 * *(_DWORD *)&byte_5D4594[787168]);
         sub_42F200(v6, a1);
         free(v4);
+#ifdef __3DS__
+        v7 = 0x200000;
+#else
         v7 = 0x800000;
-        if ( *(_DWORD *)&v9[4] * *(_DWORD *)&byte_5D4594[787172] < 0x800000 )
+#endif
+        if ( *(_DWORD *)&v9[4] * *(_DWORD *)&byte_5D4594[787172] < v7 )
           v7 = *(_DWORD *)&v9[4] * *(_DWORD *)&byte_5D4594[787172];
         v8 = *(_DWORD *)&v9[4] * (v7 / *(_DWORD *)&v9[4]);
         *(_DWORD *)&byte_5D4594[787192] = v8 / *(_DWORD *)&v9[4];
@@ -40984,18 +41015,19 @@ FILE *__cdecl sub_42F0B0(int a1)
 //----- (0042F1B0) --------------------------------------------------------
 int __cdecl sub_42F1B0(int *a1, int *a2)
 {
+  const unsigned __int8 *p = (const unsigned __int8 *)a1;
   int v2; // edx
   bool v3; // zf
 
-  v2 = *a1;
-  v3 = *a1 == -85082902;
-  *a2 = *a1;
+  v2 = nox_read_s32(p);
+  v3 = v2 == -85082902;
+  nox_write_u32(a2, (uint32_t)v2);
   if ( !v3 && v2 != -85082901 )
     return 0;
-  a2[3] = a1[2];
-  a2[1] = a1[3];
-  a2[2] = a1[4];
-  a2[4] = a1[5];
+  nox_write_u32(&a2[3], nox_read_u32(p + 8));
+  nox_write_u32(&a2[1], nox_read_u32(p + 12));
+  nox_write_u32(&a2[2], nox_read_u32(p + 16));
+  nox_write_u32(&a2[4], nox_read_u32(p + 20));
   return 24;
 }
 
@@ -41006,7 +41038,7 @@ int __cdecl sub_42F200(unsigned __int8 *a1, int a2)
   int result; // eax
   int v4; // esi
   int v5; // ebx
-  _DWORD *v6; // ecx
+  unsigned __int8 *v6; // ecx
   int v7; // edx
   int v8; // edi
   int v9; // ebp
@@ -41014,7 +41046,7 @@ int __cdecl sub_42F200(unsigned __int8 *a1, int a2)
   int v11; // edx
   unsigned __int8 *v12; // ecx
   unsigned __int8 v13; // al
-  _DWORD *v14; // ecx
+  unsigned __int8 *v14; // ecx
   int v15; // edi
   int v16; // [esp+0h] [ebp-Ch]
   int v17; // [esp+4h] [ebp-8h]
@@ -41032,19 +41064,19 @@ int __cdecl sub_42F200(unsigned __int8 *a1, int a2)
     v4 = 0;
     do
     {
-      v5 = *((_DWORD *)v2 + 1);
+      v5 = nox_read_s32(v2 + 4);
       v6 = v2 + 8;
       if ( *(_DWORD *)&byte_5D4594[754144] )
       {
-        v7 = *v6;
-        ++v6;
+        v7 = nox_read_s32(v6);
+        v6 += 4;
       }
       else
       {
         v7 = v5;
       }
-      v8 = *v6;
-      v2 = (unsigned __int8 *)(v6 + 1);
+      v8 = nox_read_s32(v6);
+      v2 = v6 + 4;
       *(_DWORD *)(v4 + *(_DWORD *)&byte_5D4594[787148]) = 0;
       *(_DWORD *)(v4 + *(_DWORD *)&byte_5D4594[787148] + 4) = 0;
       *(_DWORD *)(v4 + *(_DWORD *)&byte_5D4594[787148] + 8) = v16;
@@ -41081,10 +41113,10 @@ int __cdecl sub_42F200(unsigned __int8 *a1, int a2)
           v14 = v12 + 1;
           *(_BYTE *)(v11 + *(_DWORD *)&byte_5D4594[787152] + 10) = v13;
           if ( a2 == 1 )
-            v15 = *v14;
+            v15 = nox_read_s32(v14);
           else
-            v15 = v14[1];
-          v2 = (unsigned __int8 *)(v14 + 2);
+            v15 = nox_read_s32(v14 + 4);
+          v2 = v14 + 8;
           v11 += 12;
           *(_DWORD *)(v11 + *(_DWORD *)&byte_5D4594[787152] - 12) = v9;
           v9 += v15;
@@ -41168,6 +41200,10 @@ BOOL __cdecl sub_42F490(char *a1)
   if ( *(_DWORD *)&byte_5D4594[787204] )
     fclose(*(FILE **)&byte_5D4594[787204]);
   *(_DWORD *)&byte_5D4594[787204] = fopen(a1, "rb");
+#ifdef __3DS__
+  if ( *(_DWORD *)&byte_5D4594[787204] )
+    setvbuf(*(FILE **)&byte_5D4594[787204], NULL, _IOFBF, 65536);
+#endif
   return *(_DWORD *)&byte_5D4594[787204] != 0;
 }
 
@@ -41315,8 +41351,8 @@ int __cdecl sub_42F660(int a1, void *a2)
     if ( v6 == 1 )
     {
       v7 = *(_DWORD **)(v2 + 8);
-      v8 = *v7;
-      v9 = (char *)(v7 + 1);
+      v8 = nox_read_s32(v7);
+      v9 = (char *)v7 + 4;
       *(_DWORD *)(v2 + 8) = v9;
       if ( v8 == -1 )
       {
@@ -41381,8 +41417,8 @@ LABEL_15:
               do
               {
                 v20 = *(_DWORD **)(v2 + 8);
-                v21 = *v20;
-                v22 = (char *)(v20 + 1);
+                v21 = nox_read_s32(v20);
+                v22 = (char *)v20 + 4;
                 *(_DWORD *)(v2 + 8) = v22;
                 if ( v21 == -1 )
                 {
@@ -45860,15 +45896,15 @@ int __cdecl sub_435A10(signed int *a1)
   v1 = sub_431770();
   nox_wcscpy((wchar_t *)v1, (const wchar_t *)&byte_5D4594[2661908]);
   v1[66] = byte_5D4594[2661958];
-  *(_WORD *)(v1 + 71) = *(_WORD *)&byte_5D4594[2661888];
+  nox_write_u16(v1 + 71, nox_read_u16(&byte_5D4594[2661888]));
   v1[73] = byte_5D4594[2661890];
-  *((_WORD *)v1 + 34) = *(_WORD *)&byte_5D4594[2661891];
+  nox_write_u16(v1 + 68, nox_read_u16(&byte_5D4594[2661891]));
   v1[70] = byte_5D4594[2661893];
-  *((_WORD *)v1 + 37) = *(_WORD *)&byte_5D4594[2661894];
+  nox_write_u16(v1 + 74, nox_read_u16(&byte_5D4594[2661894]));
   v1[76] = byte_5D4594[2661896];
-  *(_WORD *)(v1 + 77) = *(_WORD *)&byte_5D4594[2661897];
+  nox_write_u16(v1 + 77, nox_read_u16(&byte_5D4594[2661897]));
   v1[79] = byte_5D4594[2661899];
-  *((_WORD *)v1 + 40) = *(_WORD *)&byte_5D4594[2661900];
+  nox_write_u16(v1 + 80, nox_read_u16(&byte_5D4594[2661900]));
   v1[82] = byte_5D4594[2661902];
   v1[83] = byte_5D4594[2661903];
   v1[84] = byte_5D4594[2661904];
@@ -45877,8 +45913,8 @@ int __cdecl sub_435A10(signed int *a1)
   v1[87] = byte_5D4594[2661907];
   v1[67] = byte_5D4594[2661959];
   sub_48D740();
-  *(_DWORD *)&Data[97] = v5;
-  *(_DWORD *)&Data[101] = v4;
+  nox_write_u32(&Data[97], (uint32_t)v5);
+  nox_write_u32(&Data[101], (uint32_t)v4);
   sub_420120(&Data[105]);
   if ( !sub_43AF70() )
     sub_40E0D0((int)&Data[105], (LPCSTR)&byte_587000[86344], 0);
@@ -45887,7 +45923,7 @@ int __cdecl sub_435A10(signed int *a1)
     Data[152] |= 0x80u;
   strcpy((char *)&Data[142], (const char *)&byte_5D4594[2660099]);
   strcpy((char *)&Data[128], sub_41FA40());
-  *(_DWORD *)&Data[138] = *(_DWORD *)&byte_5D4594[2660032];
+  nox_write_u32(&Data[138], nox_read_u32(&byte_5D4594[2660032]));
   qmemcpy(Data, v1, 0x61u);
   if ( sub_40A5C0(1) )
   {
@@ -45930,6 +45966,9 @@ int sub_435CC0()
   int result; // eax
   int v1; // eax
 
+#ifdef __3DS__
+  printf("[solo] sub_435CC0 enter\n");
+#endif
   sub_445450();
   sub_45DB90();
   sub_41D1A0(0);
@@ -46025,6 +46064,9 @@ LABEL_27:
       }
     }
   }
+#ifdef __3DS__
+  printf("[solo] sub_435CC0 exit=%d\n", result);
+#endif
   return result;
 }
 
@@ -49636,16 +49678,22 @@ int __cdecl sub_43BEF0(int a1, int a2, int a3)
 {
   int result; // eax
 
+#ifdef __3DS__
+  a1 = NOX_3DS_LOGICAL_W;
+  a2 = NOX_3DS_LOGICAL_H;
+#endif
   result = a1;
   *(_DWORD *)&byte_587000[91780] = a1;
   *(_DWORD *)&byte_587000[91784] = a2;
   *(_DWORD *)&byte_587000[91788] = a3;
 
+#ifdef USE_SDL
   if (g_fullscreen)
     SDL_SetWindowFullscreen(g_window, SDL_WINDOW_FULLSCREEN_DESKTOP);
   else
     SDL_SetWindowFullscreen(g_window, 0);
   SDL_SetWindowSize(g_window, a1, a2);
+#endif
   return result;
 }
 
@@ -49680,6 +49728,10 @@ int __cdecl sub_43BF10(int a1)
     v2 = *(_DWORD *)&byte_587000[91784];
     v3 = *(_DWORD *)&byte_587000[91788];
   }
+#ifdef __3DS__
+  v1 = NOX_3DS_LOGICAL_W;
+  v2 = NOX_3DS_LOGICAL_H;
+#endif
   sub_430BE0(v1, v2, v3);
   #ifdef USE_SDL
     // sub_430BE0() may clear the shared window pointer (dword_973FE0) as part of mode reset.
@@ -51492,6 +51544,9 @@ int sub_43DEB0()
 
   if ( !sub_40A5C0(0x800000) )
     goto LABEL_16;
+#ifdef __3DS__
+  printf("[solo] sub_43DEB0 map check start\n");
+#endif
   sub_477610(10);
   if ( sub_4DB250() )
     v0 = sub_4DB260();
@@ -51501,6 +51556,9 @@ int sub_43DEB0()
   v2 = sub_409B00();
   v3 = sub_4CF470(v1, v2);
   v4 = v3;
+#ifdef __3DS__
+  printf("[solo] sub_43DEB0 map='%s' flags=0x%x\n", v1 ? v1 : "(null)", (unsigned char)v4);
+#endif
   if ( v3 & 2 && v3 & 4 )
   {
     sub_43F140(500);
@@ -51508,6 +51566,9 @@ int sub_43DEB0()
     sub_43F1A0();
     if ( !v5 )
     {
+#ifdef __3DS__
+      printf("[solo] sub_43DEB0 sub_4AC2B0('%s') FAILED\n", v1 ? v1 : "(null)");
+#endif
       v13 = sub_409B30();
       v6 = sub_40F1D0((char *)&byte_587000[93352], 0, (const char *)&byte_587000[93312], 318);
 LABEL_29:

@@ -43455,7 +43455,7 @@ char *__cdecl sub_4866F0(const char *a1, const char *a2)
     *v3 = 0;
   v4 = byte_587000[155064];
   v5 = &v20[strlen(v20)];
-  *(_DWORD *)v5 = *(_DWORD *)&byte_587000[155060];
+  nox_write_u32(v5, nox_read_u32(&byte_587000[155060]));
   v5[4] = v4;
   v6 = fopen(v20, "rb");
   if ( !v6 )
@@ -43465,10 +43465,15 @@ char *__cdecl sub_4866F0(const char *a1, const char *a2)
     *v7 = 0;
   v8 = &v20[strlen(v20) + 1];
   v9 = byte_587000[155076];
-  *(_DWORD *)--v8 = *(_DWORD *)&byte_587000[155072];
+  --v8;
+  nox_write_u32(v8, nox_read_u32(&byte_587000[155072]));
   v8[4] = v9;
   v10 = fopen(v20, "rb");
   *((_DWORD *)v2 + 67) = v10;
+#ifdef __3DS__
+  if ( v10 )
+    setvbuf(v10, NULL, _IOFBF, 65536);
+#endif
   if ( !v10 || sub_40ADD0(v17, 0xCu, 1u, v6) != 1 )
     goto LABEL_27;
   *((_DWORD *)v2 + 1) = *(_DWORD *)&v17[8];
@@ -43531,7 +43536,7 @@ LABEL_21:
       FindClose(v15);
     }
     if ( v2[strlen(v2 + 8) + 8] != 92 )
-      *(_WORD *)&v2[strlen(v2 + 8) + 8] = *(_WORD *)&byte_587000[155084];
+      nox_write_u16(&v2[strlen(v2 + 8) + 8], nox_read_u16(&byte_587000[155084]));
   }
   return v2;
 }
@@ -43687,31 +43692,31 @@ int __cdecl sub_486B60(int a1, int a2)
     goto LABEL_18;
   while ( 1 )
   {
-    if ( *(_DWORD *)v13 == 544501094 )
+    if ( nox_read_u32(v13) == 544501094u )
     {
       sub_40ADD0(v14, 0x10u, 1u, v7);
-      fseek(v7, *(_DWORD *)&v13[4] - 16, 1);
+      fseek(v7, nox_read_s32(&v13[4]) - 16, 1);
       goto LABEL_15;
     }
-    if ( *(_DWORD *)v13 == 1635017060 )
+    if ( nox_read_u32(v13) == 1635017060u )
       break;
-    fseek(v7, *(int *)&v13[4], 1);
+    fseek(v7, nox_read_s32(&v13[4]), 1);
 LABEL_15:
     if ( sub_40ADD0(v13, 8u, 1u, v7) != 1 )
       goto LABEL_18;
   }
-  v8 = *(_DWORD *)&v13[4];
+  v8 = nox_read_s32(&v13[4]);
 LABEL_18:
   *(_DWORD *)(v2 + 28) = 2;
-  if ( *(unsigned __int16 *)&v14[12] / (int)*(unsigned __int16 *)&v14[2] == 2 )
+  if ( nox_read_u16(&v14[12]) / (int)nox_read_u16(&v14[2]) == 2 )
     *(_DWORD *)(v2 + 28) = 6;
-  if ( *(_WORD *)&v14[2] == 2 )
+  if ( nox_read_u16(&v14[2]) == 2 )
   {
     v9 = *(_DWORD *)(v2 + 28);
     LOBYTE(v9) = v9 | 1;
     *(_DWORD *)(v2 + 28) = v9;
   }
-  *(_DWORD *)(v2 + 24) = *(_DWORD *)&v14[4];
+  *(_DWORD *)(v2 + 24) = nox_read_u32(&v14[4]);
   v10 = *(_DWORD *)(a1 + 272);
   *(_DWORD *)(a1 + 284) = v8;
   *(_DWORD *)(a1 + 280) = v10;
@@ -50001,7 +50006,7 @@ LABEL_902:
         LODWORD(v5) = sub_578B70(*(unsigned __int16 *)(v3 + 1)) ? sub_45A720(v85) : sub_45A6F0(v85);
         if ( !(_DWORD)v5 )
           goto LABEL_948;
-        sub_484D70(v5 + 136, *(float *)(v3 + 3));
+        sub_484D70(v5 + 136, nox_read_f32((const void *)(v3 + 3)));
         v3 += 7;
         goto LABEL_1184;
       case 0x5Eu:

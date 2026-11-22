@@ -538,7 +538,7 @@ static void stream_find_data(HSTREAM stream)
         unsigned int size;
         if (fread(tmp, 8, 1, stream->file) != 1)
             break;
-        size = *(DWORD *)(tmp + 4);
+        size = nox_read_u32(tmp + 4);
         unsigned int skip = size + (size & 1u); // RIFF chunks are padded to even size
         if (memcmp(tmp, "data", 4) == 0)
         {
@@ -665,7 +665,7 @@ static void stream_adpcm_seek(HSTREAM stream, unsigned int position)
     unsigned int target_block;
     unsigned int intra_block_samples;
     unsigned int remaining_position;
-    int16_t tmp[16 * 1024 * 2];
+    int16_t *tmp = NULL;
     unsigned int decoded_samples;
     unsigned int skip_samples;
     unsigned int keep_samples;
@@ -723,6 +723,10 @@ static void stream_adpcm_seek(HSTREAM stream, unsigned int position)
 
     stream->chunk_pos += block_size;
 
+    tmp = (int16_t *)malloc(16 * 1024 * 2 * sizeof(int16_t));
+    if (!tmp)
+        return;
+
     if (stream->stereo)
         decoded_samples = decode_adpcm_stereo(tmp, stream->buffer, block_size);
     else
@@ -735,6 +739,8 @@ static void stream_adpcm_seek(HSTREAM stream, unsigned int position)
     keep_samples = decoded_samples - skip_samples;
     if (keep_samples > 0)
         memcpy(stream->adpcm_seek_pcm, tmp + skip_samples, keep_samples * sizeof(int16_t));
+
+    free(tmp);
 
     stream->adpcm_seek_pcm_samples = keep_samples;
     stream->adpcm_seek_pcm_pos = 0;
@@ -814,7 +820,8 @@ DXDEC HSTREAM AILCALL AIL_open_stream(HDIGDRIVER dig, char const FAR * filename,
     BYTE tmp[256];
     FILE *f;
     HSTREAM stream = NULL;
-    WAVEFORMAT *wf = (WAVEFORMAT *)tmp;
+    WAVEFORMAT wf_val;
+    WAVEFORMAT *wf = &wf_val;
 
     f = fopen(filename, "rb");
     if (f == NULL)
@@ -827,23 +834,29 @@ DXDEC HSTREAM AILCALL AIL_open_stream(HDIGDRIVER dig, char const FAR * filename,
         goto error;
 
     // XXX ignore file size?
-    file_size = *(DWORD *)(tmp + 4) + 8; // RIFF size excludes the first 8 bytes
+    file_size = nox_read_u32(tmp + 4) + 8; // RIFF size excludes the first 8 bytes
 
     if (memcmp(tmp + 8, "WAVE", 4) != 0)
         goto error;
 
     if (fread(tmp, 8, 1, f) != 1)
         goto error;
-    size = *(DWORD *)(tmp + 4);
+    size = nox_read_u32(tmp + 4);
 
     if (memcmp(tmp, "fmt ", 4) != 0)
         goto error;
 
-    if (size < sizeof(WAVEFORMAT) || size > sizeof(tmp))
+    if (size < 14 || size > sizeof(tmp))
         goto error;
 
     if (fread(tmp, size, 1, f) != 1)
         goto error;
+
+    wf_val.wFormatTag      = nox_read_u16(tmp + 0);
+    wf_val.nChannels       = nox_read_u16(tmp + 2);
+    wf_val.nSamplesPerSec  = nox_read_u32(tmp + 4);
+    wf_val.nAvgBytesPerSec = nox_read_u32(tmp + 8);
+    wf_val.nBlockAlign     = nox_read_u16(tmp + 12);
 
     fprintf(stderr,
             "[AIL] open_stream %s: fmt=0x%04X channels=%u rate=%u avgbytes=%u blockalign=%u fmt_size=%u\n",
@@ -883,13 +896,13 @@ DXDEC HSTREAM AILCALL AIL_open_stream(HDIGDRIVER dig, char const FAR * filename,
             goto error;
         if (memcmp(tmp, "fact", 4) != 0)
             goto error;
-        size = *(DWORD *)(tmp + 4);
+        size = nox_read_u32(tmp + 4);
         if (size != 4)
             goto error;
         if (fread(tmp, 4, 1, f) != 1)
             goto error;
 
-        stream->adpcm.samples = *(DWORD *)tmp;
+        stream->adpcm.samples = nox_read_u32(tmp);
     }
     else if (wf->wFormatTag == 0x55) // MP3 in WAV
     {
@@ -915,9 +928,9 @@ DXDEC HSTREAM AILCALL AIL_open_stream(HDIGDRIVER dig, char const FAR * filename,
         if (size < 30)
             goto error;
 
-        channels = *(WORD *)(tmp + 2);
-        rate     = *(DWORD *)(tmp + 4);
-        cbSize   = *(WORD *)(tmp + 16);
+        channels = nox_read_u16(tmp + 2);
+        rate     = nox_read_u32(tmp + 4);
+        cbSize   = nox_read_u16(tmp + 16);
 
         fprintf(stderr,
                 "[AIL] mp3-wav %s: channels=%u rate=%u cbSize=%u fmt_size=%u\n",

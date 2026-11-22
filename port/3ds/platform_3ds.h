@@ -31,6 +31,11 @@ typedef enum {
     NOX_3DS_AIM_FREE_CURSOR = 1
 } nox_3ds_aim_mode_t;
 
+typedef enum {
+    NOX_3DS_CSTICK_AIM_CAMERA = 0,
+    NOX_3DS_CSTICK_SPELL_CAST = 1
+} nox_3ds_cstick_mode_t;
+
 typedef struct {
     bool     is_new_3ds;
     bool     romfs_mounted;
@@ -38,14 +43,15 @@ typedef struct {
     bool     wide_stretch;        /* false = 320x240 4:3, true = 400x240 */
     bool     bottom_console_mode; /* true in M1-M5, toggleable in M6 */
     bool     touch_to_aim;        /* gameplay upper touchscreen aim toggle */
-    nox_3ds_aim_mode_t aim_mode;  /* radial twin-stick vs free-cursor */
+    nox_3ds_aim_mode_t    aim_mode;    /* radial twin-stick vs free-cursor */
+    nox_3ds_cstick_mode_t cstick_mode; /* radial aim+camera vs quick-spell cast */
     uint32_t fps;
     uint32_t linear_free_bytes;
     uint32_t heap_used_bytes;
 } nox_3ds_state_t;
 
 bool     nox_3ds_init(void);             /* osSetSpeedupEnable(true), gfx, console, non-fatal romfs, chdir */
-void     nox_3ds_shutdown(void);         /* video shutdown, romfsExit, gfxExit */
+void     nox_3ds_shutdown(void);         /* net/video shutdown, romfsExit, gfxExit */
 bool     nox_3ds_apt_ok(void);           /* aptMainLoop() wrapper */
 uint32_t nox_3ds_get_ticks_ms(void);     /* osGetTime() relative to startup */
 uint64_t nox_3ds_get_perf_counter(void); /* svcGetSystemTick() */
@@ -99,7 +105,7 @@ typedef struct {
     float curve_exp;    /* non-linear exponent tuned for New 3DS nub (default 1.85) */
     float sensitivity;  /* scalar multiplier (default 1.0) */
     float min_radius;   /* inner radial aim radius in 640x480 pixels (default 56.0) */
-    float max_radius;   /* outer radial aim radius in 640x480 pixels (default 180.0) */
+    float max_radius;   /* outer radial aim/camera look-ahead radius (default 210.0) */
 } nox_3ds_cstick_cfg_t;
 
 typedef struct {
@@ -116,7 +122,9 @@ typedef struct {
     uint16_t touch_x;  /* 0..319 */
     uint16_t touch_y;  /* 0..239 */
     bool     in_gameplay;
-    nox_3ds_aim_mode_t aim_mode;
+    bool     select_combo_used;
+    nox_3ds_aim_mode_t    aim_mode;
+    nox_3ds_cstick_mode_t cstick_mode;
     bool     touch_to_aim;
     nox_3ds_cstick_cfg_t cstick_cfg;
 } nox_3ds_input_t;
@@ -126,12 +134,29 @@ void nox_3ds_input_poll(nox_3ds_input_t *out);
 const nox_3ds_input_t *nox_3ds_input_get(void);
 void nox_3ds_input_set_cstick_params(float deadzone, float curve_exp, float sensitivity);
 void nox_3ds_input_toggle_aim_mode(void);
+void nox_3ds_input_toggle_cstick_mode(void);
 void nox_3ds_input_toggle_touch_aim(void);
 bool nox_3ds_is_gameplay_active(void);
 void nox_3ds_input_process_twin_stick_and_touch(void);
 
 /* =========================================================================
- * 5. Synchronization & ARM11 Alignment-Safe Helpers
+ * 5. In-Memory UDP Loopback Transport (net_loopback_3ds.c, NO socInit)
+ * ========================================================================= */
+void nox_3ds_net_init(void);
+void nox_3ds_net_shutdown(void);
+int  nox_3ds_net_socket(int domain, int type, int protocol);
+int  nox_3ds_net_closesocket(int fd);
+int  nox_3ds_net_bind(int fd, const void *addr, unsigned int addrlen);
+int  nox_3ds_net_setsockopt(int fd, int level, int opt, const void *val, unsigned int len);
+int  nox_3ds_net_ioctlsocket(int fd, long cmd, unsigned long *argp);
+int  nox_3ds_net_sendto(int fd, const void *buf, unsigned int len, int flags,
+                        const void *to, unsigned int tolen);
+int  nox_3ds_net_recvfrom(int fd, void *buf, unsigned int len, int flags,
+                          void *from, unsigned int *fromlen);
+int  nox_3ds_net_last_error(void);
+
+/* =========================================================================
+ * 6. Synchronization & ARM11 Alignment-Safe Helpers
  * ========================================================================= */
 typedef struct nox_3ds_mutex nox_3ds_mutex_t; /* wraps libctru RecursiveLock */
 nox_3ds_mutex_t *nox_3ds_mutex_create(void);
@@ -139,12 +164,29 @@ void             nox_3ds_mutex_destroy(nox_3ds_mutex_t *m);
 void             nox_3ds_mutex_lock(nox_3ds_mutex_t *m);
 void             nox_3ds_mutex_unlock(nox_3ds_mutex_t *m);
 
+#ifndef NOX_ALIGN_HELPERS_DEFINED
+#define NOX_ALIGN_HELPERS_DEFINED
+#if defined(__GNUC__) || defined(__clang__)
+#define NOX_ALIGN4  __attribute__((aligned(4)))
+#define NOX_ALIGN16 __attribute__((aligned(16)))
+#else
+#define NOX_ALIGN4
+#define NOX_ALIGN16
+#endif
+
 static inline uint16_t nox_read_u16(const void *p) { uint16_t v; __builtin_memcpy(&v, p, 2); return v; }
+static inline int16_t  nox_read_s16(const void *p) { int16_t v;  __builtin_memcpy(&v, p, 2); return v; }
 static inline uint32_t nox_read_u32(const void *p) { uint32_t v; __builtin_memcpy(&v, p, 4); return v; }
+static inline int32_t  nox_read_s32(const void *p) { int32_t v;  __builtin_memcpy(&v, p, 4); return v; }
+static inline uint64_t nox_read_u64(const void *p) { uint64_t v; __builtin_memcpy(&v, p, 8); return v; }
 static inline float    nox_read_f32(const void *p) { float v;    __builtin_memcpy(&v, p, 4); return v; }
+static inline double   nox_read_f64(const void *p) { double v;   __builtin_memcpy(&v, p, 8); return v; }
 static inline void     nox_write_u16(void *p, uint16_t v) { __builtin_memcpy(p, &v, 2); }
 static inline void     nox_write_u32(void *p, uint32_t v) { __builtin_memcpy(p, &v, 4); }
+static inline void     nox_write_u64(void *p, uint64_t v) { __builtin_memcpy(p, &v, 8); }
 static inline void     nox_write_f32(void *p, float v)    { __builtin_memcpy(p, &v, 4); }
+static inline void     nox_write_f64(void *p, double v)   { __builtin_memcpy(p, &v, 8); }
+#endif
 
 #ifdef __cplusplus
 }

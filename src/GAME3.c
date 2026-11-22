@@ -3979,6 +3979,9 @@ int __cdecl sub_4A7330(int a1, int a2, int *a3, unsigned int a4)
         sub_4A72D0(v6 - 761);
         break;
       case 799:
+#ifdef __3DS__
+        printf("[solo] case 799 (char creation accept): saving player via sub_4A75C0\n");
+#endif
         if ( *(_DWORD *)&byte_5D4594[1308168] == 1 )
           sub_43BDC0();
         sub_43BDC0();
@@ -3986,6 +3989,10 @@ int __cdecl sub_4A7330(int a1, int a2, int *a3, unsigned int a4)
         *(_DWORD *)&byte_587000[171388] = 1;
         if ( sub_4A75C0() )
         {
+#ifdef __3DS__
+          printf("[solo] sub_4A75C0 ok, class=%d, launching sub_4A24C0(0)\n",
+                 (int)*(_BYTE *)(*(_DWORD *)&byte_5D4594[1307784] + 66));
+#endif
           if ( *(_BYTE *)(*(_DWORD *)&byte_5D4594[1307784] + 66) )
           {
             if ( *(_BYTE *)(*(_DWORD *)&byte_5D4594[1307784] + 66) == 1 )
@@ -4005,6 +4012,12 @@ int __cdecl sub_4A7330(int a1, int a2, int *a3, unsigned int a4)
           sub_4A6890();
           *(_DWORD *)(*(_DWORD *)&byte_5D4594[1308092] + 52) = 0;
         }
+#ifdef __3DS__
+        else
+        {
+          printf("[solo] ERROR: sub_4A75C0 FAILED!\n");
+        }
+#endif
         break;
       default:
         break;
@@ -20551,12 +20564,12 @@ int __cdecl sub_4BE840(int *a1, int *a2, int *a3, int *a4, int a5)
   {
     do
     {
-      *(float *)v35 = *(float *)v35 + *(float *)&v35[1];
-      *(float *)&v35[1] = *(float *)&v35[2] + *(float *)&v35[1];
-      *(float *)&v35[2] = *(float *)&v35[3] + *(float *)&v35[2];
-      *(float *)v39 = *(float *)v39 + *(float *)&v39[1];
-      *(float *)&v39[1] = *(float *)&v39[2] + *(float *)&v39[1];
-      *(float *)&v39[2] = *(float *)&v39[3] + *(float *)&v39[2];
+      nox_write_f32(&v35[0], nox_read_f32(&v35[0]) + nox_read_f32(&v35[1]));
+      nox_write_f32(&v35[1], nox_read_f32(&v35[2]) + nox_read_f32(&v35[1]));
+      nox_write_f32(&v35[2], nox_read_f32(&v35[3]) + nox_read_f32(&v35[2]));
+      nox_write_f32(&v39[0], nox_read_f32(&v39[0]) + nox_read_f32(&v39[1]));
+      nox_write_f32(&v39[1], nox_read_f32(&v39[2]) + nox_read_f32(&v39[1]));
+      nox_write_f32(&v39[2], nox_read_f32(&v39[3]) + nox_read_f32(&v39[2]));
       v26 = sub_419A70(v35[0]);
       v27 = sub_419A70(v39[0]);
       sub_49F500(v10, v13);
@@ -33347,7 +33360,15 @@ int __cdecl sub_4CF5F0(char *a1, int a2)
   sub_5799C0();
   v2 = a1;
   if ( !a1 )
+  {
+#ifdef __3DS__
+    printf("[solo] sub_4CF5F0: a1 is NULL!\n");
+#endif
     return 0;
+  }
+#ifdef __3DS__
+  printf("[solo] sub_4CF5F0: a1='%s' a2=%d\n", a1, a2);
+#endif
   if ( _strcmpi((const char *)&byte_587000[191676], a1) )
   {
     if ( *a1 == 35 )
@@ -33363,6 +33384,9 @@ int __cdecl sub_4CF5F0(char *a1, int a2)
       sub_409D70(v12);
       if ( !sub_4D4320() )
       {
+#ifdef __3DS__
+        printf("[solo] sub_4CF5F0: sub_4D4320() FAILED for '%s'\n", v13);
+#endif
         sub_4D12E0(1);
         return 0;
       }
@@ -33395,9 +33419,19 @@ int __cdecl sub_4CF5F0(char *a1, int a2)
       v16[v7] = 0;
       nox_sprintf(v15, (const char *)&byte_587000[191712], v16, &byte_587000[191704]);
       if ( _access(v15, 0) == -1 )
+      {
+#ifdef __3DS__
+        printf("[solo] sub_4CF5F0: missing '%s' and '%s'\n", FileName, v15);
+#endif
         return 0;
+      }
       if ( !sub_57BC50(v15, FileName) )
+      {
+#ifdef __3DS__
+        printf("[solo] sub_4CF5F0: sub_57BC50('%s'->'%s') FAILED\n", v15, FileName);
+#endif
         return 0;
+      }
     }
   }
   v8 = sub_409B40();
@@ -33407,7 +33441,12 @@ int __cdecl sub_4CF5F0(char *a1, int a2)
   else
     v9 = sub_426910(FileName, 1, 19);
   if ( !v9 )
+  {
+#ifdef __3DS__
+    printf("[solo] sub_4CF5F0: sub_426910('%s') FAILED\n", FileName);
+#endif
     return 0;
+  }
   sub_426AC0(&v10, 4u);
   if ( v10 == -86065425 )
   {
@@ -33417,14 +33456,54 @@ int __cdecl sub_4CF5F0(char *a1, int a2)
   {
     if ( v10 != -86050098 )
     {
+#ifdef __3DS__
+      printf("[solo] sub_4CF5F0: bad map magic 0x%x in '%s', trying .nxz re-extract\n", (unsigned)v10, FileName);
+      sub_4269F0();
+      v6 = strchr(FileName, 46);
+      if ( v6 )
+      {
+        v7 = v6 - FileName;
+        strncpy(v16, FileName, v6 - FileName);
+        v16[v7] = 0;
+        nox_sprintf(v15, (const char *)&byte_587000[191712], v16, &byte_587000[191704]);
+        if ( _access(v15, 0) != -1 && sub_57BC50(v15, FileName) )
+        {
+          v9 = a2 ? sub_426910(FileName, 1, -1) : sub_426910(FileName, 1, 19);
+          if ( v9 )
+          {
+            v10 = 0;
+            sub_426AC0(&v10, 4u);
+            if ( v10 == -86065425 )
+            {
+              sub_409B10(0);
+              goto LABEL_MAGIC_OK;
+            }
+            if ( v10 == -86050098 )
+            {
+              sub_426C20(&v11, 4u);
+              sub_409B10(v11);
+              goto LABEL_MAGIC_OK;
+            }
+          }
+        }
+      }
+#endif
       sub_4269F0();
       return 0;
     }
     sub_426C20(&v11, 4u);
     sub_409B10(v11);
   }
+#ifdef __3DS__
+LABEL_MAGIC_OK:
+#endif
   if ( !sub_4CFCE0() )
+  {
+#ifdef __3DS__
+    printf("[solo] sub_4CF5F0: sub_4CFCE0() FAILED for '%s'\n", FileName);
+#endif
     return 0;
+  }
   sub_507290();
   sub_4269F0();
   if ( !sub_40A5C0(0x200000) )
@@ -33636,16 +33715,29 @@ int sub_4CFCE0()
     if ( !sub_426EA0(0, v8, &v4) )
     {
       if ( v4 == 1 )
+      {
+#ifdef __3DS__
+        printf("[solo] sub_4CFCE0: section '%s' FAILED\n", v8);
+#endif
         return 0;
+      }
       v0 = sub_4E3810(v8);
       v1 = (int)v0;
       if ( !v0 || !((int (__cdecl *)(_DWORD *, _DWORD))v0[176])(v0, 0) )
+      {
+#ifdef __3DS__
+        printf("[solo] sub_4CFCE0: object '%s' (v0=%p) FAILED\n", v8, (void *)v0);
+#endif
         goto LABEL_9;
+      }
       sub_4F3F50(v1, 0, 0);
     }
   }
   if ( !sub_579CA0() )
   {
+#ifdef __3DS__
+    printf("[solo] sub_4CFCE0: sub_579CA0() FAILED\n");
+#endif
 LABEL_9:
     sub_4269F0();
     return 0;
@@ -35026,6 +35118,9 @@ int sub_4D1660()
   int result; // eax
   int v1; // eax
 
+#ifdef __3DS__
+  printf("[solo] sub_4D1660 enter\n");
+#endif
   sub_4D15C0();
   *(_DWORD *)&byte_5D4594[2649712] = 2147483648;
   *(_DWORD *)&byte_5D4594[3843628] = 0;
@@ -35124,6 +35219,9 @@ int sub_4D1660()
       }
     }
   }
+#ifdef __3DS__
+  printf("[solo] sub_4D1660 exit=%d\n", result);
+#endif
   return result;
 }
 
@@ -35132,6 +35230,9 @@ int sub_4D17F0()
 {
   int result; // eax
 
+#ifdef __3DS__
+  printf("[solo] sub_4D17F0 enter (map='%s')\n", sub_409B30());
+#endif
   sub_4E79B0(0);
   if ( !memcmp(sub_409B30(), &byte_5D4594[1548720], 1u) )
     sub_409D70((char *)&byte_587000[196452]);
@@ -35146,6 +35247,9 @@ int sub_4D17F0()
     sub_40A690();
     result = 1;
   }
+#ifdef __3DS__
+  printf("[solo] sub_4D17F0 exit=%d\n", result);
+#endif
   return result;
 }
 
@@ -35290,6 +35394,9 @@ int sub_4D1860()
   }
   if ( !v6 )
   {
+#ifdef __3DS__
+    printf("[solo] sub_4D1860: sub_4CF5F0 returned 0 (db240=%d)\n", sub_4DB240());
+#endif
     sub_4D15F0();
     return 0;
   }
@@ -35355,6 +35462,9 @@ int sub_4D1860()
   if ( !v20 )
   {
 LABEL_120:
+#ifdef __3DS__
+    printf("[solo] sub_4D1860: no PlayerStart objects (v20=0, v19=%d, v21=%d)\n", v19, v21);
+#endif
     v24 = sub_40F1D0((char *)&byte_587000[196580], 0, (const char *)&byte_587000[196540], 792);
 LABEL_61:
     sub_4D9FD0(0, v24);
@@ -35362,11 +35472,17 @@ LABEL_61:
   }
   if ( sub_40A5C0(96) && v19 < 2 )
   {
+#ifdef __3DS__
+    printf("[solo] sub_4D1860: v19 < 2 (%d)\n", v19);
+#endif
     v24 = sub_40F1D0((char *)&byte_587000[196644], 0, (const char *)&byte_587000[196604], 799);
     goto LABEL_61;
   }
   if ( sub_40A5C0(64) && v21 < 1 )
   {
+#ifdef __3DS__
+    printf("[solo] sub_4D1860: v21 < 1 (%d)\n", v21);
+#endif
     v24 = sub_40F1D0((char *)&byte_587000[196700], 0, (const char *)&byte_587000[196660], 806);
     goto LABEL_61;
   }
@@ -48492,15 +48608,15 @@ bool __cdecl sub_4E25B0(int a1, float a2, float a3, int a4, int a5, int a6, int 
   a3a[5] = a6;
   a3a[4] = a5;
   a3a[0] = a1;
-  *(float *)&a3a[2] = a3;
+  nox_write_f32(&a3a[2], a3);
   if ( a2 >= (double)a3 )
-    *(float *)&a3a[1] = a2;
+    nox_write_f32(&a3a[1], a2);
   else
-    *(float *)&a3a[1] = a3;
-  a1a.field_0 = *(float *)a1 - *(float *)&a3a[1];
-  a1a.field_4 = *(float *)(a1 + 4) - *(float *)&a3a[1];
-  a1a.field_8 = *(float *)&a3a[1] + *(float *)a1;
-  a1a.field_C = *(float *)&a3a[1] + *(float *)(a1 + 4);
+    nox_write_f32(&a3a[1], a3);
+  a1a.field_0 = nox_read_f32((const void *)a1) - nox_read_f32(&a3a[1]);
+  a1a.field_4 = nox_read_f32((const void *)(a1 + 4)) - nox_read_f32(&a3a[1]);
+  a1a.field_8 = nox_read_f32(&a3a[1]) + nox_read_f32((const void *)a1);
+  a1a.field_C = nox_read_f32(&a3a[1]) + nox_read_f32((const void *)(a1 + 4));
   sub_517C10(&a1a, sub_4E2700, (int)a3a);
   v11.field_0 = sub_419A70(a1a.field_0) / 23;
   v11.field_4 = sub_419A70(a1a.field_4) / 23;
@@ -51355,7 +51471,7 @@ LABEL_24:
         else
         {
           v18[0] = -86;
-          *(_DWORD *)&v18[1] = *(_DWORD *)&byte_5D4594[2598000];
+          nox_write_u32(&v18[1], nox_read_u32(&byte_5D4594[2598000]));
           if ( !v13(a1, a2, v18, 5) )
             return;
         }
@@ -51369,7 +51485,7 @@ LABEL_24:
       if ( byte_5D4594 != (unsigned __int8 *)-1564964 )
       {
         byte_5D4594[1564964] = -52;
-        *(_WORD *)&byte_5D4594[1564965] = *(_WORD *)(v4 + 2 * a1 + 186);
+        nox_write_u16(&byte_5D4594[1564965], nox_read_u16((const void *)(v4 + 2 * a1 + 186)));
         byte_5D4594[1564967] = *(_BYTE *)(v4 + 401);
         qmemcpy(&byte_5D4594[1564968], (const void *)(v4 + 251), *(unsigned __int8 *)(v4 + 401));
         v11 = v13(a1, a2, &byte_5D4594[1564964], *(unsigned __int8 *)(v4 + 401) + 4);
@@ -55863,7 +55979,7 @@ LABEL_50:
           v16 = *(float *)(v3 + 176) + 30.0;
           LOBYTE(v22[1]) = 0;
           v22[3] = v11;
-          *(float *)&v22[2] = v16;
+          nox_write_f32(&v22[2], v16);
           v22[6] = 0;
           sub_538840(v3, v11, (int)v22);
           sub_538290(v7, v11, v3, (int)v22);
@@ -65027,7 +65143,7 @@ int __cdecl sub_4F5AA0(int *a1)
   int v3; // [esp+8h] [ebp-98h]
   int v4; // [esp+Ch] [ebp-94h]
   int v5; // [esp+10h] [ebp-90h]
-  char v6[140]; // [esp+14h] [ebp-8Ch]
+  NOX_ALIGN4 char v6[140]; // [esp+14h] [ebp-8Ch]
 
   v5 = a1[34];
   memset(v6, 0, sizeof(v6));
@@ -65128,7 +65244,7 @@ LABEL_22:
       v6[138] = -128;
       if ( *(_DWORD *)&byte_5D4594[3803300] != 1 )
         goto LABEL_22;
-      if ( *(float *)&v6[4] > 63.0
+      if ( nox_read_f32(&v6[4]) > 63.0
         || (double)*(int *)&v6[12] * *(double *)&byte_581450[9752] > *(double *)&byte_581450[9744] )
       {
         sub_484CE0((int)v6, 63.0);

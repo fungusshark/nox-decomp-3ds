@@ -329,10 +329,10 @@ int __cdecl sub_4F4E50__abi_raw(nox_abi_ptrslot_t a1)
     if ( (__int16)v11 < 41 )
     {
       /* read & discard 3 bytes x3 */
-      _BYTE b;
-      sub_426AC0(&b, 3u);
-      sub_426AC0(&b, 3u);
-      sub_426AC0(&b, 3u);
+      _BYTE b[4];
+      sub_426AC0(b, 3u);
+      sub_426AC0(b, 3u);
+      sub_426AC0(b, 3u);
     }
     else
     {
@@ -3581,8 +3581,8 @@ int __cdecl sub_500F40__abi_raw(
       memcpy(&xbits, &v19.field_8, sizeof(xbits));
       memcpy(&ybits, &v10,        sizeof(ybits));
 
-      out[0] = xbits;
-      out[1] = ybits;
+      nox_write_u32((char *)out + 0, xbits);
+      nox_write_u32((char *)out + 4, ybits);
       return 1;
     }
 
@@ -3608,15 +3608,15 @@ int __cdecl sub_500F40__abi_raw(
   if (sub_535250(&v19, 0, 0, 9))
   {
     /* original “line 9045”: write v2[13], v2[14] */
-    out[0] = (uint32_t)v2[13];
-    out[1] = (uint32_t)v2[14];
+    nox_write_u32((char *)out + 0, (uint32_t)v2[13]);
+    nox_write_u32((char *)out + 4, (uint32_t)v2[14]);
     return 1;
   }
   else
   {
     v17   = v2[4];
-    out[0] = *(uint32_t *)(v17 + 56);
-    out[1] = *(uint32_t *)(v17 + 60); /* FIX: store raw bits exactly like original */
+    nox_write_u32((char *)out + 0, *(uint32_t *)(v17 + 56));
+    nox_write_u32((char *)out + 4, *(uint32_t *)(v17 + 60)); /* FIX: store raw bits safely for unaligned out */
     (void)v18;                        /* keep decls stable/minimal-diff */
     return 1;
   }

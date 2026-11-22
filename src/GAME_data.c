@@ -5,6 +5,9 @@
 
 char byte_563002[4] = { 0xFE, 0xFF, 0, 1 }; // weak
 char byte_563006[16] = { 0xF7, 0xF8, 0xFA, 0xFB, 0xFC, 0xFD, 0xFE, 0xFF, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x08 }; // weak
+#ifdef __GNUC__
+__attribute__((aligned(16)))
+#endif
 unsigned char byte_581450[23472] =
 {
   255u,
@@ -23480,6 +23483,9 @@ unsigned char byte_581450[23472] =
   0u,
   0u
 };
+#ifdef __GNUC__
+__attribute__((aligned(16)))
+#endif
 unsigned char byte_587000[316820] =
 {
   0u,
@@ -340303,6 +340309,9 @@ unsigned char byte_587000[316820] =
   0u,
   0u
 };
+#ifdef __GNUC__
+__attribute__((aligned(16)))
+#endif
 unsigned char byte_5D4594[3844309] =
 {
   0u,

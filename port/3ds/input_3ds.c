@@ -37,7 +37,7 @@ extern void nox_ctrl_set_thumbstick_move(int active, int orientation, int move_c
 extern void nox_ctrl_set_thumbstick_jump(int jump);
 extern void nox_ctrl_set_radial_aim(int active, int orientation, int screen_x, int screen_y);
 
-/* Gameplay bottom-screen touch hotkeys (1-5 spell bar strip at bottom edge) */
+/* Gameplay bottom-screen touch hotkeys (1-5 spell/ability bar strip at bottom edge) */
 #define TOUCH_SPELLBAR_Y_MIN  196
 #define TOUCH_SPELLBAR_SLOTS  5
 
@@ -68,12 +68,13 @@ void nox_3ds_input_init(void)
 {
     memset(&g_in, 0, sizeof(g_in));
     g_in.aim_mode = NOX_3DS_AIM_RADIAL;
+    g_in.cstick_mode = NOX_3DS_CSTICK_AIM_CAMERA;
     g_in.touch_to_aim = true;
     g_in.cstick_cfg.deadzone    = read_env_float("NOX_3DS_CSTICK_DEADZONE", 0.15f, 0.02f, 0.85f);
     g_in.cstick_cfg.curve_exp   = read_env_float("NOX_3DS_CSTICK_CURVE",    1.85f, 1.0f,  4.0f);
     g_in.cstick_cfg.sensitivity = read_env_float("NOX_3DS_CSTICK_SENS",     1.0f,  0.2f,  4.0f);
     g_in.cstick_cfg.min_radius  = 56.0f;
-    g_in.cstick_cfg.max_radius  = 180.0f;
+    g_in.cstick_cfg.max_radius  = 210.0f; /* wider radius gives camera look-ahead + spell range */
 
     g_prev_touch = false;
     g_active_spell_hotkey = -1;
@@ -83,8 +84,9 @@ void nox_3ds_input_init(void)
     g_last_aim_y = NOX_3DS_LOGICAL_H / 2;
     g_last_aim_orient = 0;
 
-    printf("[input3ds] Twin-stick+Touch ready (CStick dz=%.2f curve=%.2f)\n",
+    printf("[input3ds] New 3DS scheme ready (CStick dz=%.2f curve=%.2f)\n",
            g_in.cstick_cfg.deadzone, g_in.cstick_cfg.curve_exp);
+    printf("[input3ds] Combos: SEL+L=Aspect SEL+R=TouchAim SEL+ZL=CursorMode SEL+X=CStickMode\n");
 }
 
 void nox_3ds_input_set_cstick_params(float deadzone, float curve_exp, float sensitivity)
@@ -112,8 +114,25 @@ void nox_3ds_input_toggle_aim_mode(void)
         g_in.aim_mode = NOX_3DS_AIM_RADIAL;
     }
     st->aim_mode = g_in.aim_mode;
-    printf("[input3ds] Mode: %s\n",
+    printf("[input3ds] Control Mode: %s\n",
            (g_in.aim_mode == NOX_3DS_AIM_RADIAL) ? "Radial Twin-Stick" : "Free-Cursor");
+}
+
+void nox_3ds_input_toggle_cstick_mode(void)
+{
+    nox_3ds_state_t *st = nox_3ds_state_mut();
+    if (g_in.cstick_mode == NOX_3DS_CSTICK_AIM_CAMERA) {
+        g_in.cstick_mode = NOX_3DS_CSTICK_SPELL_CAST;
+        g_cstick_aim_latched = false;
+        if (!g_touch_aim_was_active) {
+            nox_ctrl_set_radial_aim(0, 0, 0, 0);
+        }
+    } else {
+        g_in.cstick_mode = NOX_3DS_CSTICK_AIM_CAMERA;
+    }
+    st->cstick_mode = g_in.cstick_mode;
+    printf("[input3ds] C-Stick: %s\n",
+           (g_in.cstick_mode == NOX_3DS_CSTICK_AIM_CAMERA) ? "Aim/Camera" : "Quick-Spell (A/S/D/F)");
 }
 
 void nox_3ds_input_toggle_touch_aim(void)
@@ -170,15 +189,29 @@ void nox_3ds_input_poll(nox_3ds_input_t *out)
 
     g_in.in_gameplay = nox_3ds_is_gameplay_active();
 
-    /* System hot-toggles */
-    if ((g_in.keys_held & KEY_SELECT) && (g_in.keys_down & KEY_L)) {
-        nox_3ds_video_toggle_wide();
+    /* Reset SELECT combo latch when SELECT starts a new press. */
+    if (g_in.keys_down & KEY_SELECT) {
+        g_in.select_combo_used = false;
     }
-    if ((g_in.keys_held & KEY_SELECT) && (g_in.keys_down & KEY_R)) {
-        nox_3ds_input_toggle_touch_aim();
-    }
-    if (g_in.keys_down & KEY_ZL) {
-        nox_3ds_input_toggle_aim_mode();
+
+    /* System hot-toggles: chorded with SELECT so L+ZL (mana potion) and bare ZL never conflict. */
+    if (g_in.keys_held & KEY_SELECT) {
+        if (g_in.keys_down & KEY_L) {
+            nox_3ds_video_toggle_wide();
+            g_in.select_combo_used = true;
+        }
+        if (g_in.keys_down & KEY_R) {
+            nox_3ds_input_toggle_touch_aim();
+            g_in.select_combo_used = true;
+        }
+        if (g_in.keys_down & KEY_ZL) {
+            nox_3ds_input_toggle_aim_mode();
+            g_in.select_combo_used = true;
+        }
+        if (g_in.keys_down & KEY_X) {
+            nox_3ds_input_toggle_cstick_mode();
+            g_in.select_combo_used = true;
+        }
     }
 
     if (out) {
@@ -285,8 +318,8 @@ void nox_3ds_input_process_twin_stick_and_touch(void)
      * 1. Touchscreen handling:
      *    - Menus / Inventory / Spellbook / Dialogs / Free-Cursor mode:
      *      Scaled 1:1 cursor + left click mapping (320x240 -> 640x480).
-     *    - Gameplay (Radial Aim mode):
-     *      Bottom strip (y >= 196) maps to spell-bar hotkeys 1-5 (A/S/D/F/G).
+     *    - Gameplay (Radial Twin-Stick mode):
+     *      Bottom strip (y >= 196) maps to spell/ability bar hotkeys 1-5 (A/S/D/F/G).
      *      Upper area (y < 196) performs optional touch-to-aim (or click if disabled).
      */
     if (!g_in.in_gameplay || g_in.aim_mode == NOX_3DS_AIM_FREE_CURSOR) {
@@ -304,20 +337,22 @@ void nox_3ds_input_process_twin_stick_and_touch(void)
             nox_ctrl_inject_mouse_button(0, 0);
         }
 
-        /* In Free-Cursor / menus, C-Stick acts as non-linear precision cursor nudge */
-        float nx = 0.0f, ny = 0.0f, curved = 0.0f;
-        if (compute_cstick_curved(&nx, &ny, &curved)) {
-            int dx = (int)lrintf(nx * curved * 10.0f);
-            int dy = (int)lrintf(ny * curved * 10.0f);
-            if (dx != 0 || dy != 0) {
-                nox_ctrl_inject_mouse_move(dx, dy, 0);
+        /* In Free-Cursor / menus (when START isn't held for wordsets), C-Stick nudges cursor/camera */
+        if (!(g_in.keys_held & KEY_START)) {
+            float nx = 0.0f, ny = 0.0f, curved = 0.0f;
+            if (compute_cstick_curved(&nx, &ny, &curved)) {
+                int dx = (int)lrintf(nx * curved * 10.0f);
+                int dy = (int)lrintf(ny * curved * 10.0f);
+                if (dx != 0 || dy != 0) {
+                    nox_ctrl_inject_mouse_move(dx, dy, 0);
+                }
             }
         }
         nox_ctrl_set_radial_aim(0, 0, 0, 0);
         return;
     }
 
-    /* Gameplay in Radial Twin-Stick Aim mode */
+    /* Gameplay in Radial Twin-Stick mode */
     if (g_in.touch_active) {
         if (g_in.touch_y >= TOUCH_SPELLBAR_Y_MIN) {
             int slot = ((int)g_in.touch_x * TOUCH_SPELLBAR_SLOTS) / NOX_3DS_BOT_W;
@@ -364,35 +399,40 @@ void nox_3ds_input_process_twin_stick_and_touch(void)
     }
 
     /*
-     * 2. C-Stick radial twin-stick aiming around the player:
-     *    Projects an aiming reticle around viewport center (cx, cy) using the
-     *    configurable deadzone + non-linear nub curve.
+     * 2. C-Stick handling in gameplay:
+     *    - Aim/Camera mode (default, unless START utility layer is held):
+     *      Projects aiming reticle & camera look-ahead around viewport center (cx, cy).
+     *    - Quick-Spell mode (toggled via SELECT+X):
+     *      gamepad.c dispatches C-Stick Up/Right/Down/Left to spell slots A/S/D/F.
      */
-    float cnx = 0.0f, cny = 0.0f, cmag = 0.0f;
-    if (compute_cstick_curved(&cnx, &cny, &cmag)) {
-        int cx = 0, cy = 0;
-        get_viewport_center(&cx, &cy);
-        float radius = g_in.cstick_cfg.min_radius +
-                       cmag * (g_in.cstick_cfg.max_radius - g_in.cstick_cfg.min_radius);
-        int ax = cx + (int)lrintf(cnx * radius);
-        int ay = cy + (int)lrintf(cny * radius);
-        if (ax < 0) ax = 0;
-        if (ax >= NOX_3DS_LOGICAL_W) ax = NOX_3DS_LOGICAL_W - 1;
-        if (ay < 0) ay = 0;
-        if (ay >= NOX_3DS_LOGICAL_H) ay = NOX_3DS_LOGICAL_H - 1;
+    if (g_in.cstick_mode == NOX_3DS_CSTICK_AIM_CAMERA && !(g_in.keys_held & KEY_START)) {
+        float cnx = 0.0f, cny = 0.0f, cmag = 0.0f;
+        if (compute_cstick_curved(&cnx, &cny, &cmag)) {
+            int cx = 0, cy = 0;
+            get_viewport_center(&cx, &cy);
+            float radius = g_in.cstick_cfg.min_radius +
+                           cmag * (g_in.cstick_cfg.max_radius - g_in.cstick_cfg.min_radius);
+            int ax = cx + (int)lrintf(cnx * radius);
+            int ay = cy + (int)lrintf(cny * radius);
+            if (ax < 0) ax = 0;
+            if (ax >= NOX_3DS_LOGICAL_W) ax = NOX_3DS_LOGICAL_W - 1;
+            if (ay < 0) ay = 0;
+            if (ay >= NOX_3DS_LOGICAL_H) ay = NOX_3DS_LOGICAL_H - 1;
 
-        g_last_aim_x = ax;
-        g_last_aim_y = ay;
-        g_last_aim_orient = orientation_from_vec(cnx, cny);
-        g_cstick_aim_latched = true;
+            g_last_aim_x = ax;
+            g_last_aim_y = ay;
+            g_last_aim_orient = orientation_from_vec(cnx, cny);
+            g_cstick_aim_latched = true;
 
-        nox_ctrl_set_radial_aim(1, g_last_aim_orient, ax, ay);
-        return;
+            nox_ctrl_set_radial_aim(1, g_last_aim_orient, ax, ay);
+            return;
+        }
     }
 
-    /* If C-Stick was aimed (or touch-to-aim active) and Circle Pad isn't moving, keep aim reticle */
+    /* Retain aim reticle during touch-to-aim or stationary C-Stick aim; release when moving */
     bool cpad_moving = (abs(g_in.cpad_x) > 34 || abs(g_in.cpad_y) > 34);
-    if (g_touch_aim_was_active || (g_cstick_aim_latched && !cpad_moving)) {
+    if (g_touch_aim_was_active ||
+        (g_in.cstick_mode == NOX_3DS_CSTICK_AIM_CAMERA && g_cstick_aim_latched && !cpad_moving)) {
         nox_ctrl_set_radial_aim(1, g_last_aim_orient, g_last_aim_x, g_last_aim_y);
     } else {
         g_cstick_aim_latched = false;

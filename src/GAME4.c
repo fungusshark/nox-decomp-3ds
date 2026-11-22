@@ -3793,8 +3793,8 @@ int __cdecl sub_4FB0E0(int a1, int a2)
     return 0;
   a1 = sub_4FD150(a1, *(_DWORD *)(v3 + 192), 0);
   v7[0] = a2;
-  *(float *)&v7[1] = (double)*(int *)(v3 + 220);
-  *(float *)&v7[2] = (double)*(int *)(v3 + 224);
+  nox_write_f32(&v7[1], (float)(double)*(int *)(v3 + 220));
+  nox_write_f32(&v7[2], (float)(double)*(int *)(v3 + 224));
   if ( a1 )
   {
     sub_4DA0F0(*(unsigned __int8 *)(*(_DWORD *)(v3 + 276) + 2064), 0, &a1);
@@ -3834,8 +3834,8 @@ int __cdecl sub_4FB1D0(int a1, int a2)
     return 0;
   a1 = sub_4FD150(a1, *(_DWORD *)(v3 + 4 * *(unsigned __int8 *)(v3 + 212) + 188), 0);
   v5[0] = a2;
-  *(float *)&v5[1] = (double)*(int *)(v3 + 220);
-  *(float *)&v5[2] = (double)*(int *)(v3 + 224);
+  nox_write_f32(&v5[1], (float)(double)*(int *)(v3 + 220));
+  nox_write_f32(&v5[2], (float)(double)*(int *)(v3 + 224));
   if ( a1 )
   {
     sub_4DA0F0(*(unsigned __int8 *)(*(_DWORD *)(v3 + 276) + 2064), 0, &a1);
@@ -3927,10 +3927,10 @@ int __cdecl sub_4FB2A0(int a1)
               }
             }
             v10 = *(_DWORD *)(v3 + 276);
-            *(float *)&v14[1] = (double)*(int *)(v10 + 2284);
+            nox_write_f32(&v14[1], (float)(double)*(int *)(v10 + 2284));
             v11 = (double)*(int *)(v10 + 2288);
             v12 = *(int **)(v3 + 184);
-            *(float *)&v14[2] = v11;
+            nox_write_f32(&v14[2], (float)v11);
             if ( sub_4FDD20(*v12, v1, v14) )
             {
               sub_4DA0F0(*(unsigned __int8 *)(*(_DWORD *)(v3 + 276) + 2064), 1, *(int **)(v3 + 184));
@@ -8287,8 +8287,8 @@ int __cdecl sub_5002D0(_DWORD *a1)
 
   v3[0] = (int)a1;
   v1 = a1[187];
-  *(float *)&v3[1] = (double)*(int *)(*(_DWORD *)(v1 + 276) + 2284);
-  *(float *)&v3[2] = (double)*(int *)(*(_DWORD *)(v1 + 276) + 2288);
+  nox_write_f32(&v3[1], (float)(double)*(int *)(*(_DWORD *)(v1 + 276) + 2284));
+  nox_write_f32(&v3[2], (float)(double)*(int *)(*(_DWORD *)(v1 + 276) + 2288));
   return sub_4FEBA0(132, (int)a1, a1, (int)a1, v3, 3, 0, 0, 0, 0);
 }
 
@@ -9114,8 +9114,10 @@ void __cdecl sub_5011C0(int a1)
 {
   if ( !*(_BYTE *)(a1 + 85) )
   {
-    sub_523760(*(_WORD *)(a1 + 83));
-    sub_501A30(900, (float2 *)(a1 + 74), 0, 0);
+    float2 pos_aligned;
+    memcpy(&pos_aligned, (const void *)(a1 + 74), sizeof(pos_aligned));
+    sub_523760(nox_read_s16((const void *)(a1 + 83)));
+    sub_501A30(900, &pos_aligned, 0, 0);
   }
 }
 
@@ -12180,10 +12182,21 @@ int __cdecl sub_504CF0(_DWORD *a2)
         v9 = sub_4E3450(v8);
         v10 = v9;
         if ( !v9 )
+        {
+#ifdef __3DS__
+          printf("[solo] sub_504CF0: sub_4E3450(toc=%d -> type=%d) returned NULL\n", (int)(unsigned __int16)v12, (int)v8);
+#endif
           break;
+        }
         v11 = 0;
         if ( !((int (__cdecl *)(_DWORD *, unsigned int))v9[176])(v9, a2 != 0 ? (unsigned int)&v16 : 0) )
+        {
+#ifdef __3DS__
+          printf("[solo] sub_504CF0: xfer loader for toc=%d type=%d (fn=%p) returned 0\n",
+                 (int)(unsigned __int16)v12, (int)v8, (void *)v9[176]);
+#endif
           break;
+        }
         if ( v10[4] & 0x400000 )
         {
           v7 = (_DWORD *)v10[32];
@@ -12455,8 +12468,17 @@ int sub_505360()
 
   strcpy(v36, "%");
   *(_DWORD *)&byte_5D4594[1599620] = fopen((const char *)&byte_587000[229864], (const char *)&byte_587000[229860]);
+#ifdef __3DS__
+  if ( !*(_DWORD *)&byte_5D4594[1599620] && byte_5D4594[3830188] )
+    *(_DWORD *)&byte_5D4594[1599620] = fopen((const char *)&byte_5D4594[3830188], (const char *)&byte_587000[229860]);
+#endif
   if ( !*(_DWORD *)&byte_5D4594[1599620] )
+  {
+#ifdef __3DS__
+    printf("[solo] sub_505360: fopen nc.obj FAILED\n");
+#endif
     return 0;
+  }
   if ( !sub_505870((const char *)&byte_587000[229872]) )
     goto LABEL_45;
   if ( !sub_505870((const char *)&byte_587000[229884]) )
@@ -28341,15 +28363,15 @@ LABEL_14:
             {
               case 0:
                 sub_517090(a1, v10);
-                *(_DWORD *)v6 = atoi(v10);
+                nox_write_u32(v6, (uint32_t)atoi(v10));
                 continue;
               case 1:
                 sub_517090(a1, v10);
-                *(float *)v6 = atof(v10);
+                nox_write_f32(v6, (float)atof(v10));
                 continue;
               case 2:
                 sub_517090(a1, v10);
-                *(_DWORD *)v6 = sub_40AF50(v10);
+                nox_write_u32(v6, (uint32_t)sub_40AF50(v10));
                 continue;
               case 3:
                 sub_517090(a1, v10);
@@ -28370,7 +28392,7 @@ LABEL_14:
                 v9 = 0;
                 sub_517090(a1, v10);
                 sub_423930(v10, &v9, (const char **)&byte_587000[247536]);
-                *(_WORD *)v6 = v9;
+                nox_write_u16(v6, (uint16_t)v9);
                 continue;
               case 7:
                 sub_517090(a1, v6);
@@ -29131,7 +29153,7 @@ int __cdecl sub_518040(int arg0, float a2, int arg8, int a4)
     v5 = *(float *)arg0 - a2;
     a3[2] = arg8;
     a3[0] = arg0;
-    *(float *)&a3[1] = a2;
+    nox_write_f32(&a3[1], a2);
     a1.field_0 = v5;
     v6 = *(float *)(arg0 + 4) - a2;
     a3[3] = a4;
@@ -47383,9 +47405,9 @@ void __cdecl sub_52E040(int a1, float a2, int a3, float a4, int a5, int a6, int 
   a3a[4] = a5;
   a3a[2] = a3;
   a1a.field_C = v8;
-  *(float *)&a3a[3] = a4 * 10.0;
-  if ( a2 >= (double)*(float *)&a3 )
-    *(float *)&a3a[1] = a2;
+  nox_write_f32(&a3a[3], (float)(a4 * 10.0));
+  if ( a2 >= (double)nox_read_f32(&a3) )
+    nox_write_f32(&a3a[1], a2);
   else
     a3a[1] = a3;
   sub_517ED0(&a1a, sub_52E0E0, (int)a3a);
@@ -50890,7 +50912,7 @@ _DWORD *__cdecl sub_532540(int a1)
     v2 = sub_50A260(a1, 50);
     if ( v2 )
     {
-      *((float *)v2 + 1) = *(float *)(v1[121] + 212) * 1.2;
+      *((float *)v2 + 1) = nox_read_f32((const void *)(v1[121] + 212)) * 1.2f;
       v2[3] = v1[299];
     }
     result = sub_50A260(a1, 1);
@@ -54707,8 +54729,8 @@ int __cdecl sub_537110(int a1, int a2)
   if ( *(_BYTE *)(a2 + 8) < 0 && *(_BYTE *)(a2 + 12) & 4 )
   {
     v3 = *(_DWORD *)(a2 + 748);
-    *(float *)&a3[5] = (double)(*(_DWORD *)&byte_587000[8 * *(_DWORD *)(v3 + 12) + 196184] / 2) + *(float *)(a2 + 56);
-    *(float *)&a3[6] = (double)(*(_DWORD *)&byte_587000[8 * *(_DWORD *)(v3 + 12) + 196188] / 2) + *(float *)(a2 + 60);
+    nox_write_f32(&a3[5], (float)((double)(*(_DWORD *)&byte_587000[8 * *(_DWORD *)(v3 + 12) + 196184] / 2) + *(float *)(a2 + 56)));
+    nox_write_f32(&a3[6], (float)((double)(*(_DWORD *)&byte_587000[8 * *(_DWORD *)(v3 + 12) + 196188] / 2) + *(float *)(a2 + 60)));
   }
   else
   {
@@ -54716,25 +54738,25 @@ int __cdecl sub_537110(int a1, int a2)
     a3[5] = *(_DWORD *)(a2 + 56);
     a3[6] = v4;
   }
-  if ( *(float *)&a3[3] >= (double)*(float *)&a3[5] )
+  if ( nox_read_f32(&a3[3]) >= (double)nox_read_f32(&a3[5]) )
   {
-    a1a.field_8 = *(float *)&a3[3];
-    LODWORD(a1a.field_0) = a3[5];
+    a1a.field_8 = nox_read_f32(&a3[3]);
+    a1a.field_0 = nox_read_f32(&a3[5]);
   }
   else
   {
-    a1a.field_0 = *(float *)&a3[3];
-    LODWORD(a1a.field_8) = a3[5];
+    a1a.field_0 = nox_read_f32(&a3[3]);
+    a1a.field_8 = nox_read_f32(&a3[5]);
   }
-  if ( *(float *)&a3[4] >= (double)*(float *)&a3[6] )
+  if ( nox_read_f32(&a3[4]) >= (double)nox_read_f32(&a3[6]) )
   {
-    a1a.field_C = *(float *)&a3[4];
-    LODWORD(a1a.field_4) = a3[6];
+    a1a.field_C = nox_read_f32(&a3[4]);
+    a1a.field_4 = nox_read_f32(&a3[6]);
   }
   else
   {
-    a1a.field_4 = *(float *)&a3[4];
-    LODWORD(a1a.field_C) = a3[6];
+    a1a.field_4 = nox_read_f32(&a3[4]);
+    a1a.field_C = nox_read_f32(&a3[6]);
   }
   a3[2] = a2;
   a3[0] = 1;
@@ -55124,7 +55146,7 @@ char __cdecl sub_537850(int a1, int *a2, float2 *a3)
   v17 = (double)v15;
   v29[0] = *(_DWORD *)(v3 + 56);
   v18 = 0;
-  *(float *)&v29[1] = v16;
+  nox_write_f32(&v29[1], v16);
   LODWORD(v28.field_0) = v29[0];
   v28.field_4 = v16;
   *(float *)&v35 = *(float *)&v34 / v17;
@@ -55145,8 +55167,8 @@ char __cdecl sub_537850(int a1, int *a2, float2 *a3)
     }
 LABEL_3:
     v4 = v9;
-    v27.field_0 = *(float *)v29 - *(float *)(v9 + 56);
-    v27.field_4 = *(float *)&v29[1] - *(float *)(v9 + 60);
+    v27.field_0 = nox_read_f32(&v29[0]) - *(float *)(v9 + 56);
+    v27.field_4 = nox_read_f32(&v29[1]) - *(float *)(v9 + 60);
   }
 LABEL_4:
   v10 = *(float *)(v3 + 60);
@@ -56019,10 +56041,10 @@ BOOL __cdecl sub_538960(int a1)
   int v79; // [esp+24h] [ebp-9Ch]
   int v80; // [esp+28h] [ebp-98h]
   int v81; // [esp+2Ch] [ebp-94h]
-  char v82[36]; // [esp+30h] [ebp-90h]
+  NOX_ALIGN4 char v82[36]; // [esp+30h] [ebp-90h]
   float4 v83;
   int v86; // [esp+64h] [ebp-5Ch]
-  char v87[88]; // [esp+68h] [ebp-58h]
+  NOX_ALIGN4 char v87[88]; // [esp+68h] [ebp-58h]
 
   v1 = 0;
   v2 = *(_DWORD *)(a1 + 8);
@@ -59202,7 +59224,7 @@ void __cdecl sub_53CD20(int a1)
     goto LABEL_29;
   }
   a2.field_0 = *(float *)(v10 + 56) - *(float *)(a1 + 56);
-  a2.field_4 = *(float *)(v1[1] + 60) - *(float *)(a1 + 60);
+  a2.field_4 = nox_read_f32((const void *)(v1[1] + 60)) - *(float *)(a1 + 60);
   sub_53CF90(a1, &a2, 32);
 LABEL_29:
   v19 = 8 * *(__int16 *)(a1 + 126);
@@ -60174,7 +60196,7 @@ int __cdecl sub_53E300(_DWORD *a1)
   else if ( result & 2 )
   {
     result = LODWORD(v4);
-    *(float *)(a1[187] + 2072) = v4;
+    nox_write_f32((void *)(a1[187] + 2072), (float)v4);
   }
   return result;
 }
@@ -60716,8 +60738,8 @@ int __cdecl sub_53ED90(int a1, _DWORD *a2)
   if ( *(_BYTE *)(a1 + 8) & 4 )
   {
     v3 = *(_DWORD *)(a1 + 748);
-    *(float *)&v6[1] = (double)*(int *)(*(_DWORD *)(v3 + 276) + 2284);
-    *(float *)&v6[2] = (double)*(int *)(*(_DWORD *)(v3 + 276) + 2288);
+    nox_write_f32(&v6[1], (float)(double)*(int *)(*(_DWORD *)(v3 + 276) + 2284));
+    nox_write_f32(&v6[2], (float)(double)*(int *)(*(_DWORD *)(v3 + 276) + 2288));
   }
   else
   {
@@ -61108,8 +61130,8 @@ int __cdecl sub_53F4F0(int a1, _DWORD *a2)
   if ( *(_BYTE *)(a1 + 8) & 4 )
   {
     v4 = *(_DWORD *)(a1 + 748);
-    *(float *)&v11[1] = (double)*(int *)(*(_DWORD *)(v4 + 276) + 2284);
-    *(float *)&v11[2] = (double)*(int *)(*(_DWORD *)(v4 + 276) + 2288);
+    nox_write_f32(&v11[1], (float)(double)*(int *)(*(_DWORD *)(v4 + 276) + 2284));
+    nox_write_f32(&v11[2], (float)(double)*(int *)(*(_DWORD *)(v4 + 276) + 2288));
     v5 = *(_DWORD *)(v4 + 288);
     if ( v5 )
     {
@@ -61872,9 +61894,9 @@ int __cdecl sub_540610(float2 *a1, int a2, int a3, float a4, int a5, int a6)
       if ( sub_535250(&v15, 0, 0, 5) )
       {
         v12 = a1->field_4;
-        a3a[3] = LODWORD(a1->field_0);
+        nox_write_f32(&a3a[3], a1->field_0);
 LABEL_18:
-        *(float *)&a3a[4] = v12;
+        nox_write_f32(&a3a[4], v12);
         goto LABEL_19;
       }
       v13 = *(_DWORD *)(a2 + 60);
@@ -61884,18 +61906,18 @@ LABEL_18:
     else
     {
       v14 = a1->field_4;
-      a3a[3] = LODWORD(a1->field_0);
-      *(float *)&a3a[4] = v14;
+      nox_write_f32(&a3a[3], a1->field_0);
+      nox_write_f32(&a3a[4], v14);
     }
 LABEL_19:
     a3a[1] = a2;
     a3a[0] = a3;
-    *(float *)&a3a[2] = a4 * a4;
+    nox_write_f32(&a3a[2], a4 * a4);
     a3a[5] = sub_4EC580(a2);
-    a1a.field_0 = *(float *)&a3a[3] - a4;
-    a1a.field_4 = *(float *)&a3a[4] - a4;
-    a1a.field_8 = *(float *)&a3a[3] + a4;
-    a1a.field_C = *(float *)&a3a[4] + a4;
+    a1a.field_0 = nox_read_f32(&a3a[3]) - a4;
+    a1a.field_4 = nox_read_f32(&a3a[4]) - a4;
+    a1a.field_8 = nox_read_f32(&a3a[3]) + a4;
+    a1a.field_C = nox_read_f32(&a3a[4]) + a4;
     sub_517C10(&a1a, sub_540780, (int)a3a);
     return *(_DWORD *)&byte_5D4594[2489152];
   }

@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -40,6 +41,7 @@ bool nox_3ds_init(void)
     g_3ds_state.wide_stretch = false;
     g_3ds_state.touch_to_aim = true;
     g_3ds_state.aim_mode = NOX_3DS_AIM_RADIAL;
+    g_3ds_state.cstick_mode = NOX_3DS_CSTICK_AIM_CAMERA;
 
     bool is_n3ds = false;
     if (R_SUCCEEDED(APT_CheckNew3DS(&is_n3ds))) {
@@ -49,7 +51,7 @@ bool nox_3ds_init(void)
     g_3ds_state.linear_free_bytes = (uint32_t)linearSpaceFree();
     g_3ds_state.heap_used_bytes = (uint32_t)mallinfo().uordblks;
 
-    printf("=== Nox New 3DS Port (M2) ===\n");
+    printf("=== Nox New 3DS Port (M3) ===\n");
     printf("[3ds] Model: %s\n", g_3ds_state.is_new_3ds ? "New 3DS (804MHz + L2)" : "WARNING: Old 3DS (268MHz)");
     printf("[3ds] Stack: %u KB | linearFree: %u KB\n",
            (unsigned)(__stacksize__ / 1024u),
@@ -69,6 +71,7 @@ bool nox_3ds_init(void)
         if (chdir(NOX_3DS_DATA_ROOT) == 0) {
             g_3ds_state.sdmc_root_ready = true;
             printf("[3ds] chdir(%s) OK\n", NOX_3DS_DATA_ROOT);
+            mkdir(NOX_3DS_DATA_ROOT "/save", 0777);
         } else {
             printf("[3ds] WARN: chdir(%s) failed\n", NOX_3DS_DATA_ROOT);
         }
@@ -76,6 +79,7 @@ bool nox_3ds_init(void)
         printf("[3ds] WARN: %s not found on SD card\n", NOX_3DS_DATA_ROOT);
     }
 
+    nox_3ds_net_init();
     nox_3ds_input_init();
 
     atexit(nox_3ds_shutdown);
@@ -91,6 +95,7 @@ void nox_3ds_shutdown(void)
     g_shutdown_done = true;
 
     nox_3ds_video_shutdown();
+    nox_3ds_net_shutdown();
 
     printf("\n[3ds] Engine exited. Press START to exit.\n");
     gfxFlushBuffers();
@@ -173,11 +178,20 @@ void nox_3ds_resolve_path(const char *path, char *out, size_t out_sz)
     }
 
     char norm[512];
-    size_t i = 0;
-    for (; path[i] && i + 1 < sizeof(norm); ++i) {
-        norm[i] = (path[i] == '\\') ? '/' : path[i];
+    size_t n = 0;
+    for (size_t i = 0; path[i] && n + 1 < sizeof(norm); ++i) {
+        char c = (path[i] == '\\') ? '/' : path[i];
+        /* Collapse duplicate slashes */
+        if (c == '/' && n > 0 && norm[n - 1] == '/')
+            continue;
+        norm[n++] = c;
     }
-    norm[i] = '\0';
+    norm[n] = '\0';
+
+    /* Strip trailing slash unless it's the device root (e.g. "sdmc:/") */
+    while (n > 1 && norm[n - 1] == '/' && !(n >= 2 && norm[n - 2] == ':')) {
+        norm[--n] = '\0';
+    }
 
     if (strncmp(norm, "sdmc:/", 6) == 0 || strncmp(norm, "romfs:/", 7) == 0) {
         snprintf(out, out_sz, "%s", norm);
@@ -189,6 +203,13 @@ void nox_3ds_resolve_path(const char *path, char *out, size_t out_sz)
         rel++;
     if (rel[0] == '.' && rel[1] == '/')
         rel += 2;
+
+    /* Avoid double-prefixing if getcwd() returned "/3ds/nox/..." without "sdmc:" */
+    if (strncasecmp(rel, "3ds/nox/", 8) == 0) {
+        rel += 8;
+    } else if (strcasecmp(rel, "3ds/nox") == 0) {
+        rel = "";
+    }
 
     if (*rel == '\0') {
         snprintf(out, out_sz, "%s", NOX_3DS_DATA_ROOT);
