@@ -4473,8 +4473,25 @@ int __cdecl sub_4B0340(int a1)
 #else
 	v1 = (GetAsyncKeyState(VK_SHIFT) & 0x8000u) != 0;
 #endif
+#ifdef __3DS__
+    nox_3ds_movie_log("sub_4B0340(a1=%d) queue=%d f2650636=0x%x f3801772=0x%x bpp3801780=%d first='%s'",
+                      a1,
+                      *(_DWORD *)&byte_5D4594[1311928],
+                      (unsigned)*(_DWORD *)&byte_5D4594[2650636],
+                      (unsigned)*(_DWORD *)&byte_5D4594[3801772],
+                      *(_DWORD *)&byte_5D4594[3801780],
+                      (*(_DWORD *)&byte_5D4594[1311928] > 0) ? (const char *)&byte_5D4594[1311940] : "(empty)");
+	/* On 3DS, ignore Win32 windowed-mode bit (byte_5D4594[3801772] & 0x10). */
+	if ((*(_WORD *)&byte_5D4594[2650636] & 0x200) == 512 || v1)
+	{
+		nox_3ds_movie_log("sub_4B0340 skipped by flag (f2650636=0x%x v1=%d)",
+		                  (unsigned)*(_DWORD *)&byte_5D4594[2650636], v1);
+		goto LABEL_23;
+	}
+#else
 	if ((*(_WORD *)&byte_5D4594[2650636] & 0x200) == 512 || v1 || byte_5D4594[3801772] & 0x10)
 		goto LABEL_23;
+#endif
 	sub_431290();
 	sub_43DBD0();
 	sub_44D8F0();
@@ -4582,12 +4599,12 @@ int __cdecl sub_4B0340(int a1)
 		sub_43DBE0();
 		sub_47D8C0();
 		sub_48B3E0(v12);
+	LABEL_23:
 	#ifdef USE_SDL
         g_present_src      = NULL;        // or g_backbuffer1 if you prefer explicit
         g_present_is_movie = 0;
 //        dword_6F7BA0        = sdl_present;
     #endif
-	LABEL_23:
 		sub_4B05D0();
 		return 1;
 	}

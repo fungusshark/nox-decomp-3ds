@@ -281,8 +281,20 @@ LABEL_32:
           *(_DWORD *)&byte_5D4594[815132] = 0;
           return 0;
         case 121:
+#ifdef __3DS__
+          nox_3ds_movie_log("MainMenu Play Intro (btn 121) clicked -> searching '%s'",
+                            (const char *)&byte_587000[169384]);
+#endif
           if ( !sub_4CB230((const char *)&byte_587000[169384], v10) )
+          {
+#ifdef __3DS__
+            nox_3ds_movie_log("MainMenu Play Intro: sub_4CB230 returned 0 (file not found)");
+#endif
             goto LABEL_32;
+          }
+#ifdef __3DS__
+          nox_3ds_movie_log("MainMenu Play Intro: queuing '%s'", v10);
+#endif
           sub_4A1D40();
           sub_4B0300(v10);
           sub_4B0640(sub_43C0A0);
@@ -30600,6 +30612,28 @@ BOOL __cdecl sub_4CB230(const char *a1, char *lpFileName)
   char *v3; // eax
   struct _stat v4; // [esp+10h] [ebp-24h]
 
+#ifdef __3DS__
+  static const char *const k_3ds_movie_dirs[] = {
+    "movies\\",
+    "",
+    "movie\\",
+    "video\\",
+  };
+  for (size_t i = 0; i < sizeof(k_3ds_movie_dirs) / sizeof(k_3ds_movie_dirs[0]); ++i)
+  {
+    strcpy(lpFileName, k_3ds_movie_dirs[i]);
+    strcat(lpFileName, a1);
+    if ( !_stat(lpFileName, (int)&v4) )
+    {
+      nox_3ds_movie_log("sub_4CB230('%s') -> FOUND '%s' (%u bytes)",
+                        a1 ? a1 : "(null)", lpFileName, (unsigned)v4.st_size);
+      return 1;
+    }
+  }
+  nox_3ds_movie_log("sub_4CB230('%s') -> NOT FOUND in sdmc:/3ds/nox/{movies/,./,movie/,video/}",
+                    a1 ? a1 : "(null)");
+  return 0;
+#else
   //fprintf(stderr, "looking for movies\n");
 
   strcpy(lpFileName, "movies\\");
@@ -30614,6 +30648,7 @@ BOOL __cdecl sub_4CB230(const char *a1, char *lpFileName)
   strcat(lpFileName, "movies\\");
   strcat(lpFileName, a1);
   return _stat(lpFileName, (int)&v4) == 0;
+#endif
 }
 
 //----- (004CB330) --------------------------------------------------------

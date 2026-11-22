@@ -1074,7 +1074,7 @@ void __cdecl sub_555430(HWND *a1)
     if (!movie_path || !movie_path[0])
         return;
 
-    fprintf(stderr, "[movie3ds] Pure Port VQA play: %s\n", movie_path);
+    nox_3ds_movie_log("sub_555430 enter: path='%s'", movie_path);
 
     /* 1. Buffer Handoff: ensure linearAlloc 640x480 RGBA5551 decode surface (pitch = 1024*2) */
     if (!g_movie_surf ||
@@ -1088,7 +1088,7 @@ void __cdecl sub_555430(HWND *a1)
         g_movie_surf = SDL_CreateRGBSurfaceWithFormat(
             0, NOX_3DS_LOGICAL_W, NOX_3DS_LOGICAL_H, 16, SDL_PIXELFORMAT_RGBA5551);
         if (!g_movie_surf || !g_movie_surf->pixels) {
-            fprintf(stderr, "[movie3ds] ERROR: failed to allocate 640x480 movie surface\n");
+            nox_3ds_movie_log("sub_555430 ERROR: failed to allocate 640x480 movie surface");
             return;
         }
     }
@@ -1129,8 +1129,8 @@ void __cdecl sub_555430(HWND *a1)
     s_3ds_vqa_buf_w    = NOX_3DS_LOGICAL_W;
     s_3ds_vqa_buf_h    = NOX_3DS_LOGICAL_H;
 
-    sub_555C40((_DWORD *)a1);
-    sub_555A40();
+    int play_rc = sub_555C40((_DWORD *)a1);
+    nox_3ds_movie_log("sub_555430 exit: path='%s' rc=%d", movie_path, play_rc);
 
     /* Guaranteed teardown of audio, 8-bit scratch buffer, presentation hooks, and button edges. */
     nox_3ds_movie_audio_close();
@@ -1630,15 +1630,27 @@ int __cdecl sub_555C40(_DWORD *a1)
 	}
 	sub_413B70((char *)&byte_587000[293548]);
 	if (!sub_5581C0(*(_DWORD **)&byte_5D4594[2513964]))
+	{
+#ifdef __3DS__
+		nox_3ds_movie_log("sub_555C40: sub_5581C0 FAILED for '%s'", v1 ? v1 : "(null)");
+#endif
 		goto LABEL_16;
+	}
 	v20 = sub_558720(*(_DWORD **)&byte_5D4594[2513964]);
 	v19 = sub_5587F0(*(_DWORD **)&byte_5D4594[2513964]);
 	v10 = sub_5587E0(*(_DWORD **)&byte_5D4594[2513964]);
 	sub_555AE0(v10, v19, v20, &v22, &v23, &v21);
 	if (v21 == 4)
 		v21 = 1;
+#ifdef __3DS__
+	nox_3ds_movie_log("sub_555C40: VQA open OK src=%dx%d hicolor=%d dst=%ux%u mode=%d frames=%d",
+	                  v10, v19, v20, v22, v23, v21,
+	                  ((int *)*(_DWORD **)&byte_5D4594[2513964])[371]);
+#endif
 	sub_413B70((char *)&byte_587000[293524]);
+#ifndef __3DS__
 	sub_555620(a1);
+#endif
 	sub_413B70((char *)&byte_587000[293496]);
 	if (v21 == 1 || v21 == 4)
 	{
@@ -3717,7 +3729,8 @@ char __thiscall sub_5581C0(_DWORD *this)
 
 	v1 = this;
 	v2 = (unsigned __int16 **)(this + 177);
-	if (sub_55A7B0((int)this + 309, (int)(this + 143), this + 177) == -1)
+	int open_rc = sub_55A7B0((int)this + 309, (int)(this + 143), this + 177);
+	if (open_rc == -1)
 	{
 		v4 = *v2;
 		v1[371] = *((_DWORD *)*v2 + 4);
@@ -3730,6 +3743,10 @@ char __thiscall sub_5581C0(_DWORD *this)
 	}
 	else
 	{
+#ifdef __3DS__
+		nox_3ds_movie_log("sub_5581C0: sub_55A7B0('%s') returned error %d",
+		                  (const char *)((char *)this + 309), open_rc);
+#endif
 		*((_BYTE *)v1 + 1496) = 0;
 		result = 0;
 	}
@@ -3828,9 +3845,9 @@ BOOL __thiscall sub_558370(int *this, int a2)
 	int v12; // [esp+14h] [ebp-20h]
 	int v13; // [esp+18h] [ebp-1Ch]
 	DWORD v14; // [esp+1Ch] [ebp-18h]
-	char v15; // [esp+20h] [ebp-14h]
-	char v16; // [esp+24h] [ebp-10h]
-	char v17; // [esp+28h] [ebp-Ch]
+	int v15; // [esp+20h] [ebp-14h]
+	int v16; // [esp+24h] [ebp-10h]
+	int v17; // [esp+28h] [ebp-Ch]
 	CHAR String[8]; // [esp+2Ch] [ebp-8h]
 
 	v2 = a2;
@@ -3871,6 +3888,12 @@ LABEL_13:
 	v4 = 0;
 	v14 = sub_55C920();
 	sub_555500(0);
+#ifdef __3DS__
+	int dbg_frames = 0;
+	int dbg_b470_err = 0;
+	nox_3ds_movie_log("sub_558370 loop start: target=%d total=%d mode=%d v373=%d dst=%dx%d",
+	                  v2, v3[371], a2, v3[373], v3[377], v3[378]);
+#endif
 	while ((v4 >= 0 || v4 == -10 || v4 == -9 || v4 == -11 || v4 == -1) && !v11)
 	{
 		sub_558300();
@@ -3886,7 +3909,16 @@ LABEL_13:
 		{
 			v5 = v3[377] + ((int(*)(void))*v3)();
 			sub_558800(v3);
-			sub_55B470(v3[177], 0, v3[377], v3[378], v5, -1, -1);
+			int b470_rc = sub_55B470(v3[177], 0, v3[377], v3[378], v5, -1, -1);
+#ifdef __3DS__
+			if (b470_rc != -1 && !dbg_b470_err) {
+				dbg_b470_err = b470_rc;
+				nox_3ds_movie_log("sub_558370 WARN: sub_55B470(w=%d,h=%d,pitch=%u) -> %d",
+				                  v3[377], v3[378], v5, b470_rc);
+			}
+#else
+			(void)b470_rc;
+#endif
 			v4 = sub_55AEF0(v3[177], 1, 0);
 			#ifdef USE_SDL
             static int last_v4 = 123456;
@@ -3898,6 +3930,12 @@ LABEL_13:
 			sub_558810(v3);
 			if (v4 >= 0)
 			{
+#ifdef __3DS__
+				if (dbg_frames == 0) {
+					nox_3ds_movie_log("sub_558370 first frame decoded! frame=%d", v4);
+				}
+				dbg_frames++;
+#endif
 				if (*((_BYTE *)v3 + 1516))
 				{
 					sub_5581B0((char *)v3);
@@ -3932,6 +3970,8 @@ LABEL_13:
         #endif
 	}
 #ifdef __3DS__
+	nox_3ds_movie_log("sub_558370 loop end: v4=%d skipped=%d frames_drawn=%d elapsed_ms=%u",
+	                  v4, (int)v11, dbg_frames, (unsigned)(sub_55C920() - v14));
 	nox_write_u64(String, (uint64_t)(sub_55C920() - v14));
 #else
 	*(_QWORD *)String = sub_55C920() - v14;
@@ -7857,7 +7897,7 @@ DWORD __thiscall sub_55C900(DWORD *this)
 	v1 = this;
 	v2 = timeGetTime();
 	v3 = *v1;
-	if (v2 > *v1)
+	if (v2 >= *v1)
 		result = v2 - v3;
 	else
 		result = v2 - v3 - 1;
@@ -12494,12 +12534,22 @@ int __cdecl sub_561980(int a1)
 	v5 = *(_BYTE *)(a1 + 264);
 	if (v5 == 1 || v5 == 4)
 		*(_DWORD *)(a1 + 1908) = 2 * v4;
+#ifdef __3DS__
+	v6 = nox_read_u32((const void *)(uintptr_t)(a1 + 266));
+#else
 	v6 = *(_DWORD *)(a1 + 266);
+#endif
 	v7 = *(_DWORD *)(a1 + 1908);
 	if (v6 > v7)
 		return -3;
 	if (!v6)
+	{
+#ifdef __3DS__
+		nox_write_u32((void *)(uintptr_t)(a1 + 266), v7);
+#else
 		*(_DWORD *)(a1 + 266) = v7;
+#endif
+	}
 	if (*(int *)(a1 + 140) <= 0)
 	{
 		if (*(_WORD *)(a1 + 1868) <= 0u)
@@ -12540,7 +12590,11 @@ int __cdecl sub_561980(int a1)
 	LOBYTE(v11) = v11 | 1;
 	v41 = *(_DWORD *)(a1 + 1908);
 	*(_DWORD *)(a1 + 340) = v11;
+#ifdef __3DS__
+	v12 = (int)nox_read_u32((const void *)(uintptr_t)(a1 + 266)) + 16;
+#else
 	v12 = *(_DWORD *)(a1 + 266) + 16;
+#endif
 	LOBYTE(v12) = v12 & 0xFC;
 	*(_DWORD *)(a1 + 1896) = v12;
 	v13 = (*(int(__cdecl **)(int, int, _DWORD, int))(a1 + 68))(a1, 2, 0, v41);
@@ -13558,7 +13612,8 @@ int __cdecl sub_562C9B(unsigned __int8 *a1, char *a2, int a3)
 						v12 = &a2[v5];
 						if (v9 > v24)
 							v9 = v22 - v3;
-						qmemcpy(v3, v12, v9);
+						for (unsigned int _k = 0; _k < v9; ++_k)
+							v3[_k] = v12[_k];
 						v3 += v9;
 					}
 				}
@@ -13582,7 +13637,11 @@ int __cdecl sub_562C9B(unsigned __int8 *a1, char *a2, int a3)
 					v7 = v22 - v3;
 				LOBYTE(v5) = *(_BYTE *)v6;
 				v4 += 2;
-				qmemcpy(v3, &v3[-v5], v7);
+				{
+					const char *_src = &v3[-v5];
+					for (unsigned int _k = 0; _k < v7; ++_k)
+						v3[_k] = _src[_k];
+				}
 				v3 += v7;
 			}
 		}
@@ -13623,7 +13682,11 @@ int __cdecl sub_562C9B(unsigned __int8 *a1, char *a2, int a3)
 						if (v19 > v25)
 							v19 = v23 - v3;
 						LOWORD(v15) = *v16;
-						qmemcpy(v3, &v3[-v15], v19);
+						{
+							const char *_src = &v3[-v15];
+							for (unsigned int _k = 0; _k < v19; ++_k)
+								v3[_k] = _src[_k];
+						}
 						v3 += v19;
 					}
 				}
@@ -13647,7 +13710,11 @@ int __cdecl sub_562C9B(unsigned __int8 *a1, char *a2, int a3)
 					v17 = v23 - v3;
 				LOBYTE(v15) = *(_BYTE *)v16;
 				v14 += 2;
-				qmemcpy(v3, &v3[-v15], v17);
+				{
+					const char *_src = &v3[-v15];
+					for (unsigned int _k = 0; _k < v17; ++_k)
+						v3[_k] = _src[_k];
+				}
 				v3 += v17;
 			}
 		}

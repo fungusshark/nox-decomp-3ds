@@ -3,6 +3,7 @@
 #include <3ds.h>
 #include <ctype.h>
 #include <malloc.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -279,5 +280,27 @@ void nox_3ds_mutex_unlock(nox_3ds_mutex_t *m)
 {
     if (m) {
         RecursiveLock_Unlock(&m->lock);
+    }
+}
+
+void nox_3ds_movie_log(const char *fmt, ...)
+{
+    static bool s_log_started = false;
+    char msg[512];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(msg, sizeof(msg), fmt, ap);
+    va_end(ap);
+
+    uint32_t ms = nox_3ds_get_ticks_ms();
+    fprintf(stderr, "[movie3ds %ums] %s\n", (unsigned)ms, msg);
+
+    const char *mode = s_log_started ? "a" : "w";
+    FILE *f = fopen(NOX_3DS_DATA_ROOT "/movie.log", mode);
+    if (f) {
+        s_log_started = true;
+        fprintf(f, "[%ums] %s\n", (unsigned)ms, msg);
+        fflush(f);
+        fclose(f);
     }
 }
