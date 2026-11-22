@@ -45,6 +45,8 @@ add_executable(nox
     "${NOX_SRC_DIR}/string.c"
     "${NOX_SRC_DIR}/win.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/platform_3ds.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/video_3ds.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/input_3ds.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/stubs.c"
 )
 

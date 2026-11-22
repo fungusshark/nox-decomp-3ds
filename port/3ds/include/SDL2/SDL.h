@@ -92,6 +92,9 @@ typedef struct {
     int h;
     int pitch;
     void *pixels;
+    Uint32 colorkey;
+    Uint8 has_colorkey;
+    Uint8 is_linear;
 } SDL_Surface;
 
 typedef enum {

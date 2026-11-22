@@ -37,6 +37,9 @@ bool nox_3ds_init(void)
 
     memset(&g_3ds_state, 0, sizeof(g_3ds_state));
     g_3ds_state.bottom_console_mode = true;
+    g_3ds_state.wide_stretch = false;
+    g_3ds_state.touch_to_aim = true;
+    g_3ds_state.aim_mode = NOX_3DS_AIM_RADIAL;
 
     bool is_n3ds = false;
     if (R_SUCCEEDED(APT_CheckNew3DS(&is_n3ds))) {
@@ -46,7 +49,7 @@ bool nox_3ds_init(void)
     g_3ds_state.linear_free_bytes = (uint32_t)linearSpaceFree();
     g_3ds_state.heap_used_bytes = (uint32_t)mallinfo().uordblks;
 
-    printf("=== Nox New 3DS Port (M1) ===\n");
+    printf("=== Nox New 3DS Port (M2) ===\n");
     printf("[3ds] Model: %s\n", g_3ds_state.is_new_3ds ? "New 3DS (804MHz + L2)" : "WARNING: Old 3DS (268MHz)");
     printf("[3ds] Stack: %u KB | linearFree: %u KB\n",
            (unsigned)(__stacksize__ / 1024u),
@@ -58,7 +61,7 @@ bool nox_3ds_init(void)
         printf("[3ds] romfs mounted OK\n");
     } else {
         g_3ds_state.romfs_mounted = false;
-        printf("[3ds] WARN: romfsInit()=0x%08lx (no romfs bundled); using SDMC\n", (unsigned long)rc);
+        printf("[3ds] romfs not bundled; using SDMC\n");
     }
 
     struct stat st;
@@ -73,10 +76,10 @@ bool nox_3ds_init(void)
         printf("[3ds] WARN: %s not found on SD card\n", NOX_3DS_DATA_ROOT);
     }
 
+    nox_3ds_input_init();
+
     atexit(nox_3ds_shutdown);
     g_initialized = true;
-    gfxFlushBuffers();
-    gfxSwapBuffers();
     gspWaitForVBlank();
     return true;
 }
@@ -87,6 +90,8 @@ void nox_3ds_shutdown(void)
         return;
     g_shutdown_done = true;
 
+    nox_3ds_video_shutdown();
+
     printf("\n[3ds] Engine exited. Press START to exit.\n");
     gfxFlushBuffers();
     gfxSwapBuffers();
@@ -96,8 +101,6 @@ void nox_3ds_shutdown(void)
         hidScanInput();
         if (hidKeysDown() & KEY_START)
             break;
-        gfxFlushBuffers();
-        gfxSwapBuffers();
         gspWaitForVBlank();
     }
 
@@ -113,8 +116,11 @@ bool nox_3ds_apt_ok(void)
     if (!aptMainLoop()) {
         return false;
     }
-    gfxFlushBuffers();
-    gfxSwapBuffers();
+    /* Only swap via GSP CPU buffers before citro3d owns the top screen. */
+    if (!nox_3ds_video_is_active()) {
+        gfxFlushBuffers();
+        gfxSwapBuffers();
+    }
     return true;
 }
 
@@ -145,6 +151,11 @@ const nox_3ds_state_t *nox_3ds_get_state(void)
 {
     g_3ds_state.linear_free_bytes = (uint32_t)linearSpaceFree();
     g_3ds_state.heap_used_bytes = (uint32_t)mallinfo().uordblks;
+    return &g_3ds_state;
+}
+
+nox_3ds_state_t *nox_3ds_state_mut(void)
+{
     return &g_3ds_state;
 }
 

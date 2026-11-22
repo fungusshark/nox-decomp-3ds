@@ -42504,6 +42504,10 @@ BOOL __cdecl sub_430BE0(int a1, int a2, int a3)
 {
   BOOL result; // eax
 
+#ifdef __3DS__
+  a1 = NOX_3DS_LOGICAL_W;
+  a2 = NOX_3DS_LOGICAL_H;
+#endif
   printf("New size: %d, %d\n", a1, a2);
 
   *(_DWORD *)&byte_5D4594[3805496] = a1;
@@ -42736,6 +42740,10 @@ int __cdecl sub_431040(int a1, int a2, int a3)
 {
   int result; // eax
 
+#ifdef __3DS__
+  a2 = NOX_3DS_LOGICAL_W;
+  a3 = NOX_3DS_LOGICAL_H;
+#endif
   *(_DWORD *)&byte_5D4594[3805496] = a2;
   *(_DWORD *)&byte_5D4594[3807120] = a3;
   *(_DWORD *)&byte_587000[80848] = 0;

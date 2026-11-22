@@ -133,8 +133,22 @@ static SDL_Surface *stub_create_surface(int w, int h, int bpp, Uint32 format)
     pf->BytesPerPixel = (Uint8)bytes_pp;
     s->w = w;
     s->h = h;
-    s->pitch = w * bytes_pp;
     s->format = pf;
+
+    if (w >= NOX_3DS_LOGICAL_W && h >= NOX_3DS_LOGICAL_H && bytes_pp == 2) {
+        /* Backbuffer: pitch=1024*2 in linearAlloc so C3D_SyncDisplayTransfer is zero-copy. */
+        int alloc_w = (w <= NOX_3DS_TEX_W) ? NOX_3DS_TEX_W : w;
+        int alloc_h = (h <= NOX_3DS_TEX_H) ? NOX_3DS_TEX_H : h;
+        s->pitch = alloc_w * bytes_pp;
+        s->pixels = nox_3ds_linear_alloc((size_t)s->pitch * (size_t)alloc_h);
+        if (s->pixels) {
+            s->is_linear = 1;
+            return s;
+        }
+    }
+
+    s->pitch = w * bytes_pp;
+    s->is_linear = 0;
     if (w > 0 && h > 0) {
         s->pixels = calloc((size_t)w * (size_t)h, (size_t)bytes_pp);
     }
@@ -145,42 +159,71 @@ SDL_Surface *SDL_CreateRGBSurface(Uint32 flags, int w, int h, int depth,
                                   Uint32 Rmask, Uint32 Gmask, Uint32 Bmask, Uint32 Amask)
 {
     (void)flags; (void)Rmask; (void)Gmask; (void)Bmask; (void)Amask;
-    LOG_STUB();
     return stub_create_surface(w, h, depth, SDL_PIXELFORMAT_RGBA5551);
 }
 
 SDL_Surface *SDL_CreateRGBSurfaceWithFormat(Uint32 flags, int w, int h, int depth, Uint32 format)
 {
     (void)flags;
-    LOG_STUB();
     return stub_create_surface(w, h, depth, format);
 }
 
 void SDL_FreeSurface(SDL_Surface *surface)
 {
-    LOG_STUB();
     if (!surface) return;
-    free(surface->pixels);
+    if (surface->is_linear)
+        nox_3ds_linear_free(surface->pixels);
+    else
+        free(surface->pixels);
     free(surface->format);
     free(surface);
 }
 
-int SDL_LockSurface(SDL_Surface *surface) { (void)surface; LOG_STUB(); return 0; }
-void SDL_UnlockSurface(SDL_Surface *surface) { (void)surface; LOG_STUB(); }
-int SDL_SetColorKey(SDL_Surface *surface, int flag, Uint32 key) { (void)surface; (void)flag; (void)key; LOG_STUB(); return 0; }
-int SDL_GetColorKey(SDL_Surface *surface, Uint32 *key) { (void)surface; if (key) *key = 0; LOG_STUB(); return -1; }
-int SDL_SetSurfaceBlendMode(SDL_Surface *surface, int blendMode) { (void)surface; (void)blendMode; LOG_STUB(); return 0; }
+int SDL_LockSurface(SDL_Surface *surface) { (void)surface; return 0; }
+void SDL_UnlockSurface(SDL_Surface *surface) { (void)surface; }
+int SDL_SetColorKey(SDL_Surface *surface, int flag, Uint32 key)
+{
+    if (!surface) return -1;
+    surface->has_colorkey = flag ? 1 : 0;
+    surface->colorkey = key;
+    return 0;
+}
+int SDL_GetColorKey(SDL_Surface *surface, Uint32 *key)
+{
+    if (!surface || !surface->has_colorkey) return -1;
+    if (key) *key = surface->colorkey;
+    return 0;
+}
+int SDL_SetSurfaceBlendMode(SDL_Surface *surface, int blendMode) { (void)surface; (void)blendMode; return 0; }
 Uint32 SDL_MapRGB(const SDL_PixelFormat *format, Uint8 r, Uint8 g, Uint8 b)
 {
-    (void)format;
-    LOG_STUB();
+    if (format && format->format == SDL_PIXELFORMAT_RGB565) {
+        return (Uint32)((((r >> 3) & 0x1F) << 11) | (((g >> 2) & 0x3F) << 5) | ((b >> 3) & 0x1F));
+    }
     return (Uint32)((((r >> 3) & 0x1F) << 11) | (((g >> 3) & 0x1F) << 6) | (((b >> 3) & 0x1F) << 1) | 1);
 }
 int SDL_BlitScaled(SDL_Surface *src, const SDL_Rect *srcrect, SDL_Surface *dst, SDL_Rect *dstrect)
 {
-    (void)src; (void)srcrect; (void)dst; (void)dstrect;
-    LOG_STUB();
-    return 0;
+    if (!src || !dst || !src->pixels || !dst->pixels)
+        return -1;
+
+    int sx = srcrect ? srcrect->x : 0;
+    int sy = srcrect ? srcrect->y : 0;
+    int sw = srcrect ? srcrect->w : src->w;
+    int sh = srcrect ? srcrect->h : src->h;
+
+    int dx = dstrect ? dstrect->x : 0;
+    int dy = dstrect ? dstrect->y : 0;
+    int dw = dstrect ? dstrect->w : dst->w;
+    int dh = dstrect ? dstrect->h : dst->h;
+
+    return nox_3ds_blit_scaled_16(
+        src->pixels, src->w, src->h, src->pitch,
+        src->has_colorkey != 0, (uint16_t)src->colorkey,
+        sx, sy, sw, sh,
+        dst->pixels, dst->w, dst->h, dst->pitch,
+        dx, dy, dw, dh
+    );
 }
 int SDL_LockTexture(void *texture, const SDL_Rect *rect, void **pixels, int *pitch)
 {

@@ -32,6 +32,7 @@ enum
     MOUSE_BUTTON0,
     MOUSE_BUTTON1,
     MOUSE_BUTTON2,
+    MOUSE_ABS,
 };
 
 struct keyboard_event
@@ -69,6 +70,10 @@ static int g_thumbstick_move_active = 0;
 static int g_thumbstick_orientation = 0;
 static int g_thumbstick_move_cmd = 0;
 static int g_thumbstick_jump = 0;
+static int g_radial_aim_active = 0;
+static int g_radial_aim_orientation = 0;
+static int g_radial_aim_x = 0;
+static int g_radial_aim_y = 0;
 
 enum nox_limit_source
 {
@@ -226,6 +231,14 @@ void nox_ctrl_set_thumbstick_jump(int jump)
     if (jump) g_thumbstick_jump = 1;
 }
 
+void nox_ctrl_set_radial_aim(int active, int orientation, int screen_x, int screen_y)
+{
+    g_radial_aim_active = active ? 1 : 0;
+    g_radial_aim_orientation = orientation & 255;
+    g_radial_aim_x = screen_x;
+    g_radial_aim_y = screen_y;
+}
+
 void nox_ctrl_capture_event(const SDL_Event *ev)
 {
     if (!ev) return;
@@ -376,6 +389,18 @@ void nox_ctrl_inject_mouse_move(int dx, int dy, int wheel)
     mouse_event_widx = (mouse_event_widx + 1) % 256;
 }
 
+
+void nox_ctrl_inject_mouse_abs(int x, int y)
+{
+    NOX_CTRL_INJECT_LOG("[inj] mouse_abs x=%d y=%d widx=%u\n", x, y, (unsigned)mouse_event_widx);
+    struct mouse_event *me = &mouse_event_queue[mouse_event_widx];
+    me->type = MOUSE_ABS;
+    me->x = x;
+    me->y = y;
+    me->z = 0;
+    me->seq = seqnum++;
+    mouse_event_widx = (mouse_event_widx + 1) % 256;
+}
 
 void nox_ctrl_inject_mouse_button(int button, int down)
 {
@@ -901,6 +926,9 @@ char __cdecl sub_47DB20(signed int *a1)
     case MOUSE_BUTTON2:
         a1[11] = me->state;
         a1[13] = me->seq;
+        break;
+    case MOUSE_ABS:
+        sub_430B10(me->x, me->y);
         break;
     }
 
@@ -1566,45 +1594,58 @@ int __cdecl sub_42D6B0(_DWORD *a3, int a4)
     }
   }
 #if defined(USE_SDL) && !defined(__EMSCRIPTEN__)
-    if (g_thumbstick_move_active)
+    if (g_thumbstick_move_active || g_radial_aim_active)
     {
         int *vp;
         int screen_x, screen_y;
         int world_x, world_y;
-        int radius;
-        double ang;
-        double dx, dy;
 
-        /* Keep the facing/orientation command, same as before. */
-        sub_42E670(1, g_thumbstick_orientation);
-
-        /* NEW: explicitly issue walk/run while thumbstick movement is active. */
-        if (g_thumbstick_move_cmd)
-            sub_42E670(2, g_thumbstick_move_cmd);
-
-        vp = (int *)sub_437250();
-
-        if (vp && (vp[2] - vp[0]) > 0 && (vp[3] - vp[1]) > 0)
+        if (g_thumbstick_move_active)
         {
-            screen_x = vp[0] + (vp[2] - vp[0]) / 2;
-            screen_y = vp[1] + (vp[3] - vp[1]) / 2;
+            /* Keep the movement facing/orientation and move command */
+            sub_42E670(1, g_thumbstick_orientation);
+            if (g_thumbstick_move_cmd)
+                sub_42E670(2, g_thumbstick_move_cmd);
+        }
+        else if (g_radial_aim_active)
+        {
+            /* Stationary twin-stick aim: turn character to face C-Stick / touch aim */
+            sub_42E670(1, g_radial_aim_orientation);
+        }
+
+        if (g_radial_aim_active)
+        {
+            screen_x = g_radial_aim_x;
+            screen_y = g_radial_aim_y;
         }
         else
         {
-            int2 *gm = sub_4309F0();
-            screen_x = gm->field_0;
-            screen_y = gm->field_4;
+            int radius;
+            double ang;
+            double dx, dy;
+
+            vp = (int *)sub_437250();
+            if (vp && (vp[2] - vp[0]) > 0 && (vp[3] - vp[1]) > 0)
+            {
+                screen_x = vp[0] + (vp[2] - vp[0]) / 2;
+                screen_y = vp[1] + (vp[3] - vp[1]) / 2;
+            }
+            else
+            {
+                int2 *gm = sub_4309F0();
+                screen_x = gm->field_0;
+                screen_y = gm->field_4;
+            }
+
+            ang = (((double)g_thumbstick_orientation / 128.0) - 1.0) * M_PI;
+            radius = (g_thumbstick_move_cmd == 3) ? 140 : 80;
+
+            dx = -cos(ang) * (double)radius;
+            dy = -sin(ang) * (double)radius;
+
+            screen_x += (int)lrint(dx);
+            screen_y += (int)lrint(dy);
         }
-
-        ang = (((double)g_thumbstick_orientation / 128.0) - 1.0) * M_PI;
-
-        radius = (g_thumbstick_move_cmd == 3) ? 140 : 80;
-
-        dx = -cos(ang) * (double)radius;
-        dy = -sin(ang) * (double)radius;
-
-        screen_x += (int)lrint(dx);
-        screen_y += (int)lrint(dy);
 
         {
             int2 *gm = sub_4309F0();

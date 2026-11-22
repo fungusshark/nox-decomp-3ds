@@ -1164,6 +1164,21 @@ void sdl_present()
     SDL_Surface *srcsurf = g_present_src ? g_present_src : g_backbuffer1;
     if (!srcsurf)
         return;
+#ifdef __3DS__
+    sub_48BE50(1);
+    sub_48B5D0(0, 0);
+    nox_3ds_video_set_gamma(draw_gamma);
+    nox_3ds_video_present(
+        srcsurf->pixels,
+        srcsurf->w,
+        srcsurf->h,
+        srcsurf->pitch,
+        srcsurf->format ? srcsurf->format->format : g_format,
+        srcsurf->is_linear != 0
+    );
+    sub_48BE50(0);
+    return;
+#endif
     if (SDL_GL_GetCurrentWindow() != dword_973FE0 ||
         SDL_GL_GetCurrentContext() != g_ddraw)
     {
@@ -1734,6 +1749,16 @@ int sub_48B000()
     g_rotate = 0;
 #endif
     g_format = SDL_PIXELFORMAT_RGBA5551;
+#ifdef __3DS__
+    if (!g_ddraw) {
+        g_ddraw = SDL_GL_CreateContext(dword_973FE0);
+    }
+    if (!nox_3ds_video_init(NOX_3DS_LOGICAL_W, NOX_3DS_LOGICAL_H)) {
+        return 0;
+    }
+    gl_inited = 1;
+    return 1;
+#endif
     GLenum fmt, type;
     nox_choose_5551_cached(&fmt, &type);
 
@@ -4072,6 +4097,14 @@ int __cdecl sub_4B0340(int a1)
 	*(_DWORD *)&byte_5D4594[1311932] = a1;
 #ifdef USE_SDL
      fprintf(stderr, "show movie\n");
+#ifdef __3DS__
+     /* M2: short-circuit .vqa movies and advance directly to completion callback. */
+     *(_DWORD *)&byte_5D4594[1311928] = 0;
+     g_present_src      = NULL;
+     g_present_is_movie = 0;
+     sub_4B05D0();
+     return 1;
+#endif
       /* Hard skip (useful for Wine/SDL bring-up): skip ALL movie/show path */
          {
              const char *skip_all = getenv("NOX_SKIP_MOVIES");

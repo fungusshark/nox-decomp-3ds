@@ -623,6 +623,17 @@ static struct action resolve_binding(enum phys_input in)
 
     /* Last: base [controls] layer. */
     if (g_layer_count > 0) {
+#ifdef __3DS__
+        const nox_3ds_input_t *in3ds = nox_3ds_input_get();
+        if (in3ds && in3ds->in_gameplay && in3ds->aim_mode == NOX_3DS_AIM_RADIAL) {
+            if (in == IN_UP)    return (struct action){ ACT_KEY, SDL_SCANCODE_TAB };
+            if (in == IN_DOWN)  return (struct action){ ACT_KEY, SDL_SCANCODE_V };
+            if (in == IN_LEFT)  return (struct action){ ACT_KEY, SDL_SCANCODE_X };
+            if (in == IN_RIGHT) return (struct action){ ACT_KEY, SDL_SCANCODE_C };
+        } else {
+            if (in == IN_B)     return (struct action){ ACT_MOUSE_RIGHT, 0 };
+        }
+#endif
         struct action a = g_layers[0].binds[in];
         if (a.type != ACT_NONE) return a;
     }
@@ -893,6 +904,10 @@ static int mouse_right_active(void)
 
 static int nox_thumbstick_absolute_active(void)
 {
+#ifdef __3DS__
+    const nox_3ds_input_t *in3ds = nox_3ds_input_get();
+    return (in3ds && in3ds->in_gameplay && in3ds->aim_mode == NOX_3DS_AIM_RADIAL) ? 1 : 0;
+#else
     struct action la_act = resolve_binding(IN_LEFT_ANALOG);
     int run_held = mouse_right_active() ? 1 : 0;
 
@@ -900,6 +915,7 @@ static int nox_thumbstick_absolute_active(void)
         return 0;
 
     return g_thumbstick_abs_inverted ? !run_held : run_held;
+#endif
 }
 
 static int nox_abs_i(int v)
@@ -1088,8 +1104,12 @@ static void update_left_analog_absolute(void)
             orientation = ((int)((theta + 1.0) * 128.0 + 0.5)) & 255;
         }
 
-        /* Medium stick = walk, far stick = run */
+        /* Medium stick = walk, far stick (or B held) = run/sprint */
+#ifdef __3DS__
+        if (mag >= run_th || g_cur.b)
+#else
         if (mag >= run_th)
+#endif
             move_cmd = 3;
         else
             move_cmd = 1;
@@ -1406,10 +1426,96 @@ static void ini_load(void)
 static int g_l2_state = 0;
 static int g_r2_state = 0;
 
+#ifdef __3DS__
+static void load_3ds_default_mappings(void)
+{
+    reset_mappings();
+
+    /* Base [controls] layer */
+    g_layers[0].overlay = OVERLAY_CLEAR;
+    g_layers[0].binds[IN_DPAD]        = (struct action){ ACT_MOUSE_MOVEMENT, 0 };
+    g_layers[0].binds[IN_LEFT_ANALOG] = (struct action){ ACT_MOUSE_ABSOLUTE, 0 };
+    g_layers[0].binds[IN_A]           = (struct action){ ACT_MOUSE_LEFT, 0 };
+    g_layers[0].binds[IN_B]           = (struct action){ ACT_KEY, SDL_SCANCODE_SPACE };
+    g_layers[0].binds[IN_X]           = (struct action){ ACT_KEY, SDL_SCANCODE_T };
+    g_layers[0].binds[IN_Y]           = (struct action){ ACT_KEY, SDL_SCANCODE_Q };
+    g_layers[0].binds[IN_R1]          = (struct action){ ACT_KEY, SDL_SCANCODE_B };
+    g_layers[0].binds[IN_R2]          = (struct action){ ACT_MOUSE_LEFT, 0 };
+    g_layers[0].binds[IN_SELECT]      = (struct action){ ACT_KEY, SDL_SCANCODE_ESCAPE };
+
+    int spell_grp = ensure_layer("hotkey_spell_group");
+    if (spell_grp >= 0) {
+        g_layers[0].binds[IN_L1] = (struct action){ ACT_HOLD_STATE, spell_grp };
+        g_layers[spell_grp].overlay = OVERLAY_PARENT;
+        g_layers[spell_grp].binds[IN_X]     = (struct action){ ACT_KEY, SDL_SCANCODE_A };
+        g_layers[spell_grp].binds[IN_A]     = (struct action){ ACT_KEY, SDL_SCANCODE_S };
+        g_layers[spell_grp].binds[IN_B]     = (struct action){ ACT_KEY, SDL_SCANCODE_D };
+        g_layers[spell_grp].binds[IN_Y]     = (struct action){ ACT_KEY, SDL_SCANCODE_F };
+        g_layers[spell_grp].binds[IN_R1]    = (struct action){ ACT_KEY, SDL_SCANCODE_G };
+        g_layers[spell_grp].binds[IN_R2]    = (struct action){ ACT_KEY, SDL_SCANCODE_X };
+        g_layers[spell_grp].binds[IN_L2]    = (struct action){ ACT_KEY, SDL_SCANCODE_C };
+        g_layers[spell_grp].binds[IN_UP]    = (struct action){ ACT_KEY, SDL_SCANCODE_W };
+        g_layers[spell_grp].binds[IN_DOWN]  = (struct action){ ACT_KEY, SDL_SCANCODE_E };
+        g_layers[spell_grp].binds[IN_RIGHT] = (struct action){ ACT_KEY, SDL_SCANCODE_R };
+        g_layers[spell_grp].binds[IN_LEFT]  = (struct action){ ACT_KEY, SDL_SCANCODE_B };
+    }
+
+    int start_grp = ensure_layer("hotkey_start_group");
+    if (start_grp >= 0) {
+        g_layers[0].binds[IN_START] = (struct action){ ACT_HOLD_STATE, start_grp };
+        g_layers[start_grp].overlay = OVERLAY_CLEAR;
+        g_layers[start_grp].binds[IN_LEFT]  = (struct action){ ACT_KEY, SDL_SCANCODE_F4 };
+        g_layers[start_grp].binds[IN_RIGHT] = (struct action){ ACT_KEY, SDL_SCANCODE_F2 };
+        g_layers[start_grp].binds[IN_A]     = (struct action){ ACT_KEY, SDL_SCANCODE_TAB };
+        g_layers[start_grp].binds[IN_B]     = (struct action){ ACT_KEY, SDL_SCANCODE_1 };
+        g_layers[start_grp].binds[IN_X]     = (struct action){ ACT_KEY, SDL_SCANCODE_2 };
+        g_layers[start_grp].binds[IN_Y]     = (struct action){ ACT_KEY, SDL_SCANCODE_Z };
+        g_layers[start_grp].binds[IN_R1]    = (struct action){ ACT_KEY, SDL_SCANCODE_F1 };
+        g_layers[start_grp].binds[IN_R2]    = (struct action){ ACT_KEY, SDL_SCANCODE_T };
+        g_layers[start_grp].binds[IN_L2]    = (struct action){ ACT_KEY, SDL_SCANCODE_LSHIFT };
+    }
+}
+#endif
+
 static void nox_gamepad_open_if_needed(void)
 {
     if (!nox_gamepad_enabled()) return;
     if (g_gc) return;
+
+#ifdef __3DS__
+    g_gc = (SDL_GameController *)1;
+    g_joy_id = 0;
+    g_detected_xbox = 0;
+    g_effective_swap = 0;
+
+    memset(&g_prev, 0, sizeof(g_prev));
+    memset(&g_cur, 0, sizeof(g_cur));
+    memset(&g_rs_prev, 0, sizeof(g_rs_prev));
+    memset(&g_rs_cur, 0, sizeof(g_rs_cur));
+    g_right_stick_armed = 1;
+    g_l2_state = 0;
+    g_r2_state = 0;
+    g_thumbstick_abs_inverted = 0;
+    g_thumbstick_mode_combo_latched = 0;
+
+    {
+        char ini_path[1024] = {0};
+        FILE *f = open_cfg_file(ini_path, sizeof(ini_path));
+        if (f) {
+            fclose(f);
+            ini_load();
+        } else {
+            load_3ds_default_mappings();
+        }
+    }
+
+    g_active_count = 0;
+    g_active_stack[g_active_count].layer_idx = 0;
+    g_active_stack[g_active_count].parent_slot = -1;
+    g_active_count = 1;
+    g_set_layer_idx = -1;
+    return;
+#endif
 
     int n = SDL_NumJoysticks();
     for (int i = 0; i < n; ++i) {
@@ -1504,10 +1610,54 @@ static int hysteresis_button(int value, int *state, int press_th, int release_th
     return *state;
 }
 
+#ifdef __3DS__
+static int clamp_axis_3ds(int val, int max_in)
+{
+    long scaled = ((long)val * 32767L) / (long)max_in;
+    if (scaled < -32767L) scaled = -32767L;
+    if (scaled > 32767L)  scaled = 32767L;
+    return (int)scaled;
+}
+#endif
+
 static void poll_snapshot(struct pad_snapshot *out)
 {
     memset(out, 0, sizeof(*out));
     if (!g_gc) return;
+
+#ifdef __3DS__
+    nox_3ds_input_t in3ds;
+    nox_3ds_input_poll(&in3ds);
+
+    out->a = (in3ds.keys_held & NOX_3DS_KEY_A) ? 1 : 0;
+    out->b = (in3ds.keys_held & NOX_3DS_KEY_B) ? 1 : 0;
+    out->x = (in3ds.keys_held & NOX_3DS_KEY_X) ? 1 : 0;
+    out->y = (in3ds.keys_held & NOX_3DS_KEY_Y) ? 1 : 0;
+
+    out->start  = (in3ds.keys_held & NOX_3DS_KEY_START)  ? 1 : 0;
+    out->select = (in3ds.keys_held & NOX_3DS_KEY_SELECT) ? 1 : 0;
+    out->guide  = 0;
+
+    /* Ignore L/R while SELECT is held so SELECT+L / SELECT+R hot-toggles don't fire layer keys. */
+    out->l1     = (!out->select && (in3ds.keys_held & NOX_3DS_KEY_L)) ? 1 : 0;
+    out->r1     = (!out->select && (in3ds.keys_held & NOX_3DS_KEY_R)) ? 1 : 0;
+    out->l2_btn = (in3ds.keys_held & NOX_3DS_KEY_ZL) ? 1 : 0;
+    out->r2_btn = (in3ds.keys_held & NOX_3DS_KEY_ZR) ? 1 : 0;
+    out->lt     = out->l2_btn ? 32767 : 0;
+    out->rt     = out->r2_btn ? 32767 : 0;
+
+    out->dpad_up    = (in3ds.keys_held & NOX_3DS_KEY_DUP)    ? 1 : 0;
+    out->dpad_down  = (in3ds.keys_held & NOX_3DS_KEY_DDOWN)  ? 1 : 0;
+    out->dpad_left  = (in3ds.keys_held & NOX_3DS_KEY_DLEFT)  ? 1 : 0;
+    out->dpad_right = (in3ds.keys_held & NOX_3DS_KEY_DRIGHT) ? 1 : 0;
+
+    /* 3DS +Y is UP, whereas SDL/gamepad.c +ly/+ry is DOWN. */
+    out->lx =  clamp_axis_3ds(in3ds.cpad_x, 156);
+    out->ly = -clamp_axis_3ds(in3ds.cpad_y, 156);
+    out->rx =  clamp_axis_3ds(in3ds.cstick_x, 140);
+    out->ry = -clamp_axis_3ds(in3ds.cstick_y, 140);
+    return;
+#endif
 
     int A = get_button(SDL_CONTROLLER_BUTTON_A);
     int B = get_button(SDL_CONTROLLER_BUTTON_B);
@@ -1657,10 +1807,15 @@ void nox_gamepad_update(void)
     g_prev = g_cur;
     g_rs_prev = g_rs_cur;
     poll_snapshot(&g_cur);
+#ifdef __3DS__
+    nox_3ds_input_process_twin_stick_and_touch();
+#else
     update_right_stick_dirs(&g_rs_cur, g_cur.rx, g_cur.ry);
+#endif
 
     maybe_exit_combo();
 
+#ifndef __3DS__
     {
         int combo_relative     = g_cur.start && g_cur.l1;
         int combo_abs_inverted = g_cur.start && g_cur.r1 && g_cur.r2_btn;
@@ -1697,6 +1852,7 @@ void nox_gamepad_update(void)
 
     if (g_thumbstick_mode_combo_latched)
         return;
+#endif
 
     // ---- MOVIE SKIP REQUEST ----
         if (edge_down(g_cur.select, g_prev.select)) {
