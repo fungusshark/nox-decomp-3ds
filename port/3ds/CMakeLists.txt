@@ -56,6 +56,7 @@ add_executable(nox
     "${CMAKE_CURRENT_SOURCE_DIR}/audio_3ds.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/video_3ds.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/input_3ds.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/swkbd_3ds.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/net_loopback_3ds.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/stubs.c"
 )

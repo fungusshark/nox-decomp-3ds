@@ -21454,6 +21454,9 @@ int __cdecl sub_46A430(int a1)
       result = sub_46B500(*(int *)&byte_5D4594[1064860]);
       *(_DWORD *)&byte_5D4594[1064868] = 1;
       *(_DWORD *)&byte_5D4594[1064872] = a1;
+#ifdef __3DS__
+      nox_3ds_swkbd_request((void *)(uintptr_t)(*(int *)&byte_5D4594[1064860]), true);
+#endif
     }
   }
   return result;
@@ -44789,6 +44792,13 @@ int __cdecl sub_487D70(_DWORD *a1, int a2, int a3, int a4)
   v4 = a1[8];
   switch ( a2 )
   {
+#ifdef __3DS__
+    case 5:
+      a1[9] |= 2u;
+      sub_46B500((int)a1);
+      nox_3ds_swkbd_request((void *)a1, false);
+      return 1;
+#endif
     case 7:
       a1[9] |= 2u;
       sub_46B500((int)a1);
@@ -45180,6 +45190,9 @@ int __cdecl sub_488710(int a1, unsigned int a2, wchar_t *a3, int a4)
     return *(_DWORD *)(a1 + 32);
   if ( a2 == 2 )
   {
+#ifdef __3DS__
+    nox_3ds_swkbd_cancel_pending((void *)(uintptr_t)a1);
+#endif
     sub_46C4E0(*(_DWORD **)(v3 + 1048));
     free(*(LPVOID *)(a1 + 32));
     return 0;

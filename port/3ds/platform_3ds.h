@@ -222,6 +222,15 @@ void nox_3ds_input_get_world_aim(int *out_x, int *out_y);
 void nox_3ds_input_get_bottom_touch(int *out_x, int *out_y);
 void nox_3ds_input_process_hybrid(void);
 void nox_3ds_input_process_twin_stick_and_touch(void);
+void nox_3ds_input_reset_after_applet(void);
+
+/* =========================================================================
+ * 4b. Native 3DS Software Keyboard (swkbd) Bridge (swkbd_3ds.c)
+ * ========================================================================= */
+void nox_3ds_swkbd_request(void *entry_win, bool auto_submit);
+void nox_3ds_swkbd_cancel_pending(void *entry_win);
+bool nox_3ds_swkbd_pump(void);
+bool nox_3ds_swkbd_is_active(void);
 
 /* =========================================================================
  * 5. Audio Bridge: Miles AIL -> libctru 24-ch ndsp (audio_3ds.c)
@@ -247,6 +256,9 @@ void     nox_3ds_movie_audio_stop(void);
 void     nox_3ds_movie_audio_close(void);
 uint64_t nox_3ds_movie_audio_played_bytes(void);
 bool     nox_3ds_movie_audio_is_active(void);
+
+/* Persistent cutscene diagnostic log (sdmc:/3ds/nox/movie.log + SVC stderr) */
+void     nox_3ds_movie_log(const char *fmt, ...);
 
 /* =========================================================================
  * 6. In-Memory UDP Loopback Transport (net_loopback_3ds.c, NO socInit)

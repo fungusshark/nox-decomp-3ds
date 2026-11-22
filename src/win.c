@@ -525,6 +525,7 @@ int sub_4453A0()
 	if (!nox_3ds_apt_ok()) {
 		exit(0);
 	}
+	nox_3ds_swkbd_pump();
 #endif
 	/* OpenNox PR #376: pump synchronous Miles timers & audio backend on main thread */
 	AIL_serve();

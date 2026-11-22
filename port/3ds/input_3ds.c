@@ -14,7 +14,8 @@
 /* Engine state queries (src/GAME1.c, src/GAME2.c, src/GAME_data.c) */
 extern unsigned char byte_5D4594[];
 extern int sub_43C700(void);           /* world/map loaded */
-extern int sub_450560(void);           /* chat text entry active */
+extern int sub_450560(void);           /* console text entry active */
+extern int sub_46A4A0(void);           /* multiplayer chat text entry active */
 extern int sub_459DA0(void);           /* NPC dialog / shop modal active */
 extern unsigned int sub_446360(void);  /* Quit / Pause menu active */
 extern int sub_413A50(void);           /* Yes/No confirmation modal active */
@@ -40,6 +41,7 @@ enum {
 
 static nox_3ds_input_t g_in;
 static bool  g_prev_touch          = false;
+static bool  g_wait_touch_release  = false;
 static bool  g_prev_l_held         = false;
 static bool  g_cstick_or_r_active  = false;
 static int   g_lmb_owner           = LMB_OWNER_NONE;
@@ -204,7 +206,7 @@ bool nox_3ds_input_is_world_mode(void)
         return false;
     if (!sub_43C700()) /* Map not loaded */
         return false;
-    if (sub_446360() || sub_413A50() || sub_450560() || sub_459DA0())
+    if (sub_446360() || sub_413A50() || sub_450560() || sub_46A4A0() || sub_459DA0())
         return false;
     return true;
 }
@@ -313,6 +315,12 @@ void nox_3ds_input_poll(nox_3ds_input_t *out)
 
     /* Strict Bottom Screen touchscreen read (0..319, 0..239) */
     bool cur_touch = (g_in.keys_held & KEY_TOUCH) != 0;
+    if (g_wait_touch_release) {
+        if (!cur_touch) {
+            g_wait_touch_release = false;
+        }
+        cur_touch = false;
+    }
     if (cur_touch) {
         hidTouchRead(&touch);
         g_in.touch_x = (touch.px < NOX_3DS_BOT_W) ? touch.px : (NOX_3DS_BOT_W - 1);
@@ -499,4 +507,24 @@ void nox_3ds_input_process_hybrid(void)
 void nox_3ds_input_process_twin_stick_and_touch(void)
 {
     nox_3ds_input_process_hybrid();
+}
+
+void nox_3ds_input_reset_after_applet(void)
+{
+    /* Release any latched mouse buttons before resuming the Nox event loop */
+    release_lmb_if_owned(LMB_OWNER_TOUCH);
+    release_lmb_if_owned(LMB_OWNER_WORLD_R);
+    g_touch_mode = TOUCH_MODE_NONE;
+    nox_ctrl_set_touch_move(0, 0, 0);
+
+    /* Drain stale HID state and ignore touch until stylus is lifted so tapping
+     * OK/Cancel on swkbd never leaks a click into Nox UI underneath. */
+    hidScanInput();
+    g_wait_touch_release = (hidKeysHeld() & KEY_TOUCH) != 0;
+    g_prev_touch         = false;
+    g_in.touch_active    = false;
+    g_in.touch_down      = false;
+    g_in.touch_up        = false;
+    g_in.keys_down       = 0;
+    g_in.keys_up         = 0;
 }
