@@ -411,6 +411,75 @@ void nox_3ds_video_present(const void *pixels, int w, int h, int pitch,
     nox_3ds_video_present_dual(&top, NULL);
 }
 
+/*
+ * Dedicated hardware-scaled movie frame bridge:
+ * Uploads the engine's 640x480 software-decoded linear buffer directly to the
+ * 1024x512 PICA200 VRAM texture via GX/C3D_SyncDisplayTransfer (zero CPU scale
+ * and zero CPU copy when pitch == 2048 & linearAlloc), then hardware-scales
+ * the texture down to 400x240 on the Top Screen via citro2d GPU_LINEAR.
+ * Bottom Screen is cleared to black with zero texture upload overhead.
+ */
+void nox_3ds_video_present_movie(const void *pixels, int w, int h, int pitch,
+                                 uint32_t sdl_format, bool is_linear,
+                                 int crop_x, int crop_y, int crop_w, int crop_h)
+{
+    if (!s_video_inited) {
+        if (!nox_3ds_video_init(NOX_3DS_LOGICAL_W, NOX_3DS_LOGICAL_H))
+            return;
+    }
+
+    nox_3ds_screen_frame_t top;
+    memset(&top, 0, sizeof(top));
+    top.pixels      = pixels;
+    top.w           = w;
+    top.h           = h;
+    top.pitch       = pitch;
+    top.sdl_format  = sdl_format;
+    top.is_linear   = is_linear;
+    top.crop_x      = (crop_x >= 0) ? crop_x : 0;
+    top.crop_y      = (crop_y >= 0) ? crop_y : 0;
+    top.crop_w      = (crop_w > 0) ? crop_w : w;
+    top.crop_h      = (crop_h > 0) ? crop_h : h;
+    top.fill_screen = true;
+
+    const void *top_src = NULL;
+    GX_TRANSFER_FORMAT top_gx_fmt = GX_TRANSFER_FMT_RGB5A1;
+    bool top_ready = prepare_frame_slot(&s_top_slot, &top, "MovieTop", &top_src, &top_gx_fmt);
+
+    /* Ensure full brightness during cutscenes regardless of prior menu fade gamma. */
+    float prev_gamma = s_gamma;
+    s_gamma = 1.0f;
+
+    if (C3D_FrameBegin(C3D_FRAME_SYNCDRAW)) {
+        if (top_ready)
+            enqueue_frame_upload(&s_top_slot, top_src, top_gx_fmt);
+
+        draw_screen_pass(
+            s_top_target, &s_top_slot,
+            top_ready ? &top : NULL,
+            NOX_3DS_TOP_W, NOX_3DS_TOP_H,
+            C2D_Color32(0, 0, 0, 255)
+        );
+
+        C2D_TargetClear(s_bot_target, C2D_Color32(0, 0, 0, 255));
+        C2D_SceneBegin(s_bot_target);
+
+        C3D_FrameEnd(0);
+    }
+
+    s_gamma = prev_gamma;
+
+    s_frame_count++;
+    uint32_t now_ms = nox_3ds_get_ticks_ms();
+    if (now_ms - s_fps_last_ms >= 1000u) {
+        uint32_t elapsed = now_ms - s_fps_last_ms;
+        nox_3ds_state_t *st = nox_3ds_state_mut();
+        st->fps = (elapsed > 0) ? (s_frame_count * 1000u) / elapsed : 0;
+        s_frame_count = 0;
+        s_fps_last_ms = now_ms;
+    }
+}
+
 int nox_3ds_blit_scaled_16(const void *src_pixels, int sw_surf, int sh_surf, int spitch,
                            bool has_ckey, uint16_t ckey,
                            int sx, int sy, int sw, int sh,

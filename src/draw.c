@@ -1452,6 +1452,21 @@ void sdl_present()
         g_3ds_cursor_dst = NULL;
     }
     nox_3ds_video_set_gamma(draw_gamma);
+    if (g_present_is_movie) {
+        nox_3ds_video_present_movie(
+            srcsurf->pixels,
+            srcsurf->w,
+            srcsurf->h,
+            srcsurf->pitch,
+            srcsurf->format ? srcsurf->format->format : g_format,
+            srcsurf->is_linear != 0,
+            0, 0, srcsurf->w, srcsurf->h
+        );
+        g_3ds_bot_frame_ready        = 0;
+        g_3ds_top_crop_valid         = 0;
+        g_3ds_cursor_already_blitted = 0;
+        return;
+    }
     {
         nox_3ds_screen_frame_t top_frame;
         nox_3ds_screen_frame_t bot_frame;
@@ -4432,14 +4447,6 @@ int __cdecl sub_4B0340(int a1)
 	*(_DWORD *)&byte_5D4594[1311932] = a1;
 #ifdef USE_SDL
      fprintf(stderr, "show movie\n");
-#ifdef __3DS__
-     /* M2: short-circuit .vqa movies and advance directly to completion callback. */
-     *(_DWORD *)&byte_5D4594[1311928] = 0;
-     g_present_src      = NULL;
-     g_present_is_movie = 0;
-     sub_4B05D0();
-     return 1;
-#endif
       /* Hard skip (useful for Wine/SDL bring-up): skip ALL movie/show path */
          {
              const char *skip_all = getenv("NOX_SKIP_MOVIES");

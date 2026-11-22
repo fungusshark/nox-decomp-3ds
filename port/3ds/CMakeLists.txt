@@ -48,6 +48,7 @@ add_executable(nox
     "${NOX_SRC_DIR}/imm.c"
     "${NOX_SRC_DIR}/input.c"
     "${NOX_SRC_DIR}/main.cpp"
+    "${NOX_SRC_DIR}/movie.c"
     "${NOX_SRC_DIR}/sm.c"
     "${NOX_SRC_DIR}/string.c"
     "${NOX_SRC_DIR}/win.c"

@@ -130,6 +130,9 @@ void  nox_3ds_video_present_dual(const nox_3ds_screen_frame_t *top,
                                  const nox_3ds_screen_frame_t *bottom);
 void  nox_3ds_video_present(const void *pixels, int w, int h, int pitch,
                             uint32_t sdl_format, bool is_linear);
+void  nox_3ds_video_present_movie(const void *pixels, int w, int h, int pitch,
+                                  uint32_t sdl_format, bool is_linear,
+                                  int crop_x, int crop_y, int crop_w, int crop_h);
 int   nox_3ds_blit_scaled_16(const void *src_pixels, int sw_surf, int sh_surf, int spitch,
                              bool has_ckey, uint16_t ckey,
                              int sx, int sy, int sw, int sh,
@@ -227,6 +230,23 @@ bool nox_3ds_audio_init(void);           /* Check sdmc:/3ds/dspfirm.cdc, ndspIni
 void nox_3ds_audio_shutdown(void);       /* Drain/clear all 24 channels, ndspExit(), free linear pools */
 void nox_3ds_audio_pump(void);           /* Refill ndsp wave buffers (invoked from AIL_serve()) */
 bool nox_3ds_audio_is_available(void);   /* True if DSP firmware present and ndspInit() succeeded */
+
+/* Native VQA cutscene audio bridge -> dedicated libctru ndsp channel (audio_3ds.c) */
+typedef void (*nox_3ds_movie_audio_req_cb_t)(uintptr_t user);
+typedef void (*nox_3ds_movie_audio_done_cb_t)(uintptr_t user, uintptr_t chunk_ptr);
+
+bool     nox_3ds_movie_audio_open(uint32_t sample_rate, uint8_t channels, uint8_t bits,
+                                  uint32_t chunk_bytes, uintptr_t user,
+                                  nox_3ds_movie_audio_req_cb_t req_cb,
+                                  nox_3ds_movie_audio_done_cb_t done_cb);
+void     nox_3ds_movie_audio_start(void);
+bool     nox_3ds_movie_audio_submit(const void *pcm, uint32_t byte_len, uintptr_t tag_ptr);
+void     nox_3ds_movie_audio_pump(void);
+void     nox_3ds_movie_audio_pause(bool paused);
+void     nox_3ds_movie_audio_stop(void);
+void     nox_3ds_movie_audio_close(void);
+uint64_t nox_3ds_movie_audio_played_bytes(void);
+bool     nox_3ds_movie_audio_is_active(void);
 
 /* =========================================================================
  * 6. In-Memory UDP Loopback Transport (net_loopback_3ds.c, NO socInit)

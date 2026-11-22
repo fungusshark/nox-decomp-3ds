@@ -428,28 +428,8 @@ int nox_netextras_fake_pending(int sockfd)
 }
 
 /* =========================================================================
- * 5. VQA Movie Stubs
+ * 5. VQA Movie Stubs Removed (Pure Port native VQA decoder active in src/movie.c)
  * ========================================================================= */
-volatile int g_movie_skip_requested = 0;
-
-void __cdecl sub_555430(HWND *a1)
-{
-    (void)a1;
-    LOG_STUB();
-}
-
-char __cdecl sub_555500(char a1)
-{
-    LOG_STUB();
-    g_movie_skip_requested = (a1 != 0);
-    return a1;
-}
-
-int sub_555510(void)
-{
-    LOG_STUB();
-    return g_movie_skip_requested;
-}
 
 /* =========================================================================
  * 6. Env Helpers (normally in excluded lobby.c)

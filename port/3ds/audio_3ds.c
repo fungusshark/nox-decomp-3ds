@@ -657,6 +657,9 @@ void nox_3ds_audio_shutdown(void)
     if (g_global_mutex)
         nox_3ds_mutex_lock(g_global_mutex);
 
+    /* Ensure any active movie audio channel/pool is torn down cleanly first. */
+    nox_3ds_movie_audio_close();
+
     /* Stop all timers */
     for (int i = 0; i < AUDIO_3DS_MAX_TIMERS; ++i) {
         g_timers[i].running = false;
@@ -2402,4 +2405,363 @@ DXDEC void AILCALL AIL_release_timer_handle(HTIMER timer)
     timer->in_use = false;
     timer->cb = NULL;
     timer->magic = AUDIO_3DS_MAGIC_FREED;
+}
+
+/* =========================================================================
+ * Native VQA Cutscene Audio Bridge -> Dedicated libctru ndsp Channel
+ * ========================================================================= */
+#define AUDIO_3DS_MOVIE_WBUFS 4
+
+typedef struct {
+    bool                          open;
+    bool                          playing;
+    bool                          paused;
+    int                           dsp_ch;
+    uint32_t                      sample_rate;
+    uint8_t                       channels;
+    uint8_t                       bits;          /* source bits per sample (8 or 16) */
+    uint32_t                      chunk_bytes;
+    uint32_t                      slot_stride;   /* linear bytes per ndspWaveBuf slot */
+    uint8_t                      *linear_pool;
+    ndspWaveBuf                   wbufs[AUDIO_3DS_MOVIE_WBUFS];
+    uintptr_t                     slot_tags[AUDIO_3DS_MOVIE_WBUFS];
+    uint32_t                      slot_orig_bytes[AUDIO_3DS_MOVIE_WBUFS];
+    bool                          slot_in_flight[AUDIO_3DS_MOVIE_WBUFS];
+    int                           fifo_queue[AUDIO_3DS_MOVIE_WBUFS];
+    int                           fifo_head;
+    int                           fifo_count;
+    uint64_t                      completed_orig_bytes;
+    uint32_t                      silent_start_ms;
+    uint32_t                      silent_pause_ms;
+    uintptr_t                     user;
+    nox_3ds_movie_audio_req_cb_t  req_cb;
+    nox_3ds_movie_audio_done_cb_t done_cb;
+} movie_audio_3ds_t;
+
+static movie_audio_3ds_t g_movie_audio = { .dsp_ch = -1 };
+
+static uint32_t movie_audio_orig_bytes_per_sec(const movie_audio_3ds_t *ma)
+{
+    uint32_t bps = ma->sample_rate * (uint32_t)ma->channels * (uint32_t)(ma->bits / 8u);
+    return (bps > 0u) ? bps : 22050u;
+}
+
+static void movie_audio_reset_queue(movie_audio_3ds_t *ma)
+{
+    if (g_dsp_available && ma->dsp_ch >= 0) {
+        ndspChnWaveBufClear(ma->dsp_ch);
+    }
+    for (int i = 0; i < AUDIO_3DS_MOVIE_WBUFS; ++i) {
+        memset(&ma->wbufs[i], 0, sizeof(ma->wbufs[i]));
+        if (ma->linear_pool) {
+            ma->wbufs[i].data_vaddr = (const void *)(ma->linear_pool + (size_t)i * ma->slot_stride);
+        }
+        ma->wbufs[i].status = NDSP_WBUF_FREE;
+        ma->slot_tags[i] = 0;
+        ma->slot_orig_bytes[i] = 0;
+        ma->slot_in_flight[i] = false;
+        ma->fifo_queue[i] = 0;
+    }
+    ma->fifo_head = 0;
+    ma->fifo_count = 0;
+    ma->completed_orig_bytes = 0;
+}
+
+bool nox_3ds_movie_audio_open(uint32_t sample_rate, uint8_t channels, uint8_t bits,
+                              uint32_t chunk_bytes, uintptr_t user,
+                              nox_3ds_movie_audio_req_cb_t req_cb,
+                              nox_3ds_movie_audio_done_cb_t done_cb)
+{
+    nox_3ds_movie_audio_close();
+
+    if (sample_rate == 0u) sample_rate = 22050u;
+    if (channels != 1u && channels != 2u) channels = 1u;
+    if (bits != 8u && bits != 16u) bits = 16u;
+    if (chunk_bytes == 0u) chunk_bytes = 8192u;
+
+    /* If source is 8-bit PCM, we widen to 16-bit PCM for clean DSP playback. */
+    uint32_t pcm16_bytes = (bits == 8u) ? (chunk_bytes * 2u) : chunk_bytes;
+    if (pcm16_bytes < 16384u)
+        pcm16_bytes = 16384u;
+    uint32_t slot_stride = (pcm16_bytes + 63u) & ~63u;
+
+    memset(&g_movie_audio, 0, sizeof(g_movie_audio));
+    g_movie_audio.dsp_ch      = -1;
+    g_movie_audio.sample_rate = sample_rate;
+    g_movie_audio.channels    = channels;
+    g_movie_audio.bits        = bits;
+    g_movie_audio.chunk_bytes = chunk_bytes;
+    g_movie_audio.slot_stride = slot_stride;
+    g_movie_audio.user        = user;
+    g_movie_audio.req_cb      = req_cb;
+    g_movie_audio.done_cb     = done_cb;
+
+    if (g_dsp_available) {
+        int ch = alloc_stream_channel(STREAM_ROLE_GENERIC);
+        if (ch >= 0) {
+            size_t total_bytes = (size_t)slot_stride * AUDIO_3DS_MOVIE_WBUFS;
+            uint8_t *pool = (uint8_t *)linearAlloc(total_bytes);
+            if (pool) {
+                memset(pool, 0, total_bytes);
+                g_movie_audio.dsp_ch = ch;
+                g_movie_audio.linear_pool = pool;
+
+                ndspChnReset(ch);
+                ndspChnInitParams(ch);
+                ndspChnSetInterp(ch, NDSP_INTERP_POLYPHASE);
+                ndspChnSetRate(ch, (float)sample_rate);
+                ndspChnSetFormat(ch, (channels == 2u) ? NDSP_FORMAT_STEREO_PCM16
+                                                      : NDSP_FORMAT_MONO_PCM16);
+                apply_channel_mix(ch, 127, 63);
+                ndspChnSetPaused(ch, true);
+            } else {
+                release_dsp_channel(ch);
+                fprintf(stderr, "[audio3ds] WARN: linearAlloc(%u) failed for movie audio; silent timing\n",
+                        (unsigned)total_bytes);
+            }
+        }
+    }
+
+    movie_audio_reset_queue(&g_movie_audio);
+    g_movie_audio.open = true;
+
+    fprintf(stderr, "[audio3ds] movie audio open: %u Hz %uch %u-bit chunk=%u ch=%d\n",
+            (unsigned)sample_rate, (unsigned)channels, (unsigned)bits,
+            (unsigned)chunk_bytes, g_movie_audio.dsp_ch);
+    return true;
+}
+
+void nox_3ds_movie_audio_start(void)
+{
+    if (!g_movie_audio.open)
+        return;
+
+    if (g_movie_audio.paused && g_movie_audio.playing) {
+        nox_3ds_movie_audio_pause(false);
+        return;
+    }
+
+    movie_audio_reset_queue(&g_movie_audio);
+    g_movie_audio.playing = true;
+    g_movie_audio.paused  = false;
+    g_movie_audio.silent_start_ms = nox_3ds_get_ticks_ms();
+    g_movie_audio.silent_pause_ms = 0;
+
+    if (g_dsp_available && g_movie_audio.dsp_ch >= 0) {
+        ndspChnSetPaused(g_movie_audio.dsp_ch, false);
+    }
+
+    /* Prime initial VQA audio chunks into ndsp immediately (matches Win32 sub_55A130). */
+    if (g_movie_audio.req_cb) {
+        g_movie_audio.req_cb(g_movie_audio.user);
+        g_movie_audio.req_cb(g_movie_audio.user);
+    }
+}
+
+bool nox_3ds_movie_audio_submit(const void *pcm, uint32_t byte_len, uintptr_t tag_ptr)
+{
+    if (!g_movie_audio.open || !pcm || byte_len == 0u)
+        return false;
+
+    if (g_movie_audio.fifo_count >= AUDIO_3DS_MOVIE_WBUFS)
+        return false;
+
+    int slot = -1;
+    for (int i = 0; i < AUDIO_3DS_MOVIE_WBUFS; ++i) {
+        if (!g_movie_audio.slot_in_flight[i]) {
+            slot = i;
+            break;
+        }
+    }
+    if (slot < 0)
+        return false;
+
+    g_movie_audio.slot_tags[slot]       = tag_ptr;
+    g_movie_audio.slot_orig_bytes[slot] = byte_len;
+    g_movie_audio.slot_in_flight[slot]  = true;
+
+    int tail = (g_movie_audio.fifo_head + g_movie_audio.fifo_count) % AUDIO_3DS_MOVIE_WBUFS;
+    g_movie_audio.fifo_queue[tail] = slot;
+    g_movie_audio.fifo_count++;
+
+    if (g_dsp_available && g_movie_audio.dsp_ch >= 0 && g_movie_audio.linear_pool) {
+        ndspWaveBuf *wb = &g_movie_audio.wbufs[slot];
+        int16_t *dst = (int16_t *)(void *)(g_movie_audio.linear_pool + (size_t)slot * g_movie_audio.slot_stride);
+        uint32_t out_samples = 0;
+
+        if (g_movie_audio.bits == 8u) {
+            uint32_t max_in = g_movie_audio.slot_stride / 2u;
+            uint32_t n = (byte_len <= max_in) ? byte_len : max_in;
+            const uint8_t *src = (const uint8_t *)pcm;
+            for (uint32_t i = 0; i < n; ++i) {
+                dst[i] = (int16_t)(((int)src[i] - 128) << 8);
+            }
+            out_samples = n;
+        } else {
+            uint32_t copy_bytes = (byte_len <= g_movie_audio.slot_stride) ? byte_len : g_movie_audio.slot_stride;
+            copy_bytes &= ~(uint32_t)((g_movie_audio.channels == 2u) ? 3u : 1u);
+            memcpy(dst, pcm, copy_bytes);
+            out_samples = copy_bytes / sizeof(int16_t);
+        }
+
+        if (out_samples > 0u) {
+            wb->data_vaddr = (const void *)dst;
+            submit_wbuf(g_movie_audio.dsp_ch, wb, out_samples, g_movie_audio.channels == 2u);
+        }
+    }
+
+    return true;
+}
+
+void nox_3ds_movie_audio_pump(void)
+{
+    if (!g_movie_audio.open || !g_movie_audio.playing || g_movie_audio.paused)
+        return;
+
+    if (g_dsp_available && g_movie_audio.dsp_ch >= 0 && g_movie_audio.linear_pool) {
+        int retired = 0;
+        while (g_movie_audio.fifo_count > 0 && retired < AUDIO_3DS_MOVIE_WBUFS) {
+            int slot = g_movie_audio.fifo_queue[g_movie_audio.fifo_head];
+            ndspWaveBuf *wb = &g_movie_audio.wbufs[slot];
+            if (wb->status != NDSP_WBUF_DONE && wb->status != NDSP_WBUF_FREE)
+                break;
+
+            uintptr_t done_tag = g_movie_audio.slot_tags[slot];
+            uint32_t orig_len  = g_movie_audio.slot_orig_bytes[slot];
+
+            g_movie_audio.completed_orig_bytes += (uint64_t)orig_len;
+            g_movie_audio.slot_in_flight[slot]  = false;
+            g_movie_audio.slot_tags[slot]       = 0;
+            g_movie_audio.slot_orig_bytes[slot] = 0;
+            wb->status = NDSP_WBUF_FREE;
+
+            g_movie_audio.fifo_head = (g_movie_audio.fifo_head + 1) % AUDIO_3DS_MOVIE_WBUFS;
+            g_movie_audio.fifo_count--;
+            retired++;
+
+            if (g_movie_audio.done_cb)
+                g_movie_audio.done_cb(g_movie_audio.user, done_tag);
+            if (g_movie_audio.req_cb)
+                g_movie_audio.req_cb(g_movie_audio.user);
+        }
+
+        /* Keep at least 2 wave buffers queued if DSP drained during a heavy video frame. */
+        while (g_movie_audio.fifo_count < 2 && g_movie_audio.req_cb) {
+            int before = g_movie_audio.fifo_count;
+            g_movie_audio.req_cb(g_movie_audio.user);
+            if (g_movie_audio.fifo_count == before)
+                break;
+        }
+    } else {
+        /* Silent fallback (no dspfirm.cdc): advance virtual playback clock so VQA ring never stalls. */
+        uint32_t elapsed_ms = nox_3ds_get_ticks_ms() - g_movie_audio.silent_start_ms;
+        uint64_t target_bytes = ((uint64_t)elapsed_ms * (uint64_t)movie_audio_orig_bytes_per_sec(&g_movie_audio)) / 1000ULL;
+
+        while (g_movie_audio.fifo_count > 0) {
+            int slot = g_movie_audio.fifo_queue[g_movie_audio.fifo_head];
+            uint32_t orig_len = g_movie_audio.slot_orig_bytes[slot];
+            if (g_movie_audio.completed_orig_bytes + (uint64_t)orig_len > target_bytes)
+                break;
+
+            uintptr_t done_tag = g_movie_audio.slot_tags[slot];
+            g_movie_audio.completed_orig_bytes += (uint64_t)orig_len;
+            g_movie_audio.slot_in_flight[slot]  = false;
+            g_movie_audio.slot_tags[slot]       = 0;
+            g_movie_audio.slot_orig_bytes[slot] = 0;
+            g_movie_audio.fifo_head = (g_movie_audio.fifo_head + 1) % AUDIO_3DS_MOVIE_WBUFS;
+            g_movie_audio.fifo_count--;
+
+            if (g_movie_audio.done_cb)
+                g_movie_audio.done_cb(g_movie_audio.user, done_tag);
+            if (g_movie_audio.req_cb)
+                g_movie_audio.req_cb(g_movie_audio.user);
+        }
+    }
+}
+
+void nox_3ds_movie_audio_pause(bool paused)
+{
+    if (!g_movie_audio.open)
+        return;
+
+    if (paused && !g_movie_audio.paused) {
+        g_movie_audio.paused = true;
+        g_movie_audio.silent_pause_ms = nox_3ds_get_ticks_ms();
+        if (g_dsp_available && g_movie_audio.dsp_ch >= 0)
+            ndspChnSetPaused(g_movie_audio.dsp_ch, true);
+    } else if (!paused && g_movie_audio.paused) {
+        g_movie_audio.paused = false;
+        uint32_t pause_dur = nox_3ds_get_ticks_ms() - g_movie_audio.silent_pause_ms;
+        g_movie_audio.silent_start_ms += pause_dur;
+        if (g_dsp_available && g_movie_audio.dsp_ch >= 0)
+            ndspChnSetPaused(g_movie_audio.dsp_ch, false);
+    }
+}
+
+void nox_3ds_movie_audio_stop(void)
+{
+    if (!g_movie_audio.open)
+        return;
+
+    g_movie_audio.playing = false;
+    g_movie_audio.paused  = false;
+    movie_audio_reset_queue(&g_movie_audio);
+}
+
+void nox_3ds_movie_audio_close(void)
+{
+    if (!g_movie_audio.open && g_movie_audio.dsp_ch < 0 && !g_movie_audio.linear_pool)
+        return;
+
+    g_movie_audio.playing = false;
+    g_movie_audio.paused  = false;
+    g_movie_audio.open    = false;
+
+    if (g_movie_audio.dsp_ch >= 0) {
+        release_dsp_channel(g_movie_audio.dsp_ch);
+        g_movie_audio.dsp_ch = -1;
+    }
+    if (g_movie_audio.linear_pool) {
+        linearFree(g_movie_audio.linear_pool);
+        g_movie_audio.linear_pool = NULL;
+    }
+
+    g_movie_audio.req_cb  = NULL;
+    g_movie_audio.done_cb = NULL;
+    g_movie_audio.fifo_head = 0;
+    g_movie_audio.fifo_count = 0;
+    g_movie_audio.completed_orig_bytes = 0;
+}
+
+uint64_t nox_3ds_movie_audio_played_bytes(void)
+{
+    if (!g_movie_audio.open || !g_movie_audio.playing)
+        return g_movie_audio.completed_orig_bytes;
+
+    if (g_dsp_available && g_movie_audio.dsp_ch >= 0 && g_movie_audio.linear_pool) {
+        uint64_t total = g_movie_audio.completed_orig_bytes;
+        if (g_movie_audio.fifo_count > 0) {
+            int head_slot = g_movie_audio.fifo_queue[g_movie_audio.fifo_head];
+            const ndspWaveBuf *wb = &g_movie_audio.wbufs[head_slot];
+            if (wb->status == NDSP_WBUF_PLAYING) {
+                u32 sample_pos = ndspChnGetSamplePos(g_movie_audio.dsp_ch);
+                uint32_t orig_frame_bytes = (uint32_t)g_movie_audio.channels * (uint32_t)(g_movie_audio.bits / 8u);
+                uint64_t partial = (uint64_t)sample_pos * (uint64_t)orig_frame_bytes;
+                if (partial > (uint64_t)g_movie_audio.slot_orig_bytes[head_slot])
+                    partial = (uint64_t)g_movie_audio.slot_orig_bytes[head_slot];
+                total += partial;
+            }
+        }
+        return total;
+    }
+
+    /* Silent timing fallback */
+    uint32_t now = g_movie_audio.paused ? g_movie_audio.silent_pause_ms : nox_3ds_get_ticks_ms();
+    uint32_t elapsed_ms = now - g_movie_audio.silent_start_ms;
+    return ((uint64_t)elapsed_ms * (uint64_t)movie_audio_orig_bytes_per_sec(&g_movie_audio)) / 1000ULL;
+}
+
+bool nox_3ds_movie_audio_is_active(void)
+{
+    return g_movie_audio.open && g_movie_audio.playing;
 }

@@ -37,6 +37,9 @@ extern void sdl_present();
 #pragma comment(lib, "winmm")
 #endif
 
+#ifdef __3DS__
+#include "platform_3ds.h"
+#else
 #ifdef __APPLE__
 #include <OpenAL/al.h>
 #include <OpenAL/alc.h>
@@ -55,6 +58,7 @@ extern void sdl_present();
 #include <libswscale/swscale.h>
 #include <libswresample/swresample.h>
 #include <libavutil/channel_layout.h>
+#endif /* !__3DS__ */
 
 static inline int surf_stride(const _DWORD *s) {
     // Matches how the original computed row size:
@@ -352,6 +356,7 @@ LPDIRECTSOUNDBUFFER g_dsound_buffer;
 //}
 
 //FFMPEG start
+#ifndef __3DS__
 #ifndef dprintf
 static void dprintf(const char *fmt, ...)
 {
@@ -1047,6 +1052,99 @@ done:
     if (audio_ok)
         movieal_shutdown(&alx);
 }
+#else /* __3DS__ Pure Port (Native Software VQA Decode + PICA200 HW Scale + ndsp Audio) */
+
+volatile int g_movie_skip_requested = 0;
+
+static int      s_3ds_vqa_is_16bit = 1;
+static int      s_3ds_vqa_buf_w    = NOX_3DS_LOGICAL_W;
+static int      s_3ds_vqa_buf_h    = NOX_3DS_LOGICAL_H;
+static uint8_t *s_3ds_vqa_pal_buf  = NULL;
+static uint16_t s_3ds_vqa_pal_lut[256];
+
+void __cdecl sub_555430(HWND *a1)
+{
+    if (!a1) {
+        sub_413B70("No VQ pointer!\n");
+        return;
+    }
+
+    uintptr_t *p = (uintptr_t *)a1;
+    const char *movie_path = (const char *)p[10];
+    if (!movie_path || !movie_path[0])
+        return;
+
+    fprintf(stderr, "[movie3ds] Pure Port VQA play: %s\n", movie_path);
+
+    /* 1. Buffer Handoff: ensure linearAlloc 640x480 RGBA5551 decode surface (pitch = 1024*2) */
+    if (!g_movie_surf ||
+        g_movie_surf->w != NOX_3DS_LOGICAL_W ||
+        g_movie_surf->h != NOX_3DS_LOGICAL_H ||
+        !g_movie_surf->format ||
+        g_movie_surf->format->format != SDL_PIXELFORMAT_RGBA5551)
+    {
+        if (g_movie_surf)
+            SDL_FreeSurface(g_movie_surf);
+        g_movie_surf = SDL_CreateRGBSurfaceWithFormat(
+            0, NOX_3DS_LOGICAL_W, NOX_3DS_LOGICAL_H, 16, SDL_PIXELFORMAT_RGBA5551);
+        if (!g_movie_surf || !g_movie_surf->pixels) {
+            fprintf(stderr, "[movie3ds] ERROR: failed to allocate 640x480 movie surface\n");
+            return;
+        }
+    }
+
+    memset(g_movie_surf->pixels, 0, (size_t)g_movie_surf->pitch * (size_t)g_movie_surf->h);
+    g_present_src      = g_movie_surf;
+    g_present_is_movie = 1;
+
+    /* Present an immediate clean black frame to both screens before decode starts. */
+    nox_3ds_video_present_movie(
+        g_movie_surf->pixels,
+        g_movie_surf->w,
+        g_movie_surf->h,
+        g_movie_surf->pitch,
+        SDL_PIXELFORMAT_RGBA5551,
+        g_movie_surf->is_linear != 0,
+        0, 0, NOX_3DS_LOGICAL_W, NOX_3DS_LOGICAL_H
+    );
+
+    /* Ensure native VQA decoder state is active, focused, and skip-cleared. */
+    *(_DWORD *)&byte_5D4594[2514000] = (int)p[0];
+    *(_DWORD *)&byte_5D4594[2513996] = (int)p[1];
+    *(_DWORD *)&byte_587000[293604]  = 1;
+    byte_5D4594[2515932]             = 0;
+    *(_DWORD *)&byte_5D4594[2513940] = 0;
+    sub_555500(0);
+    g_movie_skip_requested = 0;
+    sub_55C8E0();
+
+    /* Flush any currently-held button (e.g. menu Start/A) before entering playback loop. */
+    nox_3ds_input_poll(NULL);
+
+    /* Force direct 16-bit software decode into our 640x480 buffer (option 15, NOT software 2x scale 7). */
+    memset(&byte_5D4594[2513992], 0, 4);
+    sub_556280(15);
+
+    s_3ds_vqa_is_16bit = 1;
+    s_3ds_vqa_buf_w    = NOX_3DS_LOGICAL_W;
+    s_3ds_vqa_buf_h    = NOX_3DS_LOGICAL_H;
+
+    sub_555C40((_DWORD *)a1);
+    sub_555A40();
+
+    /* Guaranteed teardown of audio, 8-bit scratch buffer, presentation hooks, and button edges. */
+    nox_3ds_movie_audio_close();
+    if (s_3ds_vqa_pal_buf) {
+        free(s_3ds_vqa_pal_buf);
+        s_3ds_vqa_pal_buf = NULL;
+    }
+    g_present_src          = NULL;
+    g_present_is_movie     = 0;
+    g_movie_skip_requested = 0;
+    sub_555500(0);
+    nox_3ds_input_poll(NULL);
+}
+#endif /* !__3DS__ */
 // FFMPEG end
 
 //----- (00555500) --------------------------------------------------------
@@ -1062,6 +1160,10 @@ char __cdecl sub_555500(char a1)
 //----- (00555510) --------------------------------------------------------
 int sub_555510()
 {
+#ifdef __3DS__
+	if (g_movie_skip_requested)
+		return 1;
+#endif
 	return *(_DWORD *)&byte_5D4594[2513940] | (char)byte_5D4594[2513936];
 }
 
@@ -1556,6 +1658,24 @@ int __cdecl sub_555C40(_DWORD *a1)
 		*(_DWORD *)&byte_5D4594[2513968] = *(_DWORD *)&byte_5D4594[2515924];
 	}
 	sub_558730(*(int **)&byte_5D4594[2513964], 0, v22, v23, -1, -1);
+#ifdef __3DS__
+	s_3ds_vqa_is_16bit = (v21 == 1 || v21 == 4) ? 1 : 0;
+	s_3ds_vqa_buf_w    = (v22 > 0) ? (int)v22 : NOX_3DS_LOGICAL_W;
+	s_3ds_vqa_buf_h    = (v23 > 0) ? (int)v23 : NOX_3DS_LOGICAL_H;
+	if (!s_3ds_vqa_is_16bit) {
+		size_t pal_sz = (size_t)s_3ds_vqa_buf_w * (size_t)s_3ds_vqa_buf_h;
+		if (s_3ds_vqa_pal_buf) {
+			free(s_3ds_vqa_pal_buf);
+			s_3ds_vqa_pal_buf = NULL;
+		}
+		s_3ds_vqa_pal_buf = (uint8_t *)calloc(1, pal_sz ? pal_sz : (size_t)(NOX_3DS_LOGICAL_W * NOX_3DS_LOGICAL_H));
+	}
+	if (g_movie_surf && g_movie_surf->pixels) {
+		memset(g_movie_surf->pixels, 0, (size_t)g_movie_surf->pitch * (size_t)g_movie_surf->h);
+	}
+	v12 = 0;
+	(void)v12;
+#else
 	v12 = v23 * v22;
 	if (v21 == 1 || v21 == 4)
 		v12 *= 2;
@@ -1568,6 +1688,7 @@ int __cdecl sub_555C40(_DWORD *a1)
 	sub_413B70((char *)&byte_587000[293452]);
 	sub_556820(*(_DWORD **)&byte_5D4594[2513968]);
 	sub_413B70((char *)&byte_587000[293440]);
+#endif
 	v13 = 0;
 	v14 = -1;
 	v15 = 0;
@@ -1617,26 +1738,78 @@ int __cdecl sub_555C40(_DWORD *a1)
 //----- (00556010) --------------------------------------------------------
 int sub_556010()
 {
+#ifdef __3DS__
+	if (s_3ds_vqa_is_16bit) {
+		return (g_movie_surf && g_movie_surf->pixels) ? (int)(uintptr_t)g_movie_surf->pixels : 0;
+	}
+	return s_3ds_vqa_pal_buf ? (int)(uintptr_t)s_3ds_vqa_pal_buf : 0;
+#else
 	sub_556710(*(_DWORD **)&byte_5D4594[2513968]);
 	return **(_DWORD **)&byte_5D4594[2513968];
+#endif
 }
 
 //----- (00556030) --------------------------------------------------------
 int sub_556030()
 {
+#ifdef __3DS__
+	/* sub_558370 computes pitch_bytes = v3[377] + sub_556030().
+	 * For 16-bit VQA, return g_movie_surf->pitch - s_3ds_vqa_buf_w so the native
+	 * decoder writes directly into our linearAlloc 1024x512 RGBA5551 texture buffer
+	 * with zero intermediate copy and zero CPU scaling! */
+	if (s_3ds_vqa_is_16bit && g_movie_surf) {
+		return g_movie_surf->pitch - s_3ds_vqa_buf_w;
+	}
+	return 0;
+#else
 	return *(_DWORD *)(*(_DWORD *)&byte_5D4594[2513968] + 24);
+#endif
 }
 
 //----- (00556040) --------------------------------------------------------
 int sub_556040()
 {
+#ifdef __3DS__
+	return 1;
+#else
 	return sub_556820(*(_DWORD **)&byte_5D4594[2513968]);
+#endif
 }
 
 //----- (00556050) --------------------------------------------------------
 _DWORD *sub_556050()
 {
-#ifdef USE_SDL
+#ifdef __3DS__
+    if (!g_movie_surf || !g_movie_surf->pixels)
+        return 0;
+
+    /* 8-bit palettized VQA fallback: expand indexed pixels into linear RGBA5551 buffer. */
+    if (!s_3ds_vqa_is_16bit && s_3ds_vqa_pal_buf) {
+        int w = (s_3ds_vqa_buf_w <= g_movie_surf->w) ? s_3ds_vqa_buf_w : g_movie_surf->w;
+        int h = (s_3ds_vqa_buf_h <= g_movie_surf->h) ? s_3ds_vqa_buf_h : g_movie_surf->h;
+        int dst_stride = g_movie_surf->pitch / 2;
+        uint16_t *dst = (uint16_t *)g_movie_surf->pixels;
+        for (int y = 0; y < h; ++y) {
+            const uint8_t *sr = s_3ds_vqa_pal_buf + (size_t)y * (size_t)s_3ds_vqa_buf_w;
+            uint16_t *dr = dst + y * dst_stride;
+            for (int x = 0; x < w; ++x) {
+                dr[x] = s_3ds_vqa_pal_lut[sr[x]];
+            }
+        }
+    }
+
+    /* Hardware Scaling: upload 640x480 linear buffer -> PICA200 VRAM C3D_Tex -> 400x240 Top Screen. */
+    nox_3ds_video_present_movie(
+        g_movie_surf->pixels,
+        g_movie_surf->w,
+        g_movie_surf->h,
+        g_movie_surf->pitch,
+        SDL_PIXELFORMAT_RGBA5551,
+        g_movie_surf->is_linear != 0,
+        0, 0, s_3ds_vqa_buf_w, s_3ds_vqa_buf_h
+    );
+    return (_DWORD *)1;
+#elif defined(USE_SDL)
     _DWORD *src = *(_DWORD **)&byte_5D4594[2513968];   // decode surface
     _DWORD *dst = *(_DWORD **)&byte_5D4594[2515928];   // the “scaled/working” surface used by the pipeline
 
@@ -2330,12 +2503,30 @@ int sub_5569F0()
 // Microsoft VisualC 2-14/net runtime
 int sub_556A10()
 {
+#ifdef __3DS__
+	/* Mode 2 in sub_55BB30 builds native RGBA5551 (R<<11 | G<<6 | B<<1 | 1)
+	 * matching PICA200 GPU_RGBA5551 bit-for-bit with zero post-conversion. */
+	return 2;
+#else
 	return sub_556B80((int *)&byte_5D4594[2514012]);
+#endif
 }
 
 //----- (00556A20) --------------------------------------------------------
 char *__cdecl sub_556A20(char *a1)
 {
+#ifdef __3DS__
+	if (a1) {
+		const uint8_t *rgb = (const uint8_t *)a1;
+		for (int i = 0; i < 256; ++i) {
+			uint16_t r = (uint16_t)(rgb[i * 3 + 0] >> 3);
+			uint16_t g = (uint16_t)(rgb[i * 3 + 1] >> 3);
+			uint16_t b = (uint16_t)(rgb[i * 3 + 2] >> 3);
+			s_3ds_vqa_pal_lut[i] = (uint16_t)((r << 11) | (g << 6) | (b << 1) | 1u);
+		}
+	}
+	return a1;
+#else
 	char *result; // eax
 	int v2; // ebp
 	unsigned __int8 *v3; // ecx
@@ -2382,6 +2573,7 @@ char *__cdecl sub_556A20(char *a1)
 		}
 	}
 	return result;
+#endif
 }
 
 //----- (00556AC0) --------------------------------------------------------
@@ -2506,6 +2698,11 @@ char *__thiscall sub_556C10(_DWORD *this)
 //----- (00556C60) --------------------------------------------------------
 int __cdecl sub_556C60(int a1, int a2)
 {
+#ifdef __3DS__
+	(void)a2;
+	fprintf(stderr, "[movie3ds] VQA error code: %d (0x%08x)\n", a1, (unsigned)a1);
+	return 0;
+#else
 	int result; // eax
 	CHAR Text; // [esp+0h] [ebp-100h]
 
@@ -3213,6 +3410,7 @@ int __cdecl sub_556C60(int a1, int a2)
 		}
 	}
 	return result;
+#endif
 }
 
 //----- (00557C70) --------------------------------------------------------
@@ -3581,7 +3779,22 @@ void __thiscall sub_5582C0(int *this, int a2)
 //----- (00558300) --------------------------------------------------------
 BOOL sub_558300()
 {
-#ifdef USE_SDL
+#ifdef __3DS__
+    if (!nox_3ds_apt_ok()) {
+        sub_555500(1);
+        return 0;
+    }
+    /* Pump ndsp movie audio queue so completed wave buffers recycle immediately. */
+    nox_3ds_movie_audio_pump();
+
+    /* Skip/Abort: B button or Start button gracefully exits the movie loop. */
+    nox_3ds_input_t in;
+    nox_3ds_input_poll(&in);
+    if ((in.keys_down & (NOX_3DS_KEY_B | NOX_3DS_KEY_START)) || g_movie_skip_requested) {
+        sub_555500(1);
+    }
+    return 1;
+#elif defined(USE_SDL)
     sub_4453A0();   // already polls SDL and dispatches
     return 1;
 #else
@@ -3707,7 +3920,7 @@ LABEL_13:
 #endif
 				v3[370] = v4 + 1;
 			}
-#ifdef USE_SDL
+#if defined(USE_SDL) && !defined(__3DS__)
             sdl_present();
 #endif
 
@@ -3718,7 +3931,11 @@ LABEL_13:
         if (v4 < 0) SDL_Delay(1);
         #endif
 	}
+#ifdef __3DS__
+	nox_write_u64(String, (uint64_t)(sub_55C920() - v14));
+#else
 	*(_QWORD *)String = sub_55C920() - v14;
+#endif
 	nullsub_31(&byte_587000[300288]);
 	if (v10)
 		sub_55BC60();
@@ -4482,6 +4699,29 @@ _BYTE *__thiscall sub_559AD0(_BYTE *this)
 //----- (00559AF0) --------------------------------------------------------
 char __thiscall sub_559AF0(char *this, LPCSTR lpFileName, int a3)
 {
+#ifdef __3DS__
+	if (!this || !lpFileName || !lpFileName[0])
+		return 0;
+	FILE *f = fopen(lpFileName, a3 ? "wb" : "rb");
+	*(_DWORD *)this = (int)(uintptr_t)f;
+	if (!f)
+		return 0;
+	/* 64 KB stdio buffer amortizes SDMC read latency for VQA streaming. */
+	setvbuf(f, NULL, _IOFBF, 65536);
+	long fsize = 0;
+	if (!a3) {
+		if (fseek(f, 0, SEEK_END) == 0) {
+			fsize = ftell(f);
+			if (fsize < 0) fsize = 0;
+			fseek(f, 0, SEEK_SET);
+		}
+	}
+	/* sub_559C10 reads file size from ((_DWORD *)this)[6] (avoid _stat struct overflow!). */
+	((_DWORD *)this)[6] = (int)fsize;
+	snprintf(this + 40, 260, "%s", lpFileName);
+	this[300] = 1;
+	return 1;
+#else
 	char *v3; // ebx
 	FILE *v4; // eax
 	char result; // al
@@ -4510,6 +4750,7 @@ char __thiscall sub_559AF0(char *this, LPCSTR lpFileName, int a3)
 	qmemcpy(v7, v8, v9 & 3);
 	v3[300] = 1;
 	return result;
+#endif
 }
 
 //----- (00559B60) --------------------------------------------------------
@@ -4578,6 +4819,23 @@ int __thiscall sub_559C30(_BYTE *this)
 //----- (00559C40) --------------------------------------------------------
 int __cdecl sub_559C40(int a1)
 {
+#ifdef __3DS__
+	nox_3ds_movie_audio_pump();
+	if (!nox_3ds_movie_audio_is_active()) {
+		return (int)sub_55A740();
+	}
+	uint32_t rate  = (uint32_t)*(unsigned __int16 *)(a1 + 60);
+	uint32_t chans = (uint32_t)*(unsigned __int8 *)(a1 + 62);
+	uint32_t bps   = (uint32_t)(*(unsigned __int8 *)(a1 + 63) >> 3);
+	uint64_t bytes_per_sec = (uint64_t)rate * (uint64_t)chans * (uint64_t)bps;
+	if (bytes_per_sec == 0ULL)
+		return (int)sub_55A740();
+
+	uint64_t played = nox_3ds_movie_audio_played_bytes();
+	uint32_t ticks  = (uint32_t)((played * 60ULL) / bytes_per_sec);
+	uint32_t lat    = (uint32_t)*(_DWORD *)(a1 + 196);
+	return (ticks >= lat) ? (int)(ticks - lat) : 0;
+#else
 	unsigned __int8 *v1; // esi
 	int result; // eax
 	unsigned int v3; // ebx
@@ -4623,12 +4881,17 @@ int __cdecl sub_559C40(int a1)
 		*((_DWORD *)v1 + 7) = 0;
 	}
 	return *((_DWORD *)v1 + 7);
+#endif
 }
 // 55A740: using guessed type int __cdecl sub_55A740(_DWORD);
 
 //----- (00559D00) --------------------------------------------------------
 int __cdecl sub_559D00(int a1, unsigned int a2, int a3)
 {
+#ifdef __3DS__
+	(void)a1; (void)a2; (void)a3;
+	return (int)nox_3ds_movie_audio_played_bytes();
+#else
 	_DWORD *v3; // esi
 	unsigned int v4; // ebp
 	struct _RTL_CRITICAL_SECTION *v5; // ebx
@@ -4681,6 +4944,7 @@ LABEL_10:
 	if (v9 - v12 > v9)
 		result = 0;
 	return result;
+#endif
 }
 
 //----- (00559DB0) --------------------------------------------------------
@@ -4726,7 +4990,48 @@ int __cdecl sub_559DB0(DWORD_PTR dwUser, int a2, int a3, int a4)
 //----- (00559E80) --------------------------------------------------------
 int __cdecl sub_559E80(DWORD_PTR dwUser, int a2, int a3)
 {
-#ifdef USE_SDL
+#ifdef __3DS__
+    (void)a3;
+    if (!dwUser || !a2)
+        return -13;
+
+    int slot = 0;
+    *(_DWORD *)(dwUser + 52) = slot;
+    unsigned __int8 *v5 = &byte_5D4594[200 * slot + 2515988];
+    memset(v5, 0, 0xC8u);
+    *(_DWORD *)v5 = 1;
+    *((_DWORD *)v5 + 1) = *(_DWORD *)(dwUser + 164);
+
+    uint16_t rate   = nox_read_u16((const void *)(uintptr_t)a2);
+    uint8_t  chans  = *(const uint8_t *)(uintptr_t)(a2 + 2);
+    uint8_t  bits   = *(const uint8_t *)(uintptr_t)(a2 + 3);
+    uint32_t req_p  = nox_read_u32((const void *)(uintptr_t)(a2 + 8));
+    uint32_t done_p = nox_read_u32((const void *)(uintptr_t)(a2 + 12));
+    uint32_t chunk  = (uint32_t)*(_DWORD *)(dwUser + 156);
+
+    int override_rate = *(_DWORD *)(dwUser + 160);
+    if (override_rate != -1 && override_rate > 0) {
+        rate = (uint16_t)override_rate;
+    }
+
+    *((_WORD *)v5 + 4)  = rate;
+    v5[10]              = chans;
+    v5[11]              = bits;
+    *((_DWORD *)v5 + 8) = nox_read_u32((const void *)(uintptr_t)(a2 + 4));
+    *(_DWORD *)&byte_5D4594[2515980] = (int)req_p;
+    *(_DWORD *)&byte_5D4594[2515984] = (int)done_p;
+
+    nox_3ds_movie_audio_open(
+        rate,
+        chans,
+        bits,
+        chunk,
+        (uintptr_t)dwUser,
+        (nox_3ds_movie_audio_req_cb_t)(uintptr_t)req_p,
+        (nox_3ds_movie_audio_done_cb_t)(uintptr_t)done_p
+    );
+    return -1;
+#elif defined(USE_SDL)
     // DirectSound + WinMM timer based audio init.
     // SDL/OpenAL build: audio device is already owned by the SDL/OpenAL path.
     //
@@ -4871,6 +5176,14 @@ int __cdecl sub_559E80(DWORD_PTR dwUser, int a2, int a3)
 //----- (0055A0C0) --------------------------------------------------------
 int __cdecl sub_55A0C0(int a1)
 {
+#ifdef __3DS__
+	if (a1) {
+		unsigned __int8 *v1 = &byte_5D4594[200 * *(_DWORD *)(a1 + 52) + 2515988];
+		*(_DWORD *)v1 = 0;
+	}
+	nox_3ds_movie_audio_close();
+	return -1;
+#else
 	unsigned __int8 *v1; // esi
 
 	v1 = &byte_5D4594[200 * *(_DWORD *)(a1 + 52) + 2515988];
@@ -4885,12 +5198,17 @@ int __cdecl sub_55A0C0(int a1)
 		DeleteCriticalSection((LPCRITICAL_SECTION)(v1 + 172));
 	}
 	return -1;
+#endif
 }
 
 //----- (0055A130) --------------------------------------------------------
 int __cdecl sub_55A130(int a1)
 {
-#ifdef USE_SDL
+#ifdef __3DS__
+    (void)a1;
+    nox_3ds_movie_audio_start();
+    return -1;
+#elif defined(USE_SDL)
     // DirectSound streaming buffer setup.
     // SDL/OpenAL build: audio is handled elsewhere, so this becomes a no-op.
     (void)a1;
@@ -4987,6 +5305,12 @@ int __cdecl sub_55A130(int a1)
 //----- (0055A2E0) --------------------------------------------------------
 int __cdecl sub_55A2E0(int a1, int a2, int a3)
 {
+#ifdef __3DS__
+	(void)a1;
+	if (!a2 || a3 <= 0)
+		return -13;
+	return nox_3ds_movie_audio_submit((const void *)(uintptr_t)a2, (uint32_t)a3, (uintptr_t)a2) ? -1 : -13;
+#else
 	unsigned __int8 *v3; // edi
 	int v4; // esi
 	int v5; // eax
@@ -5010,6 +5334,7 @@ int __cdecl sub_55A2E0(int a1, int a2, int a3)
 		v5 = 0;
 	*((_DWORD *)v3 + 15) = v5;
 	return -1;
+#endif
 }
 // 5813E8: using guessed type _DWORD __stdcall AIL_unlock();
 // 5813EC: using guessed type _DWORD __stdcall AIL_lock();
@@ -5017,6 +5342,11 @@ int __cdecl sub_55A2E0(int a1, int a2, int a3)
 //----- (0055A360) --------------------------------------------------------
 int __cdecl sub_55A360(int a1)
 {
+#ifdef __3DS__
+	(void)a1;
+	nox_3ds_movie_audio_pause(true);
+	return -1;
+#else
 	unsigned __int8 *v1; // esi
 	int v2; // eax
 
@@ -5031,11 +5361,17 @@ int __cdecl sub_55A360(int a1)
 	*((_DWORD *)v1 + 9) |= 1u;
 	LeaveCriticalSection((LPCRITICAL_SECTION)(v1 + 172));
 	return -1;
+#endif
 }
 
 //----- (0055A3B0) --------------------------------------------------------
 int __cdecl sub_55A3B0(int a1)
 {
+#ifdef __3DS__
+	(void)a1;
+	nox_3ds_movie_audio_pause(false);
+	return -1;
+#else
 	int v1; // eax
 	int result; // eax
 
@@ -5046,12 +5382,17 @@ int __cdecl sub_55A3B0(int a1)
 		result = -13;
 	}
 	return result;
+#endif
 }
 
 //----- (0055A3F0) --------------------------------------------------------
 int __cdecl sub_55A3F0(int a1)
 {
-#ifdef USE_SDL
+#ifdef __3DS__
+    (void)a1;
+    nox_3ds_movie_audio_stop();
+    return -1;
+#elif defined(USE_SDL)
     // SDL/OpenAL: no DirectSound secondary buffer to release here.
     return -1;
 #else
@@ -6404,7 +6745,11 @@ int __cdecl sub_55BB30(int a1)
 	char v16; // [esp+1Ch] [ebp+4h]
 
 	v1 = 0;
+#ifdef __3DS__
+	*(_DWORD *)&byte_5D4594[2516188] = operator_new(0x20000u);
+#else
 	*(_DWORD *)&byte_5D4594[2516188] = operator_new(0x1FFFCu);
+#endif
 	if (!*(_DWORD *)&byte_5D4594[2516188])
 		return 0;
 	switch (a1)
@@ -6447,7 +6792,14 @@ int __cdecl sub_55BB30(int a1)
 			{
 				v8 = v7 | (unsigned __int16)v5;
 				v9 = v6 | v3 | (v5++ << v12);
+#ifdef __3DS__
+				if (a1 == 2)
+					v9 |= 1; /* opaque alpha bit 0 for PICA200 GPU_RGBA5551 */
 				*(_WORD *)(*(_DWORD *)&byte_5D4594[2516188] + 2 * v8) = v9;
+				*(_WORD *)(*(_DWORD *)&byte_5D4594[2516188] + 2 * (v8 | 0x8000u)) = v9;
+#else
+				*(_WORD *)(*(_DWORD *)&byte_5D4594[2516188] + 2 * v8) = v9;
+#endif
 			} while (v5 < 32);
 			v2 = ++v13;
 			if (v13 >= 32)
@@ -13305,8 +13657,73 @@ int __cdecl sub_562C9B(unsigned __int8 *a1, char *a2, int a3)
 
 int __cdecl sub_562E30(_WORD *a1, char *a2, int a3)
 {
+#ifdef __3DS__
+	/* Portable Westwood 8-bit WS-ADPCM decoder (replaces DebugBreak() stub). */
+	static const int8_t ws_step2[4]  = { -2, -1, 0, 1 };
+	static const int8_t ws_step4[16] = { -9, -8, -6, -5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5, 6, 8 };
+	if (!a1 || !a2 || a3 <= 0)
+		return 0;
+	const uint8_t *src = (const uint8_t *)a1;
+	uint8_t *dst = (uint8_t *)a2;
+	int rem = a3;
+	int cur = 0x80;
+	while (rem > 0) {
+		uint8_t cmd   = *src++;
+		uint8_t mode  = (cmd >> 6) & 3u;
+		int     count = (cmd & 0x3Fu);
+		if (mode == 2u) {
+			if (count & 0x20) {
+				int delta = (count & 0x1F) - ((count & 0x10) ? 32 : 0);
+				cur += delta;
+				if (cur < 0) cur = 0; else if (cur > 255) cur = 255;
+				*dst++ = (uint8_t)cur;
+				rem--;
+			} else {
+				int n = count + 1;
+				if (n > rem) n = rem;
+				memcpy(dst, src, (size_t)n);
+				cur = dst[n - 1];
+				src += n;
+				dst += n;
+				rem -= n;
+			}
+		} else if (mode == 1u) {
+			int n = count + 1;
+			while (n-- > 0 && rem > 0) {
+				uint8_t b = *src++;
+				cur += ws_step4[b & 0x0Fu];
+				if (cur < 0) cur = 0; else if (cur > 255) cur = 255;
+				*dst++ = (uint8_t)cur;
+				if (--rem <= 0) break;
+				cur += ws_step4[(b >> 4) & 0x0Fu];
+				if (cur < 0) cur = 0; else if (cur > 255) cur = 255;
+				*dst++ = (uint8_t)cur;
+				rem--;
+			}
+		} else if (mode == 0u) {
+			int n = count + 1;
+			while (n-- > 0 && rem > 0) {
+				uint8_t b = *src++;
+				for (int s = 0; s < 8 && rem > 0; s += 2) {
+					cur += ws_step2[(b >> s) & 3u];
+					if (cur < 0) cur = 0; else if (cur > 255) cur = 255;
+					*dst++ = (uint8_t)cur;
+					rem--;
+				}
+			}
+		} else {
+			int n = count + 1;
+			if (n > rem) n = rem;
+			memset(dst, cur, (size_t)n);
+			dst += n;
+			rem -= n;
+		}
+	}
+	return (int)(src - (const uint8_t *)a1);
+#else
 	DebugBreak();
 	return 0;
+#endif
 }
 #if 0
 //----- (00562E30) --------------------------------------------------------
