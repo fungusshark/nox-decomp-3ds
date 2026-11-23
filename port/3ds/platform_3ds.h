@@ -238,6 +238,7 @@ void nox_3ds_input_set_cstick_params(float deadzone, float curve_exp, float sens
 bool nox_3ds_is_gameplay_active(void);
 bool nox_3ds_input_is_world_mode(void);
 bool nox_3ds_input_is_bottom_touch_frame(void);
+bool nox_3ds_input_is_bottom_touch_active(void);
 bool nox_3ds_input_is_ranged_aim_held(void);
 bool nox_3ds_input_is_cstick_or_r_active(void);
 bool nox_3ds_input_is_touch_move_active(void);

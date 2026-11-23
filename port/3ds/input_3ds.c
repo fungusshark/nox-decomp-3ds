@@ -258,6 +258,11 @@ bool nox_3ds_input_is_bottom_touch_frame(void)
     return g_in.bottom_touch_frame;
 }
 
+bool nox_3ds_input_is_bottom_touch_active(void)
+{
+    return g_in.touch_active && g_in.bottom_touch_frame;
+}
+
 bool nox_3ds_input_is_ranged_aim_held(void)
 {
     return g_in.ranged_aim_held;

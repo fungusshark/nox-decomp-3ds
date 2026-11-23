@@ -7105,12 +7105,19 @@ int sub_4AB5E0()
     }
     nox_3ds_set_top_crop(0, 0, NOX_3DS_LOGICAL_W, NOX_3DS_LOGICAL_H, true);
 
-    nox_3ds_swbuf_begin_bottom(0);
-    nox_3ds_set_gui_filter(NOX_3DS_GUI_ALL);
-    sub_46C2E0();
-    sub_477830();
-    nox_3ds_swbuf_end_bottom();
-    nox_3ds_blit_cursor_to_bottom();
+    {
+      int want_bot_cursor = nox_3ds_input_is_bottom_touch_active() ? 1 : 0;
+      nox_3ds_swbuf_begin_bottom(0);
+      nox_3ds_set_gui_filter(NOX_3DS_GUI_ALL);
+      sub_46C2E0();
+      if ( want_bot_cursor )
+        sub_477830();
+      nox_3ds_swbuf_end_bottom();
+      if ( want_bot_cursor )
+        nox_3ds_blit_cursor_to_bottom();
+      else
+        nox_3ds_skip_default_cursor_blit();
+    }
 
     sub_48A220();
     sub_48A290();

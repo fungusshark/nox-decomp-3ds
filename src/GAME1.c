@@ -51760,12 +51760,19 @@ int map_download_loop(int first)
   }
   nox_3ds_set_top_crop(0, 0, NOX_3DS_LOGICAL_W, NOX_3DS_LOGICAL_H, true);
 
-  nox_3ds_swbuf_begin_bottom(0);
-  nox_3ds_set_gui_filter(NOX_3DS_GUI_ALL);
-  sub_46C2E0();
-  sub_477830();
-  nox_3ds_swbuf_end_bottom();
-  nox_3ds_blit_cursor_to_bottom();
+  {
+    int want_bot_cursor = nox_3ds_input_is_bottom_touch_active() ? 1 : 0;
+    nox_3ds_swbuf_begin_bottom(0);
+    nox_3ds_set_gui_filter(NOX_3DS_GUI_ALL);
+    sub_46C2E0();
+    if ( want_bot_cursor )
+      sub_477830();
+    nox_3ds_swbuf_end_bottom();
+    if ( want_bot_cursor )
+      nox_3ds_blit_cursor_to_bottom();
+    else
+      nox_3ds_skip_default_cursor_blit();
+  }
 
   sub_48A220();
   sub_48A290();
@@ -52092,19 +52099,24 @@ LABEL_24:
         v28[8] = *(_DWORD *)&byte_5D4594[3805496];
         v28[9] = *(_DWORD *)&byte_5D4594[3807120];
         sub_431720(v28);
-        if ( do_present )
         {
-          int2 *gm = sub_4309F0();
-          int saved_mx = gm->field_0;
-          int saved_my = gm->field_4;
-          nox_3ds_input_get_bottom_touch(&gm->field_0, &gm->field_4);
-          sub_477830();
-          gm->field_0 = saved_mx;
-          gm->field_4 = saved_my;
+          int want_bot_cursor = do_present && nox_3ds_input_is_bottom_touch_active();
+          if ( want_bot_cursor )
+          {
+            int2 *gm = sub_4309F0();
+            int saved_mx = gm->field_0;
+            int saved_my = gm->field_4;
+            nox_3ds_input_get_bottom_touch(&gm->field_0, &gm->field_4);
+            sub_477830();
+            gm->field_0 = saved_mx;
+            gm->field_4 = saved_my;
+          }
+          nox_3ds_swbuf_end_bottom();
+          if ( want_bot_cursor )
+            nox_3ds_blit_cursor_to_bottom();
+          else if ( do_present )
+            nox_3ds_skip_default_cursor_blit();
         }
-        nox_3ds_swbuf_end_bottom();
-        if ( do_present )
-          nox_3ds_blit_cursor_to_bottom();
       }
       else if ( !sub_43C700() )
       {
@@ -52252,13 +52264,13 @@ LABEL_24:
         }
 
         {
-          int want_bot_cursor = do_present && (!world_mode || sub_477600() || nox_3ds_input_is_bottom_touch_frame());
+          int want_bot_cursor = do_present && (sub_477600() || nox_3ds_input_is_bottom_touch_active());
           if ( want_bot_cursor )
           {
             uint16_t saved_tip0 = *(_WORD *)&byte_5D4594[1096676];
             nox_3ds_input_get_bottom_touch(&gm->field_0, &gm->field_4);
             *(_DWORD *)&byte_5D4594[1097200] = nox_3ds_input_is_touch_move_active() ? 14 : 0;
-            if ( world_mode && !nox_3ds_input_is_bottom_touch_frame() )
+            if ( world_mode && !nox_3ds_input_is_bottom_touch_active() )
               *(_WORD *)&byte_5D4594[1096676] = 0;
             sub_477830();
             *(_WORD *)&byte_5D4594[1096676] = saved_tip0;
@@ -52269,6 +52281,8 @@ LABEL_24:
           nox_3ds_swbuf_end_bottom();
           if ( want_bot_cursor )
             nox_3ds_blit_cursor_to_bottom();
+          else if ( do_present )
+            nox_3ds_skip_default_cursor_blit();
         }
       }
 
