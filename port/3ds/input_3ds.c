@@ -317,8 +317,15 @@ void nox_3ds_input_notify_bottom_ui_hit(bool hit_ui)
         float dy = (float)(g_in.bottom_touch_y - (NOX_3DS_LOGICAL_H / 2));
         float dist = sqrtf(dx * dx + dy * dy);
         if (dist >= 16.0f) {
-            int orient = orientation_from_vec(dx / dist, dy / dist);
+            float nx = dx / dist;
+            float ny = dy / dist;
+            int orient = orientation_from_vec(nx, ny);
             int cmd = (dist >= 85.0f) ? 3 : 1; /* close = walk, outer = run */
+            if (!g_cstick_or_r_active && !nox_3ds_input_is_cpad_move_active()) {
+                g_aim_dir_x = nx;
+                g_aim_dir_y = ny;
+                g_world_aim_orient = orient;
+            }
             nox_ctrl_set_touch_move(1, orient, cmd);
         } else {
             nox_ctrl_set_touch_move(0, 0, 0);
