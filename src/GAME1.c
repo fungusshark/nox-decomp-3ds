@@ -52149,7 +52149,7 @@ LABEL_24:
         sub_431720(v25);
 
         if ( do_present && world_mode &&
-             (nox_3ds_input_is_cstick_or_r_active() ||
+             (nox_3ds_input_is_ranged_aim_held() ||
               nox_3ds_input_is_touch_move_active() ||
               ((nox_3ds_get_world_cursor_id() != 0 && nox_3ds_get_world_cursor_id() != 14) &&
                !nox_3ds_input_is_bottom_touch_frame())) )
