@@ -253,6 +253,13 @@ bool nox_3ds_input_is_cpad_move_active(void)
  */
 void nox_3ds_input_notify_bottom_ui_hit(bool hit_ui)
 {
+    /* NEW: Explicitly suppress touch movement if L-trackpad aim is active */
+    if (g_in.ranged_aim_held) {
+        g_touch_mode = TOUCH_MODE_NONE;
+        nox_ctrl_set_touch_move(0, 0, 0);
+        return;
+    }
+
     if (!g_in.in_gameplay || !g_in.touch_active) {
         g_touch_mode = TOUCH_MODE_NONE;
         nox_ctrl_set_touch_move(0, 0, 0);
@@ -348,6 +355,7 @@ const nox_3ds_input_t *nox_3ds_input_get(void)
 void nox_3ds_input_process_hybrid(void)
 {
     const bool world_mode = g_in.in_gameplay;
+    bool l_held = (g_in.keys_held & NOX_3DS_KEY_L) != 0;
 
     /* =====================================================================
      * 1. Top-Screen World Aiming: C-Stick + L Modifier
@@ -360,7 +368,6 @@ void nox_3ds_input_process_hybrid(void)
         int vp_l, vp_t, vp_r, vp_b, cx, cy;
         get_top_viewport_bounds(&vp_l, &vp_t, &vp_r, &vp_b, &cx, &cy);
 
-        bool l_held = (g_in.keys_held & NOX_3DS_KEY_L) != 0;
         bool l_down = (l_held && !g_prev_l_held);
         bool l_up   = (!l_held && g_prev_l_held);
         g_prev_l_held = l_held;
@@ -371,33 +378,50 @@ void nox_3ds_input_process_hybrid(void)
         g_cstick_or_r_active = (cstick_active || l_held);
 
         if (l_held) {
-            /* Entering L-ranged mode: start detached cursor from current close-aim point */
-            if (l_down) {
+            if (g_in.touch_active) {
+                /* TRACKPAD MODE: Match exact bottom touch scaled location directly */
+                g_in.world_aim_x = g_in.bottom_touch_x;
+                g_in.world_aim_y = g_in.bottom_touch_y;
                 g_free_aim_x = (float)g_in.world_aim_x;
                 g_free_aim_y = (float)g_in.world_aim_y;
-            }
+                
+                float dx = g_free_aim_x - (float)cx;
+                float dy = g_free_aim_y - (float)cy;
+                float dlen = sqrtf(dx * dx + dy * dy);
+                if (dlen > 2.0f) {
+                    g_aim_dir_x = dx / dlen;
+                    g_aim_dir_y = dy / dlen;
+                    g_world_aim_orient = orientation_from_vec(g_aim_dir_x, g_aim_dir_y);
+                }
+            } else {
+                /* Entering L-ranged mode: start detached cursor from current close-aim point */
+                if (l_down) {
+                    g_free_aim_x = (float)g_in.world_aim_x;
+                    g_free_aim_y = (float)g_in.world_aim_y;
+                }
 
-            if (cstick_active) {
-                g_free_aim_x += cnx * cmag * g_in.cstick_cfg.free_speed;
-                g_free_aim_y += cny * cmag * g_in.cstick_cfg.free_speed;
-            }
+                if (cstick_active) {
+                    g_free_aim_x += cnx * cmag * g_in.cstick_cfg.free_speed;
+                    g_free_aim_y += cny * cmag * g_in.cstick_cfg.free_speed;
+                }
 
-            /* Clamp strictly to the 400x240 Top Screen viewport bounds */
-            if (g_free_aim_x < (float)vp_l) g_free_aim_x = (float)vp_l;
-            if (g_free_aim_x > (float)vp_r) g_free_aim_x = (float)vp_r;
-            if (g_free_aim_y < (float)vp_t) g_free_aim_y = (float)vp_t;
-            if (g_free_aim_y > (float)vp_b) g_free_aim_y = (float)vp_b;
+                /* Clamp strictly to the 400x240 Top Screen viewport bounds */
+                if (g_free_aim_x < (float)vp_l) g_free_aim_x = (float)vp_l;
+                if (g_free_aim_x > (float)vp_r) g_free_aim_x = (float)vp_r;
+                if (g_free_aim_y < (float)vp_t) g_free_aim_y = (float)vp_t;
+                if (g_free_aim_y > (float)vp_b) g_free_aim_y = (float)vp_b;
 
-            g_in.world_aim_x = (int)lrintf(g_free_aim_x);
-            g_in.world_aim_y = (int)lrintf(g_free_aim_y);
+                g_in.world_aim_x = (int)lrintf(g_free_aim_x);
+                g_in.world_aim_y = (int)lrintf(g_free_aim_y);
 
-            float dx = g_free_aim_x - (float)cx;
-            float dy = g_free_aim_y - (float)cy;
-            float dlen = sqrtf(dx * dx + dy * dy);
-            if (dlen > 2.0f) {
-                g_aim_dir_x = dx / dlen;
-                g_aim_dir_y = dy / dlen;
-                g_world_aim_orient = orientation_from_vec(g_aim_dir_x, g_aim_dir_y);
+                float dx = g_free_aim_x - (float)cx;
+                float dy = g_free_aim_y - (float)cy;
+                float dlen = sqrtf(dx * dx + dy * dy);
+                if (dlen > 2.0f) {
+                    g_aim_dir_x = dx / dlen;
+                    g_aim_dir_y = dy / dlen;
+                    g_world_aim_orient = orientation_from_vec(g_aim_dir_x, g_aim_dir_y);
+                }
             }
         } else {
             /* Releasing L: snap back to tight fixed radius along last aim angle */
@@ -456,15 +480,40 @@ void nox_3ds_input_process_hybrid(void)
 
     /* =====================================================================
      * 2. Strict Screen Input Arbitration:
-     *    - Bottom Screen Touch (hidTouchRead): 100% of menu, inventory,
-     *      spellbook, and UI absolute Left-Click tapping.
-     *    - Top Screen R Button: Left-Click at C-Stick world cursor location
-     *      (both close melee/interact ring and L-held ranged free-aim).
+     *    - Touch Movement: Stays active independently of the mouse pointer.
+     *    - Mouse Pointer & Clicks: R-button (attack) or L-button (trackpad)
+     *      take priority and force the mouse to the Top Screen. Otherwise,
+     *      Touch owns the mouse for UI interaction.
      * ===================================================================== */
-    if (g_in.touch_active || g_in.touch_up || !world_mode) {
+     
+    bool r_held = (g_in.keys_held & NOX_3DS_KEY_R) != 0;
+    bool top_screen_priority = world_mode && (l_held || r_held);
+
+    if (top_screen_priority) {
+        /* TOP SCREEN OWNS THE MOUSE POINTER */
+        g_in.bottom_touch_frame = false;
+
+        /* Temporarily lift touch's hold on the mouse to allow Top Screen actions */
+        release_lmb_if_owned(LMB_OWNER_TOUCH);
+
+        /* We explicitly DO NOT clear g_touch_mode here. If you are running
+           via the touch screen, we want that to continue seamlessly in the background. */
+
+        nox_ctrl_inject_mouse_abs(g_in.world_aim_x, g_in.world_aim_y);
+
+        if (r_held && g_lmb_owner != LMB_OWNER_WORLD_R) {
+            nox_ctrl_inject_mouse_button(0, 1);
+            g_lmb_owner = LMB_OWNER_WORLD_R;
+        } else if (!r_held && g_lmb_owner == LMB_OWNER_WORLD_R) {
+            nox_ctrl_inject_mouse_button(0, 0);
+            g_lmb_owner = LMB_OWNER_NONE;
+        }
+
+    } else if (g_in.touch_active || g_in.touch_up || !world_mode) {
+        /* BOTTOM SCREEN OWNS THE MOUSE POINTER */
         g_in.bottom_touch_frame = true;
 
-        /* Ensure world R-click never stays latched while interacting with Bottom UI */
+        /* Release world R-click if it was active */
         release_lmb_if_owned(LMB_OWNER_WORLD_R);
 
         if (g_in.touch_active) {
@@ -483,24 +532,21 @@ void nox_3ds_input_process_hybrid(void)
             g_touch_mode = TOUCH_MODE_NONE;
             nox_ctrl_set_touch_move(0, 0, 0);
         }
-        return;
-    }
+    } else {
+        /* IDLE / DEFAULT: TOP SCREEN OWNS THE POINTER (No touch, no L/R) */
+        g_in.bottom_touch_frame = false;
+        
+        /* Clean up any stale touch state */
+        release_lmb_if_owned(LMB_OWNER_TOUCH);
+        g_touch_mode = TOUCH_MODE_NONE;
+        nox_ctrl_set_touch_move(0, 0, 0);
 
-    /* World interaction frame (no bottom touch active): route pointer & R-click to Top Screen */
-    g_in.bottom_touch_frame = false;
-    g_touch_mode = TOUCH_MODE_NONE;
-    nox_ctrl_set_touch_move(0, 0, 0);
-    release_lmb_if_owned(LMB_OWNER_TOUCH);
-
-    nox_ctrl_inject_mouse_abs(g_in.world_aim_x, g_in.world_aim_y);
-
-    bool r_held = (g_in.keys_held & NOX_3DS_KEY_R) != 0;
-    if (r_held && g_lmb_owner != LMB_OWNER_WORLD_R) {
-        nox_ctrl_inject_mouse_button(0, 1);
-        g_lmb_owner = LMB_OWNER_WORLD_R;
-    } else if (!r_held && g_lmb_owner == LMB_OWNER_WORLD_R) {
-        nox_ctrl_inject_mouse_button(0, 0);
-        g_lmb_owner = LMB_OWNER_NONE;
+        nox_ctrl_inject_mouse_abs(g_in.world_aim_x, g_in.world_aim_y);
+        
+        if (g_lmb_owner == LMB_OWNER_WORLD_R) {
+            nox_ctrl_inject_mouse_button(0, 0);
+            g_lmb_owner = LMB_OWNER_NONE;
+        }
     }
 }
 
