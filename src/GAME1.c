@@ -44682,6 +44682,9 @@ FILE *__cdecl sub_433290(char *a1)
 #ifdef __EMSCRIPTEN__
     EM_ASM(FS.syncfs(false,function (err) {}));
 #endif
+#ifdef __3DS__
+    nox_3ds_commit_save();
+#endif
     result = (FILE *)1;
   }
   return result;

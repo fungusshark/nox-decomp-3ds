@@ -43199,6 +43199,9 @@ int __cdecl sub_4DB370(const char *a1)
   }
   *(_DWORD *)&byte_5D4594[1563092] = 0;
   *(_DWORD *)&byte_5D4594[1563088] = 0;
+#ifdef __3DS__
+  nox_3ds_commit_save();
+#endif
   return 1;
 }
 

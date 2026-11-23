@@ -14,6 +14,9 @@
 #include <unistd.h>   // readlink
 #include <fnmatch.h>
 #undef fopen
+#undef fclose
+#undef remove
+#undef rename
 
 #include <stdlib.h>
 #include <string.h>
@@ -132,6 +135,7 @@ static char *dos_to_unix(const char *path);
 static int casepath(const char *path, char *r);
 static void fill_find_data(const char *path, LPWIN32_FIND_DATAA lpFindFileData);
 static int compat_do_stat(const char *path, struct stat *st);
+static void ensure_parent_dirs(const char *unix_path);
 static int  wsa_from_errno(int e);
 static void wsa_set_last_from_errno(void);
 
@@ -181,6 +185,8 @@ int compat_open(const char *filename, int oflag, ...)
         return -1;
     }
 
+    const char *use = converted;
+#ifndef __3DS__
     /* Match compat_fopen behavior:
        - strip accidental cwd prefix
        - case-fold path via casepath() where possible
@@ -194,10 +200,15 @@ int compat_open(const char *filename, int oflag, ...)
     if (cdir) free(cdir);
 
     char *r = alloca(strlen(converted) + 2);
-    const char *use = converted;
+    use = converted;
 
     if (casepath(converted, r))
         use = r;
+#endif
+
+    if (oflag & (O_CREAT | O_WRONLY | O_RDWR)) {
+        ensure_parent_dirs(use);
+    }
 
     int fd;
     if (oflag & O_CREAT) {
@@ -206,6 +217,7 @@ int compat_open(const char *filename, int oflag, ...)
         fd = open(use, oflag);
     }
 
+#ifndef __3DS__
     /* Optional fallback like compat_fopen (kept minimal):
        If casepath didn't help, try the original filename as-is.
        This can matter if filename was already a valid unix path. */
@@ -219,6 +231,7 @@ int compat_open(const char *filename, int oflag, ...)
         if (fd < 0)
             errno = saved; /* preserve errno from the primary attempt */
     }
+#endif
 
     free(converted_ptr);
     return fd;
@@ -1264,30 +1277,9 @@ static char *dos_to_unix(const char *path)
 {
 #ifdef __3DS__
     if (!path) return NULL;
-    const char *p = path;
-    if ((p[0] == 'C' || p[0] == 'c') && p[1] == ':')
-        p += 2;
-    /* Normalize slashes first; keep CWD-relative paths relative if chdir succeeded,
-       otherwise resolve under sdmc:/3ds/nox/ via nox_3ds_resolve_path(). */
-    if (p[0] == '/' || p[0] == '\\' ||
-        strncmp(p, "sdmc:", 5) == 0 || strncmp(p, "romfs:", 6) == 0 ||
-        !nox_3ds_get_state()->sdmc_root_ready) {
-        char buf[512];
-        nox_3ds_resolve_path(path, buf, sizeof(buf));
-        return strdup(buf);
-    }
-    char *str = malloc(strlen(p) + 1);
-    int i, o = 0;
-    for (i = 0; p[i]; i++) {
-        char c = (p[i] == '\\') ? '/' : p[i];
-        if (c == '/' && o > 0 && str[o - 1] == '/')
-            continue;
-        str[o++] = c;
-    }
-    while (o > 1 && str[o - 1] == '/' && !(o >= 2 && str[o - 2] == ':'))
-        o--;
-    str[o] = 0;
-    return str;
+    char buf[512];
+    nox_3ds_resolve_path(path, buf, sizeof(buf));
+    return strdup(buf);
 #else
     int i, len = strlen(path);
     char *str = malloc(len + 1);
@@ -1634,6 +1626,10 @@ HANDLE WINAPI CreateFileA(LPCSTR lpFileName, DWORD dwDesiredAccess, DWORD dwShar
         break;
     }
 
+    if ((dwDesiredAccess & GENERIC_WRITE) || (flags & O_CREAT)) {
+        ensure_parent_dirs(converted);
+    }
+
     fd = open(converted, flags, 0666);
     dprintf("%s: CreateFileA(%s) = %d\n", __FUNCTION__, converted, fd);
     free(converted);
@@ -1700,12 +1696,21 @@ DWORD WINAPI SetFilePointer(HANDLE hFile, LONG lDistanceToMove, PLONG lpDistance
 
 BOOL WINAPI CopyFileA(LPCSTR lpExistingFileName, LPCSTR lpNewFileName, BOOL bFailIfExists)
 {
-    char buf[1024];
+    char stack_buf[4096];
+    size_t buf_sz = 65536;
+    char *heap_buf = (char *)malloc(buf_sz);
+    char *buf = heap_buf ? heap_buf : stack_buf;
+    if (!heap_buf)
+        buf_sz = sizeof(stack_buf);
+
     int rfd = _open(lpExistingFileName, O_RDONLY);
     int wfd;
 
     if (rfd < 0)
+    {
+        free(heap_buf);
         return FALSE;
+    }
 
     wfd = _open(lpNewFileName, bFailIfExists ? O_WRONLY | O_CREAT | O_EXCL : O_WRONLY | O_CREAT | O_TRUNC, 0666);
     if (wfd < 0)
@@ -1714,20 +1719,30 @@ error:
         if (wfd >= 0)
             close(wfd);
         close(rfd);
+        free(heap_buf);
         return FALSE;
     }
 
     while (1)
     {
-        int ret = read(rfd, buf, sizeof(buf));
-        if (ret <= 0)
-            break;
-        if (write(wfd, buf, ret) != ret)
+        int ret = read(rfd, buf, buf_sz);
+        if (ret < 0)
             goto error;
+        if (ret == 0)
+            break;
+        int off = 0;
+        while (off < ret)
+        {
+            int w = write(wfd, buf + off, ret - off);
+            if (w <= 0)
+                goto error;
+            off += w;
+        }
     }
 
     close(rfd);
     close(wfd);
+    free(heap_buf);
     return TRUE;
 }
 
@@ -1755,7 +1770,16 @@ BOOL WINAPI MoveFileA(LPCSTR lpExistingFileName, LPCSTR lpNewFileName)
     char *dst_case = alloca(strlen(dst_ptr) + 2);
     const char *dst_use = casepath(dst_ptr, dst_case) ? dst_case : dst_ptr;
 
+    ensure_parent_dirs(dst_use);
+
     int rc = rename(src_use, dst_use);
+#ifdef __3DS__
+    if (rc != 0) {
+        /* 3DS SDMC FAT32 rename() fails if destination already exists */
+        unlink(dst_use);
+        rc = rename(src_use, dst_use);
+    }
+#endif
     if (rc != 0) {
         /* Fallback: copy + delete if rename fails across mount/overwrite semantics */
         if (CopyFileA(lpExistingFileName, lpNewFileName, FALSE)) {
@@ -1839,6 +1863,8 @@ int _access(const char *filename, int mode)
     char *converted_ptr = dos_to_unix(filename);
     const char *converted = converted_ptr ? converted_ptr : filename;
 
+    const char *use = converted;
+#ifndef __3DS__
     char *cwd = get_current_dir_name();
 
     // Strip accidental "cwd/" prefix (same idea as compat_fopen/_stat)
@@ -1849,14 +1875,16 @@ int _access(const char *filename, int mode)
     }
 
     char *r = alloca(strlen(converted) + 2);
-    const char *use = converted;
+    use = converted;
 
     if (casepath(converted, r))
         use = r;
 
+    if (cwd) free(cwd);
+#endif
+
     int result = access(use, mode);
 
-    if (cwd) free(cwd);
     if (converted_ptr) free(converted_ptr);
     return result;
 }
@@ -1914,6 +1942,12 @@ int _stat(const char *path, struct _stat *buffer)
     int result = -1;
     struct stat st;
 
+#ifdef __3DS__
+    result = nox_3ds_stat(path, &st);
+    if (result != 0) {
+        return result;
+    }
+#else
     char *converted_ptr = dos_to_unix(path);
     char *converted = converted_ptr;
 
@@ -1997,6 +2031,7 @@ int _stat(const char *path, struct _stat *buffer)
         // preserve errno from last attempt
         return result;
     }
+#endif
 
     // Fill Win-like _stat from libc stat
     buffer->st_dev = st.st_dev;
@@ -2021,6 +2056,9 @@ int _stat(const char *path, struct _stat *buffer)
 
 static void ensure_parent_dirs(const char *unix_path)
 {
+#ifdef __3DS__
+    nox_3ds_ensure_parent_dirs(unix_path);
+#else
     if (!unix_path || !*unix_path)
         return;
     char tmp[PATH_MAX];
@@ -2038,10 +2076,14 @@ static void ensure_parent_dirs(const char *unix_path)
             *p = '/';
         }
     }
+#endif
 }
 
 int _mkdir(const char *path)
 {
+#ifdef __3DS__
+    return nox_3ds_ensure_dir(path) ? 0 : -1;
+#else
     int result;
     char *converted = dos_to_unix(path);
     size_t len = strlen(converted);
@@ -2058,6 +2100,7 @@ int _mkdir(const char *path)
     }
     free(converted);
     return result;
+#endif
 }
 
 int _unlink(const char *filename)
@@ -2265,12 +2308,13 @@ FILE *compat_fopen(const char *path, const char *mode)
         }
     }
 
+#ifdef __3DS__
+    return nox_3ds_fopen(path, mode);
+#else
     FILE *result;
     char *converted = dos_to_unix(path);
     char *converted_ptr = converted;
-#ifndef __3DS__
     fprintf(stderr, "compat_fopen: fcaseopen(%s)\n", converted);
-#endif
 
     char *r = alloca(strlen(converted) + 2);
     char *cdir = get_current_dir_name();
@@ -2312,16 +2356,92 @@ FILE *compat_fopen(const char *path, const char *mode)
                     path, mode ? mode : "(null)", (void *)result);
         }
     }
-#ifndef __3DS__
     else {
         fprintf(stderr,
                 "compat_fopen: fopen(%s, %s) = %p\n",
                 r, orig_mode, (void *)result);
     }
-#endif
 
     free(converted_ptr);
     return result;
+#endif
+}
+
+int compat_fclose(FILE *stream)
+{
+    if (!stream)
+        return 0;
+#ifdef __3DS__
+    return nox_3ds_fclose(stream);
+#else
+    return fclose(stream);
+#endif
+}
+
+int compat_remove(const char *filename)
+{
+    if (!filename) {
+        errno = EINVAL;
+        return -1;
+    }
+    char *converted = dos_to_unix(filename);
+    if (!converted) {
+        errno = ENOMEM;
+        return -1;
+    }
+    const char *use = converted;
+#ifndef __3DS__
+    char *r = alloca(strlen(converted) + 2);
+    if (casepath(converted, r))
+        use = r;
+#endif
+    int rc = remove(use);
+    free(converted);
+    return rc;
+}
+
+int compat_rename(const char *oldpath, const char *newpath)
+{
+    if (!oldpath || !newpath) {
+        errno = EINVAL;
+        return -1;
+    }
+    char *src_ptr = dos_to_unix(oldpath);
+    char *dst_ptr = dos_to_unix(newpath);
+    if (!src_ptr || !dst_ptr) {
+        free(src_ptr);
+        free(dst_ptr);
+        errno = ENOMEM;
+        return -1;
+    }
+    const char *src_use = src_ptr;
+    const char *dst_use = dst_ptr;
+#ifndef __3DS__
+    char *src_case = alloca(strlen(src_ptr) + 2);
+    if (casepath(src_ptr, src_case))
+        src_use = src_case;
+    char *dst_case = alloca(strlen(dst_ptr) + 2);
+    if (casepath(dst_ptr, dst_case))
+        dst_use = dst_case;
+#endif
+    ensure_parent_dirs(dst_use);
+
+    int rc = rename(src_use, dst_use);
+#ifdef __3DS__
+    if (rc != 0) {
+        unlink(dst_use);
+        rc = rename(src_use, dst_use);
+    }
+    if (rc != 0) {
+        if (CopyFileA(oldpath, newpath, FALSE)) {
+            DeleteFileA(oldpath);
+            rc = 0;
+        }
+    }
+#endif
+    free(src_ptr);
+    free(dst_ptr);
+    return rc;
 }
 
 char *fgets(char *str, int size, FILE *stream)

@@ -12,6 +12,9 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
+#include <stdio.h>
+
+struct stat;
 
 #ifdef __cplusplus
 extern "C" {
@@ -94,8 +97,27 @@ void     nox_3ds_sleep_ms(uint32_t ms);  /* svcSleepThread */
 const nox_3ds_state_t *nox_3ds_get_state(void);
 nox_3ds_state_t       *nox_3ds_state_mut(void);
 
-/* Normalize '\' -> '/', strip leading 'C:', and resolve relative paths under sdmc:/3ds/nox/. */
+/* =========================================================================
+ * 2b. SD Card File System & Persistence Hooks (fs_3ds.c)
+ * ========================================================================= */
+/* Recursively convert '\' -> '/' and collapse duplicate slashes in-place. */
+void     nox_3ds_sanitize_path(char *path);
+/* Normalize '\' -> '/', strip leading 'C:', and redirect all game paths to sdmc:/3ds/nox/. */
 void     nox_3ds_resolve_path(const char *path, char *out, size_t out_sz);
+/* Create any missing parent directories on SDMC via mkdir() before writing. */
+bool     nox_3ds_ensure_parent_dirs(const char *resolved_path);
+/* Create a directory (and any missing parents) under sdmc:/3ds/nox/. */
+bool     nox_3ds_ensure_dir(const char *path);
+/* Redirected, sanitized fopen() with pre-write mkdir and write-handle tracking. */
+FILE    *nox_3ds_fopen(const char *path, const char *mode);
+/* Flushes writable stdio buffers without per-file fsync() thrashing, then fclose(). */
+int      nox_3ds_fclose(FILE *stream);
+/* Redirected, sanitized stat() wrapper for SDMC paths. */
+int      nox_3ds_stat(const char *path, struct stat *st);
+/* Flush + fsync all tracked open writable streams to SDMC. */
+void     nox_3ds_fs_sync_all(void);
+/* Batch save committer: flushes all stdio buffers + open descriptors once per save event. */
+void     nox_3ds_commit_save(void);
 
 /* =========================================================================
  * 3. Dual-Screen Software Framebuffer & PICA200 Video Bridge (video_3ds.c & draw.c)

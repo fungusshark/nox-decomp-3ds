@@ -20,6 +20,24 @@ static bool g_initialized = false;
 static bool g_shutdown_done = false;
 static bool g_console_detached = false;
 static u64 g_start_ms = 0;
+static aptHookCookie g_apt_hook_cookie;
+static bool g_apt_hook_registered = false;
+
+static void nox_3ds_apt_hook_cb(APT_HookType hook, void *param)
+{
+    (void)param;
+    switch (hook) {
+    case APTHOOK_ONSUSPEND:
+    case APTHOOK_ONSLEEP:
+    case APTHOOK_ONEXIT:
+        /* Force a full fflush() and fsync() on open file descriptors when
+         * the user presses HOME, closes the lid, or exits. */
+        nox_3ds_commit_save();
+        break;
+    default:
+        break;
+    }
+}
 
 struct nox_3ds_mutex {
     RecursiveLock lock;
@@ -82,7 +100,8 @@ bool nox_3ds_init(void)
         if (chdir(NOX_3DS_DATA_ROOT) == 0) {
             g_3ds_state.sdmc_root_ready = true;
             printf("[3ds] chdir(%s) OK\n", NOX_3DS_DATA_ROOT);
-            mkdir(NOX_3DS_DATA_ROOT "/save", 0777);
+            nox_3ds_ensure_dir(NOX_3DS_DATA_ROOT "/save");
+            nox_3ds_ensure_dir(NOX_3DS_DATA_ROOT "/gui");
         } else {
             printf("[3ds] WARN: chdir(%s) failed\n", NOX_3DS_DATA_ROOT);
         }
@@ -93,6 +112,9 @@ bool nox_3ds_init(void)
     nox_3ds_net_init();
     nox_3ds_input_init();
     nox_3ds_audio_init();
+
+    aptHook(&g_apt_hook_cookie, nox_3ds_apt_hook_cb, NULL);
+    g_apt_hook_registered = true;
 
     atexit(nox_3ds_shutdown);
     g_initialized = true;
@@ -124,6 +146,11 @@ void nox_3ds_shutdown(void)
         return;
     g_shutdown_done = true;
 
+    nox_3ds_commit_save();
+    if (g_apt_hook_registered) {
+        aptUnhook(&g_apt_hook_cookie);
+        g_apt_hook_registered = false;
+    }
     nox_3ds_audio_shutdown();
     nox_3ds_video_shutdown();
     nox_3ds_net_shutdown();
@@ -199,60 +226,6 @@ const nox_3ds_state_t *nox_3ds_get_state(void)
 nox_3ds_state_t *nox_3ds_state_mut(void)
 {
     return &g_3ds_state;
-}
-
-void nox_3ds_resolve_path(const char *path, char *out, size_t out_sz)
-{
-    if (!out || out_sz == 0)
-        return;
-    out[0] = '\0';
-    if (!path || !*path)
-        return;
-
-    /* Strip Windows drive prefix (e.g. C:\ or c:/) */
-    if (isalpha((unsigned char)path[0]) && path[1] == ':') {
-        path += 2;
-    }
-
-    char norm[512];
-    size_t n = 0;
-    for (size_t i = 0; path[i] && n + 1 < sizeof(norm); ++i) {
-        char c = (path[i] == '\\') ? '/' : path[i];
-        /* Collapse duplicate slashes */
-        if (c == '/' && n > 0 && norm[n - 1] == '/')
-            continue;
-        norm[n++] = c;
-    }
-    norm[n] = '\0';
-
-    /* Strip trailing slash unless it's the device root (e.g. "sdmc:/") */
-    while (n > 1 && norm[n - 1] == '/' && !(n >= 2 && norm[n - 2] == ':')) {
-        norm[--n] = '\0';
-    }
-
-    if (strncmp(norm, "sdmc:/", 6) == 0 || strncmp(norm, "romfs:/", 7) == 0) {
-        snprintf(out, out_sz, "%s", norm);
-        return;
-    }
-
-    const char *rel = norm;
-    while (*rel == '/')
-        rel++;
-    if (rel[0] == '.' && rel[1] == '/')
-        rel += 2;
-
-    /* Avoid double-prefixing if getcwd() returned "/3ds/nox/..." without "sdmc:" */
-    if (strncasecmp(rel, "3ds/nox/", 8) == 0) {
-        rel += 8;
-    } else if (strcasecmp(rel, "3ds/nox") == 0) {
-        rel = "";
-    }
-
-    if (*rel == '\0') {
-        snprintf(out, out_sz, "%s", NOX_3DS_DATA_ROOT);
-    } else {
-        snprintf(out, out_sz, "%s/%s", NOX_3DS_DATA_ROOT, rel);
-    }
 }
 
 nox_3ds_mutex_t *nox_3ds_mutex_create(void)

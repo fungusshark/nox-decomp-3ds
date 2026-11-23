@@ -342,6 +342,9 @@ enum
 #define _unlink compat_unlink
 #define _getcwd compat_getcwd
 #define fopen compat_fopen
+#define fclose compat_fclose
+#define remove compat_remove
+#define rename compat_rename
 #define fgets compat_fgets
 
 #define _strdup strdup
@@ -434,6 +437,9 @@ int _mkdir(const char *path);
 int _unlink(const char *filename);
 char *_getcwd(char *buffer, int maxlen);
 FILE *fopen(const char *path, const char *mode);
+int fclose(FILE *stream);
+int remove(const char *filename);
+int rename(const char *oldpath, const char *newpath);
 char *fgets(char *str, int size, FILE *stream);
 
 static inline unsigned int _rotl(unsigned int value, int shift)
