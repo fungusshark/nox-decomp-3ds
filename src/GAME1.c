@@ -41991,6 +41991,8 @@ int __cdecl sub_4302A0(int a1, int a2)
               *(_DWORD *)&byte_5D4594[805684] = 5;
               *(_DWORD *)&byte_5D4594[805680] = 1;
               *(_DWORD *)&byte_5D4594[805688] = *(_DWORD *)&byte_5D4594[805812];
+              *(_DWORD *)&byte_5D4594[805780] = v5;
+              *(_DWORD *)&byte_5D4594[805784] = v4;
             }
           }
           else if ( (unsigned int)(*(int *)&byte_5D4594[805812] - *(int *)&byte_5D4594[805688]) >= 0xF
@@ -52225,8 +52227,15 @@ LABEL_24:
         }
         if ( !*(_DWORD *)&byte_5D4594[1556112] )
         {
+          if ( world_mode && nox_3ds_input_is_bottom_touch_frame() )
+            nox_3ds_input_get_bottom_touch(&gm->field_0, &gm->field_4);
           nox_3ds_set_gui_filter(NOX_3DS_GUI_ALL);
           sub_46C2E0();
+          if ( world_mode && nox_3ds_input_is_bottom_touch_frame() )
+          {
+            gm->field_0 = saved_mx;
+            gm->field_4 = saved_my;
+          }
         }
 
         /* Screen-Space UI: centered notification / system message text

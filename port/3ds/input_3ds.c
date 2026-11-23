@@ -20,6 +20,9 @@ extern int sub_459DA0(void);           /* NPC dialog / shop modal active */
 extern unsigned int sub_446360(void);  /* Quit / Pause menu active */
 extern int sub_413A50(void);           /* Yes/No confirmation modal active */
 extern char *sub_437250(void);         /* gameplay viewport rect [l,t,r,b,...] */
+extern int sub_46AAB0(void *a1, int a2, int a3); /* GUI widget point-in-rect hit test */
+extern int sub_46ACC0(int a1);                   /* GUI widget hidden check */
+extern int sub_477600(void);                     /* dragging inventory item / spell icon */
 
 /* Input injectors (src/input.c) */
 extern void nox_ctrl_inject_mouse_abs(int x, int y);
@@ -34,9 +37,10 @@ enum {
 };
 
 enum {
-    TOUCH_MODE_NONE = 0,
-    TOUCH_MODE_UI   = 1,
-    TOUCH_MODE_MOVE = 2
+    TOUCH_MODE_NONE     = 0,
+    TOUCH_MODE_UI       = 1,
+    TOUCH_MODE_MOVE     = 2,
+    TOUCH_MODE_CTX_MENU = 3
 };
 
 static nox_3ds_input_t g_in;
@@ -151,6 +155,39 @@ static void release_lmb_if_owned(int owner)
         nox_ctrl_inject_mouse_button(0, 0);
         g_lmb_owner = LMB_OWNER_NONE;
     }
+}
+
+/* Conjurer CreatureCage context menu queries (src/GAME3.c guisumn.c):
+ *  - byte_5D4594[1321032]: CreatureCage root window
+ *  - byte_5D4594[1321036]: CreatureCage 2x2 creature portrait grid (sub_4C2B10)
+ *  - byte_5D4594[1321040]: CreatureCage global order icon button  (sub_4C24B0)
+ *  - byte_5D4594[1321044]: Active creature context menu popup     (sub_4C2560/sub_4C2470) */
+static void *get_creature_ctx_menu(void)
+{
+    return (void *)(uintptr_t)nox_read_u32(&byte_5D4594[1321044]);
+}
+
+static bool is_creature_cage_hit(int x, int y)
+{
+    void *cage_root;
+    void *cage_grid;
+    void *cage_btn;
+
+    if (get_creature_ctx_menu() != NULL)
+        return false;
+    if (nox_read_u32(&byte_5D4594[1064904]) != 0 || sub_477600() != 0)
+        return false;
+
+    cage_btn = (void *)(uintptr_t)nox_read_u32(&byte_5D4594[1321040]);
+    if (cage_btn && !sub_46ACC0((int)(uintptr_t)cage_btn) && sub_46AAB0(cage_btn, x, y))
+        return true;
+
+    cage_root = (void *)(uintptr_t)nox_read_u32(&byte_5D4594[1321032]);
+    cage_grid = (void *)(uintptr_t)nox_read_u32(&byte_5D4594[1321036]);
+    if (cage_root && cage_grid && !sub_46ACC0((int)(uintptr_t)cage_root) && sub_46AAB0(cage_grid, x, y))
+        return true;
+
+    return false;
 }
 
 void nox_3ds_input_init(void)
@@ -495,6 +532,9 @@ void nox_3ds_input_process_hybrid(void)
 
         /* Temporarily lift touch's hold on the mouse to allow Top Screen actions */
         release_lmb_if_owned(LMB_OWNER_TOUCH);
+        if (g_touch_mode == TOUCH_MODE_CTX_MENU) {
+            g_touch_mode = TOUCH_MODE_NONE;
+        }
 
         /* We explicitly DO NOT clear g_touch_mode here. If you are running
            via the touch screen, we want that to continue seamlessly in the background. */
@@ -518,13 +558,40 @@ void nox_3ds_input_process_hybrid(void)
 
         if (g_in.touch_active) {
             nox_ctrl_inject_mouse_abs(g_in.bottom_touch_x, g_in.bottom_touch_y);
-            if (g_lmb_owner != LMB_OWNER_TOUCH) {
+
+            if (g_in.touch_down && world_mode &&
+                is_creature_cage_hit(g_in.bottom_touch_x, g_in.bottom_touch_y)) {
+                /* Drag-and-Release State 1 (Stylus Down):
+                 * Fire Mouse Down + Mouse Up to open the Conjurer creature
+                 * control context menu immediately, then keep LMB up for hover. */
+                g_touch_mode = TOUCH_MODE_CTX_MENU;
+                g_lmb_owner  = LMB_OWNER_NONE;
+                nox_ctrl_inject_mouse_button(0, 1);
+                nox_ctrl_inject_mouse_button(0, 0);
+            } else if (g_touch_mode == TOUCH_MODE_CTX_MENU) {
+                /* Drag-and-Release State 2 (Stylus Drag):
+                 * Keep LMB released while updating cursor X/Y to hover options. */
+                release_lmb_if_owned(LMB_OWNER_TOUCH);
+            } else if (g_lmb_owner != LMB_OWNER_TOUCH) {
                 nox_ctrl_inject_mouse_button(0, 1);
                 g_lmb_owner = LMB_OWNER_TOUCH;
             }
         } else if (g_in.touch_up) {
             nox_ctrl_inject_mouse_abs(g_in.bottom_touch_x, g_in.bottom_touch_y);
-            release_lmb_if_owned(LMB_OWNER_TOUCH);
+
+            if (g_touch_mode == TOUCH_MODE_CTX_MENU) {
+                /* Drag-and-Release State 3 (Stylus Up):
+                 * Synthesize a final Mouse Down + Mouse Up at the release
+                 * coordinates so the PC engine selects the hovered option. */
+                void *ctx_menu = get_creature_ctx_menu();
+                if (ctx_menu && sub_46AAB0(ctx_menu, g_in.bottom_touch_x, g_in.bottom_touch_y)) {
+                    nox_ctrl_inject_mouse_button(0, 1);
+                    nox_ctrl_inject_mouse_button(0, 0);
+                }
+                g_lmb_owner = LMB_OWNER_NONE;
+            } else {
+                release_lmb_if_owned(LMB_OWNER_TOUCH);
+            }
             g_touch_mode = TOUCH_MODE_NONE;
             nox_ctrl_set_touch_move(0, 0, 0);
         } else {
