@@ -40876,16 +40876,35 @@ int __cdecl sub_42EE30(int a1)
         sub_42F200(v6, a1);
         free(v4);
 #ifdef __3DS__
-        v7 = 0x200000;
+        v7 = nox_3ds_get_state()->is_new_3ds ? 0x1000000 : 0x400000;
+        if ( *(_DWORD *)&v9[4] > 0 && (unsigned int)v7 / *(_DWORD *)&v9[4] > *(_DWORD *)&byte_5D4594[787172] )
+          v7 = *(_DWORD *)&v9[4] * *(_DWORD *)&byte_5D4594[787172];
+        result = 0;
+        v8 = 0;
+        while ( *(_DWORD *)&v9[4] > 0 && (unsigned int)v7 >= *(_DWORD *)&v9[4] )
+        {
+          v8 = *(_DWORD *)&v9[4] * (v7 / *(_DWORD *)&v9[4]);
+          *(_DWORD *)&byte_5D4594[787192] = v8 / *(_DWORD *)&v9[4];
+          result = (int)malloc(v8);
+          if ( result )
+            break;
+          if ( v7 <= 0x200000 )
+            break;
+          v7 >>= 1;
+        }
+        *(_DWORD *)&byte_5D4594[787200] = result;
+        if ( result )
+          printf("[3ds] video.bag cache: %d KB (%d slots x %d B)\n",
+                 v8 / 1024, (int)*(_DWORD *)&byte_5D4594[787192], (int)*(_DWORD *)&v9[4]);
 #else
         v7 = 0x800000;
-#endif
         if ( *(_DWORD *)&v9[4] * *(_DWORD *)&byte_5D4594[787172] < v7 )
           v7 = *(_DWORD *)&v9[4] * *(_DWORD *)&byte_5D4594[787172];
         v8 = *(_DWORD *)&v9[4] * (v7 / *(_DWORD *)&v9[4]);
         *(_DWORD *)&byte_5D4594[787192] = v8 / *(_DWORD *)&v9[4];
         result = (int)malloc(v8);
         *(_DWORD *)&byte_5D4594[787200] = result;
+#endif
         if ( result )
         {
           *(_DWORD *)&byte_5D4594[3807164] = &byte_5D4594[754148];
