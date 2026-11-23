@@ -57596,7 +57596,7 @@ int __cdecl sub_49A9B0(int a1)
   v2 = *(_DWORD *)(a1 + 404);
   if ( v2 )
     *(_DWORD *)(v2 + 400) = *(_DWORD *)(a1 + 400);
-  else
+  else if ( *(_DWORD *)(a1 + 396) )
     **(_DWORD **)(a1 + 396) = *(_DWORD *)(a1 + 400);
   v3 = *(_DWORD *)(a1 + 400);
   if ( v3 )

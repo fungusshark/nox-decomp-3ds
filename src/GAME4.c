@@ -9401,6 +9401,7 @@ void __cdecl sub_5017F0(int a1)
 {
   int v1; // eax
   int v2; // esi
+  int v3; // eax
 
   if ( !*(_DWORD *)&byte_5D4594[1570280] )
     *(_DWORD *)&byte_5D4594[1570280] = sub_4E3AA0((CHAR *)&byte_587000[218608]);
@@ -9419,6 +9420,9 @@ void __cdecl sub_5017F0(int a1)
       while ( v2 );
     }
     sub_522FF0(129, (float2 *)(a1 + 56));
+    v3 = *(_DWORD *)(a1 + 748);
+    if ( v3 && (*(_BYTE *)(a1 + 8) & 2) )
+      sub_502490((int *)(v3 + 1264), 0, a1);
     sub_4E5CC0(a1);
   }
 }
@@ -28726,9 +28730,18 @@ void __cdecl sub_517970(int a1)
 {
   sub_517870(a1);
   if ( sub_517590(*(float *)(a1 + 64), *(float *)(a1 + 68)) )
+  {
     sub_517640(a1);
+  }
   else
+  {
+    if ( *(_BYTE *)(a1 + 8) & 4 )
+    {
+      sub_43DE60();
+      return;
+    }
     sub_4E5CC0(a1);
+  }
 }
 
 //----- (005179B0) --------------------------------------------------------
