@@ -1492,8 +1492,8 @@ static void load_3ds_default_mappings(void)
      *  - A / B / X / Y: Permanent Spell/Ability Slots 1-4 (A / S / D / F)
      *  - D-Pad Up:     Spell/Ability Slot 5 (G)
      *  - D-Pad Down:   Jump (Middle Mouse Click)
-     *  - D-Pad Left:   Quick Mana (C)
-     *  - D-Pad Right:  Quick Heal (X)
+     *  - D-Pad Left:   Quick Heal (X)
+     *  - D-Pad Right:  Quick Mana (C)
      *  - Start:        Escape / Pause Menu (ESC)
      *  - Select:       Toggle Minimap (TAB)
      *  - ZL / ZR:      Previous / Next Spell/Ability Page (W / E)
@@ -1510,8 +1510,8 @@ static void load_3ds_default_mappings(void)
     g_layers[0].binds[IN_Y]           = (struct action){ ACT_KEY, SDL_SCANCODE_F };
     g_layers[0].binds[IN_UP]          = (struct action){ ACT_KEY, SDL_SCANCODE_G };
     g_layers[0].binds[IN_DOWN]        = (struct action){ ACT_MOUSE_MIDDLE, 0 };
-    g_layers[0].binds[IN_LEFT]        = (struct action){ ACT_KEY, SDL_SCANCODE_C };
-    g_layers[0].binds[IN_RIGHT]       = (struct action){ ACT_KEY, SDL_SCANCODE_X };
+    g_layers[0].binds[IN_LEFT]        = (struct action){ ACT_KEY, SDL_SCANCODE_X };
+    g_layers[0].binds[IN_RIGHT]       = (struct action){ ACT_KEY, SDL_SCANCODE_C };
     g_layers[0].binds[IN_START]       = (struct action){ ACT_KEY, SDL_SCANCODE_ESCAPE };
     g_layers[0].binds[IN_SELECT]      = (struct action){ ACT_KEY, SDL_SCANCODE_TAB };
     g_layers[0].binds[IN_L2]          = (struct action){ ACT_KEY, SDL_SCANCODE_W };
