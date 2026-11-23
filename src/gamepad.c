@@ -1490,8 +1490,8 @@ static void load_3ds_default_mappings(void)
      *  - Circle Pad:   360 deg hero walk/run movement in gameplay
      *  - Touch (Bot):  100% of menu, inventory, spellbook, weapon swap & HUD tapping (input_3ds.c)
      *  - A / B / X / Y: Permanent Spell/Ability Slots 1-4 (A / S / D / F)
-     *  - D-Pad Up:     Spell/Ability Slot 5 (G)
-     *  - D-Pad Down:   Jump (Middle Mouse Click)
+     *  - D-Pad Up:     Jump (Middle Mouse Click)
+     *  - D-Pad Down:   Spell/Ability Slot 5 (G)
      *  - D-Pad Left:   Quick Heal (X)
      *  - D-Pad Right:  Quick Mana (C)
      *  - Start:        Escape / Pause Menu (ESC)
@@ -1508,8 +1508,8 @@ static void load_3ds_default_mappings(void)
     g_layers[0].binds[IN_B]           = (struct action){ ACT_KEY, SDL_SCANCODE_S };
     g_layers[0].binds[IN_X]           = (struct action){ ACT_KEY, SDL_SCANCODE_D };
     g_layers[0].binds[IN_Y]           = (struct action){ ACT_KEY, SDL_SCANCODE_F };
-    g_layers[0].binds[IN_UP]          = (struct action){ ACT_KEY, SDL_SCANCODE_G };
-    g_layers[0].binds[IN_DOWN]        = (struct action){ ACT_MOUSE_MIDDLE, 0 };
+    g_layers[0].binds[IN_DOWN]        = (struct action){ ACT_KEY, SDL_SCANCODE_G };
+    g_layers[0].binds[IN_UP]          = (struct action){ ACT_MOUSE_MIDDLE, 0 };
     g_layers[0].binds[IN_LEFT]        = (struct action){ ACT_KEY, SDL_SCANCODE_X };
     g_layers[0].binds[IN_RIGHT]       = (struct action){ ACT_KEY, SDL_SCANCODE_C };
     g_layers[0].binds[IN_START]       = (struct action){ ACT_KEY, SDL_SCANCODE_ESCAPE };
