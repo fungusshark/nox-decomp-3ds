@@ -6,6 +6,7 @@
 int _nox_wcsicmp(const wchar_t *string1, const wchar_t *string2);
 int WINAPIV nox_wsprintfA(LPSTR lpBuffer, LPCSTR lpFmt, ...);
 wchar_t *nox_wcscat(wchar_t *dest, const wchar_t *src);
+wchar_t *nox_wcsncat(wchar_t *dest, const wchar_t *src, size_t n);
 wchar_t *nox_wcschr(wchar_t *nox_wcs, wchar_t wc);
 int nox_wcscmp(const wchar_t *s1, const wchar_t *s2);
 wchar_t *nox_wcscpy(wchar_t *dest, const wchar_t *src);
@@ -27,6 +28,16 @@ static int __cdecl nox_swprintf(wchar_t *str, const wchar_t *fmt, ...)
 	va_list ap;
     va_start(ap, fmt);
 	len = nox_vsnwprintf(str, 0x3fffffff, fmt, ap);
+    va_end(ap);
+    return len;
+}
+
+static int __cdecl nox_snwprintf(wchar_t *str, size_t count, const wchar_t *fmt, ...)
+{
+    int len;
+	va_list ap;
+    va_start(ap, fmt);
+	len = nox_vsnwprintf(str, count, fmt, ap);
     va_end(ap);
     return len;
 }

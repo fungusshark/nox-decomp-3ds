@@ -34044,23 +34044,27 @@ int __cdecl sub_51DF90(int a1)
 //----- (0051E010) --------------------------------------------------------
 int __cdecl sub_51E010(char *a1, int a2)
 {
-  char *v2; // edi
-  unsigned __int8 v3; // cl
   int result; // eax
   int v5; // esi
-  int v6; // ecx
+  size_t v6; // ecx
   int v7; // [esp+10h] [ebp-804h]
   char v8[1024]; // [esp+14h] [ebp-800h]
   char Mem[1024]; // [esp+414h] [ebp-400h]
 
   v7 = -86050098;
-  strcpy(Mem, a1);
-  v8[0] = byte_5D4594[2487260];
-  strncat(v8, a1, strlen(a1) - 4);
-  v2 = &v8[strlen(v8) + 1];
-  v3 = byte_587000[253116];
-  *(_DWORD *)--v2 = *(_DWORD *)&byte_587000[253112];
-  v2[4] = v3;
+  strncpy(Mem, a1, sizeof(Mem) - 1);
+  Mem[sizeof(Mem) - 1] = 0;
+  v8[0] = 0;
+  v6 = strlen(a1);
+  if ( v6 > 4 )
+  {
+    v6 -= 4;
+    if ( v6 > sizeof(v8) - 5 )
+      v6 = sizeof(v8) - 5;
+    memcpy(v8, a1, v6);
+    v8[v6] = 0;
+  }
+  strncat(v8, (const char *)&byte_587000[253112], sizeof(v8) - 1 - strlen(v8));
   result = sub_426910(Mem, 0, 19);
   if ( result )
   {

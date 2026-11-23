@@ -1006,8 +1006,11 @@ LABEL_17:
       if ( (int)*v12 < 0 )
       {
 LABEL_24:
-        v12[v13] = v10;
-        *(_DWORD *)(*(_DWORD *)(v5 + 48) + 4 * v13 + 4) = -1;
+        if ( v13 < (int)*(unsigned __int16 *)v5 )
+        {
+          v12[v13] = v10;
+          *(_DWORD *)(*(_DWORD *)(v5 + 48) + 4 * v13 + 4) = -1;
+        }
         sub_46B490(*(_DWORD *)(v4 + 52), 16400, v4, v10);
         result = 1;
       }
@@ -1102,10 +1105,19 @@ LABEL_32:
 __int16 *__cdecl sub_4A3090(__int16 *a1, int a2)
 {
   __int16 *result; // eax
+  int v2; // ecx
 
   result = a1;
-  qmemcpy((void *)(*((_DWORD *)a1 + 12) + 4 * a2), (const void *)(*((_DWORD *)a1 + 12) + 4 * a2 + 4), 4 * (*a1 - a2));
-  *(_DWORD *)(*((_DWORD *)a1 + 12) + 4 * *a1 - 4) = -1;
+  v2 = (unsigned __int16)*a1;
+  if ( a2 >= 0 && a2 < v2 )
+  {
+    if ( v2 - a2 - 1 > 0 )
+      memmove(
+        (void *)(*((_DWORD *)a1 + 12) + 4 * a2),
+        (const void *)(*((_DWORD *)a1 + 12) + 4 * a2 + 4),
+        4 * (v2 - a2 - 1));
+    *(_DWORD *)(*((_DWORD *)a1 + 12) + 4 * v2 - 4) = -1;
+  }
   return result;
 }
 
@@ -1163,7 +1175,7 @@ int __cdecl sub_4A30D0(int a1, unsigned int a2, wchar_t *a3, int a4)
     switch ( a2 )
     {
       case 0x4013u:
-        if ( (int)a3 < 0 )
+        if ( (int)a3 < 0 || (int)a3 >= (int)(unsigned __int16)*v5 )
         {
           if ( *((_DWORD *)v5 + 4) )
             goto LABEL_117;
@@ -1200,7 +1212,7 @@ int __cdecl sub_4A30D0(int a1, unsigned int a2, wchar_t *a3, int a4)
       case 0x4014u:
         return *((_DWORD *)v5 + 12);
       case 0x4015u:
-        if ( (int)a3 >= 0 )
+        if ( (int)a3 >= 0 && (int)a3 < (int)(unsigned __int16)*v5 )
         {
           if ( !*(_WORD *)(*((_DWORD *)v5 + 6) + 524 * (_DWORD)a3 + 4) || !*((_DWORD *)v5 + 4) )
             return 0;
@@ -1210,8 +1222,11 @@ int __cdecl sub_4A30D0(int a1, unsigned int a2, wchar_t *a3, int a4)
           if ( (int)*v33 < 0 )
           {
 LABEL_113:
-            v33[v34] = a3;
-            *(_DWORD *)(*((_DWORD *)v5 + 12) + 4 * v34 + 4) = -1;
+            if ( v34 < (int)(unsigned __int16)*v5 )
+            {
+              v33[v34] = a3;
+              *(_DWORD *)(*((_DWORD *)v5 + 12) + 4 * v34 + 4) = -1;
+            }
             return 0;
           }
           v36 = *((_DWORD *)v5 + 12);
@@ -1231,15 +1246,19 @@ LABEL_113:
           if ( !*((_DWORD *)v5 + 4) )
             return 0;
 LABEL_117:
-          memset(*((void **)v5 + 12), 0xFFu, 4 * *v5);
+          memset(*((void **)v5 + 12), 0xFFu, 4 * ((int)(unsigned __int16)*v5 + 1));
           result = 0;
         }
         break;
       case 0x4016u:
+        if ( (int)a3 < 0 || (int)a3 >= (int)(unsigned __int16)*v5 )
+          return 0;
         return *((_DWORD *)v5 + 6) + 524 * (_DWORD)a3 + 4;
       case 0x4017u:
+        if ( a4 < 0 || a4 >= (int)(unsigned __int16)*v5 )
+          return 0;
         nox_wcsncpy((wchar_t *)(*((_DWORD *)v5 + 6) + 524 * a4 + 4), a3, 0xFFu);
-        *(_WORD *)(*((_DWORD *)v5 + 6) + 2 * (nox_wcslen(a3) + 262 * a4) + 4) = 0;
+        *(_WORD *)(*((_DWORD *)v5 + 6) + 524 * a4 + 514) = 0;
         return 0;
       case 0x4018u:
         *((_DWORD *)v5 + 7) = a3;
@@ -1252,7 +1271,7 @@ LABEL_117:
         return 0;
       case 0x401Bu:
         v40 = v5[22];
-        if ( v40 < (int)a3 )
+        if ( (int)a3 < 0 || v40 < (int)a3 )
           return 0;
         memmove(
           *((void **)v5 + 6),
@@ -1290,7 +1309,7 @@ LABEL_117:
         sub_4A3A70(a1);
         return 1;
       case 0x401Cu:
-        if ( a3 )
+        if ( (int)a3 - 1 >= 0 && (int)a3 - 1 < (int)(unsigned __int16)*v5 )
           v5[27] = *(_WORD *)(*((_DWORD *)v5 + 6) + 524 * (_DWORD)a3 - 524) + 1;
         else
           v5[27] = 0;
@@ -1339,11 +1358,13 @@ LABEL_117:
         sub_4A2D10(a1, 0, 0);
         return 0;
       case 0x400Du:
+        if ( !(unsigned __int16)*v5 )
+          return 0;
         v18 = v5[23];
         v19 = v5[22];
         if ( v18 != v19 )
         {
-          if ( v19 < *v5 )
+          if ( v19 < (int)(unsigned __int16)*v5 )
           {
             v20 = v19 - 1;
             if ( v20 < v18 )
@@ -1384,7 +1405,7 @@ LABEL_65:
           }
           return 0;
         }
-        if ( v18 >= *v5 )
+        if ( v18 >= (int)(unsigned __int16)*v5 )
         {
           if ( !*((_DWORD *)v5 + 2) )
             return 0;
@@ -1426,13 +1447,15 @@ LABEL_67:
         return 1;
       case 0x400Eu:
         v12 = v5[22];
-        if ( v12 <= (int)a3 )
+        if ( (int)a3 < 0 || (int)a3 >= v12 )
           return 0;
-        qmemcpy(
-          (void *)(*((_DWORD *)v5 + 6) + 524 * (_DWORD)a3),
-          (const void *)(*((_DWORD *)v5 + 6) + 524 * ((_DWORD)a3 + 1)),
-          4 * ((unsigned int)(524 * (v12 - (_DWORD)a3 - 1)) >> 2));
+        if ( v12 - (int)a3 - 1 > 0 )
+          memmove(
+            (void *)(*((_DWORD *)v5 + 6) + 524 * (_DWORD)a3),
+            (const void *)(*((_DWORD *)v5 + 6) + 524 * ((_DWORD)a3 + 1)),
+            524u * (unsigned int)(v12 - (_DWORD)a3 - 1));
         v13 = --v5[22];
+        memset((void *)(*((_DWORD *)v5 + 6) + 524 * v13), 0, 524u);
         v5[23] = v13;
         *(_WORD *)(*((_DWORD *)v5 + 6) + 524 * v13 + 4) = 0;
         if ( *((_DWORD *)v5 + 4) )
@@ -1476,11 +1499,11 @@ LABEL_67:
         sub_4A3A70(a1);
         return 0;
       case 0x400Fu:
-        memset(*((void **)v5 + 6), 0, 524 * *v5);
+        memset(*((void **)v5 + 6), 0, 524 * (int)(unsigned __int16)*v5);
         if ( a3 != (wchar_t *)1 )
           v5[27] = 0;
         if ( *((_DWORD *)v5 + 4) )
-          memset(*((void **)v5 + 12), 0xFFu, 4 * *v5);
+          memset(*((void **)v5 + 12), 0xFFu, 4 * ((int)(unsigned __int16)*v5 + 1));
         else
           *((_DWORD *)v5 + 12) = -1;
         v5[23] = 0;
@@ -1514,7 +1537,7 @@ LABEL_67:
     if ( a2 == 16385 )
     {
       nox_wcsncpy((wchar_t *)(a1 + 108), a3, 0x3Fu);
-      *(_WORD *)(a1 + 2 * nox_wcslen(a3) + 108) = 0;
+      *(_WORD *)(a1 + 234) = 0;
       return 0;
     }
     if ( a2 == 16388 )
@@ -1635,9 +1658,12 @@ int __cdecl sub_4A3AC0(wchar_t *a1, int a2, _DWORD *a3)
   {
     nox_wcsncpy(v6, a1, 0xFFu);
     v6[255] = 0;
-    v7 = &v6[nox_wcslen(v6) - 1];
-    if ( *v7 == 10 )
-      *v7 = 0;
+    if ( v6[0] )
+    {
+      v7 = &v6[nox_wcslen(v6) - 1];
+      if ( *v7 == 10 )
+        *v7 = 0;
+    }
   }
   else
   {
@@ -1751,7 +1777,12 @@ LABEL_13:
     sub_434460(v6);
     sub_49CC70(xLeft, yTop, v22, v4);
   }
-  sub_49F6F0(xLeft, yTop, v22, v4);
+  if ( !sub_49F6F0(xLeft, yTop, v22, v4) )
+  {
+    sub_49F860();
+    sub_43F670(0);
+    return 1;
+  }
   v7 = *(__int16 *)(v2 + 54);
   v8 = yTop - v7;
   v21 = yTop - v7;
@@ -1762,7 +1793,8 @@ LABEL_13:
     for ( i = 0; ; i = v9 )
     {
       if ( v9 > 0 && *(_DWORD *)(*(_DWORD *)(v2 + 24) + v9 - 524) > *(__int16 *)(v2 + 54) + *(__int16 *)(v2 + 52)
-        || v24 == *(__int16 *)(v2 + 44) )
+        || v24 >= *(__int16 *)(v2 + 44)
+        || v24 >= (int)*(unsigned __int16 *)v2 )
       {
         break;
       }
@@ -1807,7 +1839,8 @@ LABEL_32:
       sub_434390(*(_DWORD *)(*(_DWORD *)(v2 + 24) + v9 + 516));
       if ( (a1[1] & 0x4000) == 0x4000 )
       {
-        nox_wcscpy((wchar_t *)v30, (const wchar_t *)(*(_DWORD *)(v2 + 24) + v9 + 4));
+        nox_wcsncpy((wchar_t *)v30, (const wchar_t *)(*(_DWORD *)(v2 + 24) + v9 + 4), 0xFFu);
+        v30[255] = 0;
         v15 = &v30[nox_wcslen((const wchar_t *)v30)];
         v16 = v22 - 7;
         do
@@ -1817,7 +1850,7 @@ LABEL_32:
           --v15;
           sub_43F840(v17, (unsigned __int16 *)v30, &v29, 0, 0);
         }
-        while ( v29 > v16 );
+        while ( v29 > v16 && v15 >= v30 );
         sub_43FAF0(*(_DWORD *)(a2 + 200), v30, xLeft + 5, v21 + 2, v16, v27);
         v9 = i;
         v12 = v27;
@@ -1903,7 +1936,12 @@ int __cdecl sub_4A3FC0(_DWORD *a1, int a2)
     sub_434460(v28);
     sub_49CC70(xLeft, yTop, v22, v4);
   }
-  sub_49F6F0(xLeft, yTop, v22, v4);
+  if ( !sub_49F6F0(xLeft, yTop, v22, v4) )
+  {
+    sub_49F860();
+    sub_43F670(0);
+    return 1;
+  }
   v7 = *(__int16 *)(v3 + 54);
   v8 = *(_DWORD *)(a2 + 68);
   v9 = yTop - v7;
@@ -1915,7 +1953,8 @@ int __cdecl sub_4A3FC0(_DWORD *a1, int a2)
     for ( i = 0; ; i = v10 )
     {
       if ( v10 > 0 && *(_DWORD *)(*(_DWORD *)(v3 + 24) + v10 - 524) > *(__int16 *)(v3 + 54) + *(__int16 *)(v3 + 52)
-        || v26 == *(__int16 *)(v3 + 44) )
+        || v26 >= *(__int16 *)(v3 + 44)
+        || v26 >= (int)*(unsigned __int16 *)v3 )
       {
         break;
       }
@@ -1960,7 +1999,8 @@ LABEL_29:
       sub_434390(*(_DWORD *)(v10 + *(_DWORD *)(v3 + 24) + 516));
       if ( (a1[1] & 0x4000) == 0x4000 )
       {
-        nox_wcscpy((wchar_t *)v30, (const wchar_t *)(v10 + *(_DWORD *)(v3 + 24) + 4));
+        nox_wcsncpy((wchar_t *)v30, (const wchar_t *)(v10 + *(_DWORD *)(v3 + 24) + 4), 0xFFu);
+        v30[255] = 0;
         v16 = &v30[nox_wcslen((const wchar_t *)v30)];
         v17 = v22 - 7;
         do
@@ -1970,7 +2010,7 @@ LABEL_29:
           --v16;
           sub_43F840(v18, (unsigned __int16 *)v30, &v29, 0, 0);
         }
-        while ( v29 > v17 );
+        while ( v29 > v17 && v16 >= v30 );
         sub_43FAF0(*(_DWORD *)(a2 + 200), v30, xLeft + 5, v25 + 2, v17, v28);
         v10 = i;
         v13 = v28;
@@ -2028,11 +2068,10 @@ _DWORD *__cdecl sub_4A4310(int a1, int a2, int a3, int a4, int a5, int a6, int a
     if ( !*(_DWORD *)(a7 + 16) )
       *(_DWORD *)(a7 + 16) = v8;
     sub_46AF80((int)v8, (const void *)a7);
-    v9 = malloc(524 * *a8);
+    v9 = calloc((unsigned __int16)*a8 ? (unsigned __int16)*a8 : 1u, 524u);
     *((_DWORD *)a8 + 6) = v9;
     if ( !v9 )
       return 0;
-    memset(v9, 0, 524 * *a8);
     v10 = a6;
     a8[26] = a6;
     if ( v21 )
@@ -2045,14 +2084,14 @@ _DWORD *__cdecl sub_4A4310(int a1, int a2, int a3, int a4, int a5, int a6, int a
     *((_DWORD *)a8 + 10) = 0;
     if ( v11 )
     {
-      v12 = malloc(4 * *a8);
+      v12 = calloc((unsigned int)(unsigned __int16)*a8 + 1u, 4u);
       *((_DWORD *)a8 + 12) = v12;
       if ( !v12 )
       {
         free(*((LPVOID *)a8 + 6));
         return 0;
       }
-      memset(v12, 0xFFu, 4 * *a8);
+      memset(v12, 0xFFu, 4 * ((int)(unsigned __int16)*a8 + 1));
       v10 = a6;
     }
     if ( *((_DWORD *)a8 + 3) )
@@ -7263,18 +7302,28 @@ void __cdecl sub_4AB7C0(unsigned __int16 a1, void *a2, size_t a3)
 int __cdecl sub_4AB9B0(char *a1)
 {
   int result; // eax
+  size_t v2; // ecx
   CHAR FileName[256]; // [esp+8h] [ebp-100h]
 
   if ( strchr(a1, 92) )
   {
-    strcpy(FileName, a1);
+    strncpy(FileName, a1, sizeof(FileName) - 1);
+    FileName[sizeof(FileName) - 1] = 0;
   }
   else
   {
-    strcpy(FileName, "maps\\");
-    strncat(FileName, a1, strlen(a1) - 4);
-    *(_WORD *)&FileName[strlen(FileName)] = *(_WORD *)&byte_587000[173348];
-    strcat(FileName, a1);
+    memcpy(FileName, "maps\\", 6u);
+    v2 = strlen(a1);
+    if ( v2 > 4 )
+    {
+      v2 -= 4;
+      if ( v2 > sizeof(FileName) - 7 )
+        v2 = sizeof(FileName) - 7;
+      memcpy(FileName + 5, a1, v2);
+      FileName[5 + v2] = 0;
+    }
+    strncat(FileName, (const char *)&byte_587000[173348], sizeof(FileName) - 1 - strlen(FileName));
+    strncat(FileName, a1, sizeof(FileName) - 1 - strlen(FileName));
   }
   result = _access(FileName, 0);
   if ( result != -1 )
@@ -33369,6 +33418,7 @@ void sub_4CF460()
 int __cdecl sub_4CF470(char *a1, int a2)
 {
   int v2; // ebx
+  size_t v6; // ecx
   int v4; // [esp+8h] [ebp-408h]
   int v5; // [esp+Ch] [ebp-404h]
   CHAR FileName[1024]; // [esp+10h] [ebp-400h]
@@ -33380,14 +33430,23 @@ int __cdecl sub_4CF470(char *a1, int a2)
   {
     if ( strchr(a1, 92) )
     {
-      strcpy(FileName, a1);
+      strncpy(FileName, a1, sizeof(FileName) - 1);
+      FileName[sizeof(FileName) - 1] = 0;
     }
     else
     {
-      strcpy(FileName, "maps\\");
-      strncat(FileName, a1, strlen(a1) - 4);
-      *(_WORD *)&FileName[strlen(FileName)] = *(_WORD *)&byte_587000[191672];
-      strcat(FileName, a1);
+      memcpy(FileName, "maps\\", 6u);
+      v6 = strlen(a1);
+      if ( v6 > 4 )
+      {
+        v6 -= 4;
+        if ( v6 > sizeof(FileName) - 7 )
+          v6 = sizeof(FileName) - 7;
+        memcpy(FileName + 5, a1, v6);
+        FileName[5 + v6] = 0;
+      }
+      strncat(FileName, (const char *)&byte_587000[191672], sizeof(FileName) - 1 - strlen(FileName));
+      strncat(FileName, a1, sizeof(FileName) - 1 - strlen(FileName));
     }
     if ( _access(FileName, 0) != -1 )
     {
@@ -33422,6 +33481,7 @@ int __cdecl sub_4CF5F0(char *a1, int a2)
   int v7; // esi
   char *v8; // eax
   int v9; // eax
+  size_t v17; // ecx
   int v10; // [esp+Ch] [ebp-65Ch]
   int v11; // [esp+10h] [ebp-658h]
   char v12[20]; // [esp+14h] [ebp-654h]
@@ -33450,12 +33510,13 @@ int __cdecl sub_4CF5F0(char *a1, int a2)
     {
       v3 = sub_409E10();
       sub_4D39F0(v3);
-      strcpy(v13, a1 + 1);
+      strncpy(v13, a1 + 1, sizeof(v13) - 1);
+      v13[sizeof(v13) - 1] = 0;
       v4 = strchr(v13, 46);
       if ( v4 )
         *v4 = 0;
       sub_4D42E0(v13);
-      nox_sprintf(v12, (const char *)&byte_587000[191684], v13);
+      nox_snprintf(v12, sizeof(v12), (const char *)&byte_587000[191684], v13);
       sub_409D70(v12);
       if ( !sub_4D4320() )
       {
@@ -33475,14 +33536,23 @@ int __cdecl sub_4CF5F0(char *a1, int a2)
   }
   if ( strchr(v2, 92) )
   {
-    strcpy(FileName, v2);
+    strncpy(FileName, v2, sizeof(FileName) - 1);
+    FileName[sizeof(FileName) - 1] = 0;
   }
   else
   {
-    strcpy(FileName, "maps\\");
-    strncat(FileName, v2, strlen(v2) - 4);
-    *(_WORD *)&FileName[strlen(FileName)] = *(_WORD *)&byte_587000[191700];
-    strcat(FileName, v2);
+    memcpy(FileName, "maps\\", 6u);
+    v17 = strlen(v2);
+    if ( v17 > 4 )
+    {
+      v17 -= 4;
+      if ( v17 > sizeof(FileName) - 7 )
+        v17 = sizeof(FileName) - 7;
+      memcpy(FileName + 5, v2, v17);
+      FileName[5 + v17] = 0;
+    }
+    strncat(FileName, (const char *)&byte_587000[191700], sizeof(FileName) - 1 - strlen(FileName));
+    strncat(FileName, v2, sizeof(FileName) - 1 - strlen(FileName));
   }
   if ( _access(FileName, 0) == -1 )
   {
@@ -33490,9 +33560,11 @@ int __cdecl sub_4CF5F0(char *a1, int a2)
     if ( v6 )
     {
       v7 = v6 - FileName;
-      strncpy(v16, FileName, v6 - FileName);
+      if ( v7 >= (int)sizeof(v16) )
+        v7 = sizeof(v16) - 1;
+      strncpy(v16, FileName, v7);
       v16[v7] = 0;
-      nox_sprintf(v15, (const char *)&byte_587000[191712], v16, &byte_587000[191704]);
+      nox_snprintf(v15, sizeof(v15), (const char *)&byte_587000[191712], v16, &byte_587000[191704]);
       if ( _access(v15, 0) == -1 )
       {
 #ifdef __3DS__
@@ -33538,9 +33610,11 @@ int __cdecl sub_4CF5F0(char *a1, int a2)
       if ( v6 )
       {
         v7 = v6 - FileName;
-        strncpy(v16, FileName, v6 - FileName);
+        if ( v7 >= (int)sizeof(v16) )
+          v7 = sizeof(v16) - 1;
+        strncpy(v16, FileName, v7);
         v16[v7] = 0;
-        nox_sprintf(v15, (const char *)&byte_587000[191712], v16, &byte_587000[191704]);
+        nox_snprintf(v15, sizeof(v15), (const char *)&byte_587000[191712], v16, &byte_587000[191704]);
         if ( _access(v15, 0) != -1 && sub_57BC50(v15, FileName) )
         {
           v9 = a2 ? sub_426910(FileName, 1, -1) : sub_426910(FileName, 1, 19);
@@ -34188,19 +34262,14 @@ int __cdecl sub_4D0550(char *a1)
   int result; // eax
   unsigned int v2; // kr08_4
   char v3; // cl
-  int v4; // edx
-  unsigned __int8 v5; // al
-  char *v6; // edi
-  char *v7; // edi
-  unsigned __int8 v8; // cl
   unsigned __int8 v9; // [esp+4h] [ebp-104h]
   char v10[256]; // [esp+8h] [ebp-100h]
 
   result = 0;
   if ( a1 )
   {
-    v10[0] = 0;
-    strncat(v10, a1, strlen(a1));
+    strncpy(v10, a1, sizeof(v10) - 9);
+    v10[sizeof(v10) - 9] = 0;
     v2 = strlen(v10) + 1;
     v3 = v2 - 1;
     v9 = v2 - 1;
@@ -34215,20 +34284,20 @@ int __cdecl sub_4D0550(char *a1)
       v10[v9 + 1] = 0;
     }
 LABEL_7:
-    v4 = *(_DWORD *)&byte_587000[191752];
-    v5 = byte_587000[191756];
-    v6 = &v10[strlen(v10)];
-    *(_DWORD *)v6 = *(_DWORD *)&byte_587000[191748];
-    *((_DWORD *)v6 + 1) = v4;
-    v6[8] = v5;
+    strncat(v10, (const char *)&byte_587000[191748], sizeof(v10) - 1 - strlen(v10));
     if ( !sub_4D0670(v10) )
     {
       v10[0] = 0;
-      strncat(v10, a1, strlen(a1) - 4);
-      v7 = &v10[strlen(v10) + 1];
-      v8 = byte_587000[191764];
-      *(_DWORD *)--v7 = *(_DWORD *)&byte_587000[191760];
-      v7[4] = v8;
+      v2 = strlen(a1);
+      if ( v2 > 4 )
+      {
+        v2 -= 4;
+        if ( v2 > sizeof(v10) - 5 )
+          v2 = sizeof(v10) - 5;
+        memcpy(v10, a1, v2);
+        v10[v2] = 0;
+      }
+      strncat(v10, (const char *)&byte_587000[191760], sizeof(v10) - 1 - strlen(v10));
       sub_4D0670(v10);
     }
     if ( sub_43AF70() == 1 )
@@ -35855,23 +35924,37 @@ int sub_4D23C0()
 char *__cdecl sub_4D2450(char *a1)
 {
   char *v1; // eax
+  size_t v6; // ecx
   char v3[1024]; // [esp+4h] [ebp-DB8h]
   char v4[1024]; // [esp+404h] [ebp-9B8h]
   char v5[1464]; // [esp+804h] [ebp-5B8h]
 
   qmemcpy(v5, &byte_5D4594[3801836], sizeof(v5));
-  strncpy(v4, a1, strlen(a1) - 4);
-  v4[strlen(a1)-4] = 0;
+  v6 = strlen(a1);
+  if ( v6 > 4 )
+  {
+    v6 -= 4;
+    if ( v6 >= sizeof(v4) )
+      v6 = sizeof(v4) - 1;
+    strncpy(v4, a1, v6);
+    v4[v6] = 0;
+  }
+  else
+  {
+    v4[0] = 0;
+  }
   sub_4CFE10(v4);
   sub_4CFDF0(*(int *)&byte_5D4594[3803228]);
   qmemcpy(&byte_5D4594[3801836], v5, 0x5B8u);
   *(_DWORD *)&byte_5D4594[1548524] = 1;
-  strcpy(v3, a1);
+  strncpy(v3, a1, sizeof(v3) - 1);
+  v3[sizeof(v3) - 1] = 0;
   v1 = strchr(v3, 58);
   if ( v1 )
   {
     *v1 = 0;
-    strcpy((char *)&byte_5D4594[1548536], v1 + 1);
+    strncpy((char *)&byte_5D4594[1548536], v1 + 1, 127u);
+    byte_5D4594[1548663] = 0;
     *(_DWORD *)&byte_5D4594[1548664] = 1;
   }
   else

@@ -15816,12 +15816,24 @@ BOOL __cdecl sub_57A620(unsigned __int8 a1, const wchar_t **a2, int a3, int a4)
 //----- (0057A950) --------------------------------------------------------
 int __cdecl sub_57A950(char *a1)
 {
+  size_t v1; // ecx
   char v2[256]; // [esp+Ch] [ebp-100h]
 
-  strcpy(v2, "maps\\");
-  strncat(v2, a1, strlen(a1) - 4);
-  *(_WORD *)&v2[strlen(v2)] = *(_WORD *)&byte_587000[312564];
-  strcat(v2, a1);
+  memcpy(v2, "maps\\", 6u);
+  if ( a1 )
+  {
+    v1 = strlen(a1);
+    if ( v1 > 4 )
+    {
+      v1 -= 4;
+      if ( v1 > sizeof(v2) - 7 )
+        v1 = sizeof(v2) - 7;
+      memcpy(v2 + 5, a1, v1);
+      v2[5 + v1] = 0;
+    }
+    strncat(v2, (const char *)&byte_587000[312564], sizeof(v2) - 1 - strlen(v2));
+    strncat(v2, a1, sizeof(v2) - 1 - strlen(v2));
+  }
   return sub_4D0550(v2);
 }
 

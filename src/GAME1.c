@@ -8519,6 +8519,10 @@ char *__cdecl sub_409D70(char *a1)
     if ( v2 )
     {
       v3 = strlen(v2 + 1) - 4;
+      if ( v3 < 0 )
+        v3 = 0;
+      if ( v3 > 79 )
+        v3 = 79;
       result = strncpy((char *)&byte_5D4594[2649740], v2 + 1, v3);
     }
     else
@@ -8526,6 +8530,8 @@ char *__cdecl sub_409D70(char *a1)
       v3 = strlen((const char *)&byte_5D4594[2598188]) - 4;
       if ( v3 < 0 )
         v3 = 0;
+      if ( v3 > 79 )
+        v3 = 79;
       result = strncpy((char *)&byte_5D4594[2649740], (const char *)&byte_5D4594[2598188], v3);
     }
     byte_5D4594[v3 + 2649740] = 0;
@@ -20216,16 +20222,18 @@ int sub_4161E0()
   }
   strncpy(v14, (const char *)&byte_5D4594[371389], 0xFu);
   v14[15] = 0;
-  if ( strcmp(v14, sub_40A4C0()) )
+  if ( strncmp(v14, sub_40A4C0(), 0xFu) )
   {
     v5 = sub_40A4C0();
     strncpy((char *)&byte_5D4594[371389], v5, 0xFu);
     *(_DWORD *)&byte_5D4594[371692] = 1;
   }
-  strcpy(v13, (const char *)&byte_5D4594[371380]);
-  if ( strcmp(v13, sub_409B40()) )
+  strncpy(v13, (const char *)&byte_5D4594[371380], 8u);
+  v13[8] = 0;
+  if ( strncmp(v13, sub_409B40(), 8u) )
   {
-    strcpy((char *)&byte_5D4594[371380], sub_409B40());
+    strncpy((char *)&byte_5D4594[371380], sub_409B40(), 8u);
+    byte_5D4594[371388] = 0;
     *(_DWORD *)&byte_5D4594[371692] = 1;
   }
   v6 = 0;
@@ -55336,7 +55344,7 @@ int __cdecl sub_441910(int a1, char a2, int a3)
     return 1;
   if ( a2 != 2 )
     return 0;
-  nox_sprintf(&v11[4], (const char *)&byte_587000[103328], *(_DWORD *)(a3 + 4));
+  nox_snprintf(&v11[4], sizeof(v11) - 4, (const char *)&byte_587000[103328], *(_DWORD *)(a3 + 4));
   if ( v11[4] != 35 && !sub_4CFE10(&v11[4]) )
     return 1;
   v4 = sub_4CFFA0((int)&byte_5D4594[3801836]);
@@ -55365,7 +55373,8 @@ LABEL_16:
     v7 = strlen(&v11[4]) + 1;
     if ( (int)(v7 - 1) <= 4 || _strcmpi(&v11[v7 - 1], (const char *)&byte_587000[103392]) )
     {
-      strcpy((char *)&byte_5D4594[822324], &v11[4]);
+      strncpy((char *)&byte_5D4594[822324], &v11[4], 75u);
+      byte_5D4594[822399] = 0;
       v8 = (char *)&byte_5D4594[822324];
       strcat((char *)&byte_5D4594[822324], ".map");
     }
@@ -55373,13 +55382,28 @@ LABEL_16:
     {
       v8 = &v11[4];
     }
-    if ( !v8
-      || *v8 != 35
-      && (strcpy(FileName, "maps\\"),
-          strncat(FileName, v8, strlen(v8) - 4),
-          *(_WORD *)&FileName[strlen(FileName)] = *(_WORD *)&byte_587000[103416],
-          strcat(FileName, v8),
-          _stat(FileName, (int)&v12)) )
+    v4 = 0;
+    if ( !v8 )
+    {
+      v4 = 1;
+    }
+    else if ( *v8 != 35 )
+    {
+      memcpy(FileName, "maps\\", 6u);
+      v7 = strlen(v8);
+      if ( v7 > 4 )
+      {
+        v7 -= 4;
+        if ( v7 > sizeof(FileName) - 7 )
+          v7 = sizeof(FileName) - 7;
+        memcpy(FileName + 5, v8, v7);
+        FileName[5 + v7] = 0;
+      }
+      strncat(FileName, (const char *)&byte_587000[103416], sizeof(FileName) - 1 - strlen(FileName));
+      strncat(FileName, v8, sizeof(FileName) - 1 - strlen(FileName));
+      v4 = _stat(FileName, (int)&v12) != 0;
+    }
+    if ( v4 )
     {
       v10 = v8;
       v9 = sub_40F1D0((char *)&byte_587000[103512], 0, (const char *)&byte_587000[103472], 2076);
@@ -59847,7 +59871,7 @@ int __cdecl sub_447CC0(int a1, unsigned int a2, int *a3, int a4)
       case 0x4010u:
         if ( sub_46B0A0(a3) != 1908 )
           return 0;
-        if ( !*(_WORD *)sub_46B490((int)a3, 16406, a4, 0) )
+        if ( a4 < 0 || !sub_46B490((int)a3, 16406, a4, 0) || !*(_WORD *)sub_46B490((int)a3, 16406, a4, 0) )
           goto LABEL_23;
         v5 = (const wchar_t *)sub_41EC00();
         v6 = (const wchar_t *)sub_41F1E0(a4);
@@ -60319,7 +60343,8 @@ int __cdecl sub_4489C0(int a1, int a2, int *a3, int a4)
   else if ( a2 == 16400
          && sub_46B0A0(a3) == 1934
          && a4 != -1
-         && (v4 = (wchar_t *)sub_46B490((int)a3, 16406, a4, 0), *v4)
+         && (v4 = (wchar_t *)sub_46B490((int)a3, 16406, a4, 0)) != 0
+         && *v4
          && (v5 = (const wchar_t *)sub_41EC00(), v4) )
   {
     if ( v5 )

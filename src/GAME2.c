@@ -8364,10 +8364,13 @@ int __cdecl sub_4585D0(int a1, unsigned int a2, int a3, int a4)
       else if ( sub_46B490(a3, 16404, 0, 0) >= 0 )
       {
         v35 = sub_46B490(a3, 16406, a4, 0);
-        nox_sprintf(v42, (const char *)&byte_587000[131344], v35);
+        nox_snprintf(v42, sizeof(v42), (const char *)&byte_587000[131344], v35);
         v36 = strtok(v42, (const char *)&byte_587000[131348]);
         v37 = sub_4165B0();
-        strcpy(v37, v36);
+        if ( !v36 )
+          v36 = "";
+        strncpy(v37, v36, 8u);
+        v37[8] = 0;
         sub_57A1E0((int *)v37, (const char *)&byte_587000[131352], 0, 7, *((_WORD *)v37 + 26));
         sub_459880((int)v37);
         sub_459D50(1);
@@ -8927,7 +8930,15 @@ int sub_459700()
   v1 = sub_46B490(*(int *)&byte_5D4594[1046496], 16404, 0, 0);
   v2 = v1;
   v3 = (const wchar_t *)sub_46B490(*(int *)&byte_5D4594[1046496], 16406, v1, 0);
-  nox_wcscpy(v5, v3);
+  if ( v3 )
+  {
+    nox_wcsncpy(v5, v3, 0xFFu);
+    v5[255] = 0;
+  }
+  else
+  {
+    v5[0] = 0;
+  }
   sub_46B490(*(int *)&byte_5D4594[1046496], 16398, v2, 0);
   sub_46B490(*(int *)&byte_5D4594[1046496], 16402, v2, 0);
   sub_46B490(*(int *)&byte_5D4594[1046496], 16397, (int)v5, -1);
@@ -13264,10 +13275,23 @@ int __cdecl sub_45F5D0(_DWORD *a1)
   int v1; // esi
   __int16 *v2; // esi
   int v4; // [esp+4h] [ebp-4h]
+#ifdef __3DS__
+  static const __int16 *k_3ds_slot_labels[5] = {
+    (const __int16 *)L"A",
+    (const __int16 *)L"B",
+    (const __int16 *)L"X",
+    (const __int16 *)L"Y",
+    (const __int16 *)L"D"
+  };
+#endif
 
   v1 = a1[92];
   sub_46AA60(a1, &v4, &a1);
+#ifdef __3DS__
+  v2 = (v1 >= 0 && v1 < 5) ? (__int16 *)k_3ds_slot_labels[v1] : (__int16 *)sub_42E8E0(v1 + 28, 1);
+#else
   v2 = (__int16 *)sub_42E8E0(v1 + 28, 1);
+#endif
   if ( v2 )
   {
     sub_434390(*(int *)&byte_5D4594[2523948]);
@@ -16039,7 +16063,8 @@ int sub_462740()
   *(_DWORD *)&byte_5D4594[1063116] = 0;
   *(_DWORD *)&byte_5D4594[1063120] = 0;
   v0 = sub_40F1D0((char *)&byte_587000[136832], 0, (const char *)&byte_587000[136796], 2361);
-  nox_wcscpy((wchar_t *)&byte_5D4594[1063124], v0);
+  nox_wcsncpy((wchar_t *)&byte_5D4594[1063124], v0, 0xFFu);
+  *(_WORD *)&byte_5D4594[1063634] = 0;
   v1 = sub_46B0C0(*(_DWORD **)&byte_5D4594[1062476], 9156);
   sub_46B490((int)v1, 16399, 0, 0);
   sub_46ADE0(*(int *)&byte_5D4594[1062456]);
@@ -16172,7 +16197,8 @@ LABEL_14:
     {
       *(_DWORD *)&byte_5D4594[1063120] = 0;
       v5 = sub_40F1D0((char *)&byte_587000[136900], 0, (const char *)&byte_587000[136864], 2529);
-      nox_wcscpy((wchar_t *)&byte_5D4594[1063124], v5);
+      nox_wcsncpy((wchar_t *)&byte_5D4594[1063124], v5, 0xFFu);
+      *(_WORD *)&byte_5D4594[1063634] = 0;
       v6 = sub_46B0C0(*(_DWORD **)&byte_5D4594[1062476], 9156);
       result = sub_46B490((int)v6, 16399, 0, 0);
     }
@@ -16182,12 +16208,13 @@ LABEL_14:
     return result;
   *(_DWORD *)&byte_5D4594[1063120] = *(_DWORD *)&byte_5D4594[1063116];
   v7 = sub_40F1D0((char *)&byte_587000[136968], 0, (const char *)&byte_587000[136932], 2545);
-  nox_swprintf((wchar_t *)&byte_5D4594[1063124], (const wchar_t *)&byte_587000[136984], v7);
+  nox_snwprintf((wchar_t *)&byte_5D4594[1063124], 256u, (const wchar_t *)&byte_587000[136984], v7);
   v8 = sub_4BF050(*(wchar_t **)&byte_5D4594[1063116]);
-  nox_wcscpy(v75, v8);
+  nox_wcsncpy(v75, v8, 0xFFu);
+  v75[255] = 0;
   if ( !nox_wcscmp(v75, (const wchar_t *)&byte_5D4594[1063652]) )
     *(_DWORD *)&byte_5D4594[1063120] = 0;
-  nox_wcscat((wchar_t *)&byte_5D4594[1063124], v75);
+  nox_wcsncat((wchar_t *)&byte_5D4594[1063124], v75, 255u - nox_wcslen((const wchar_t *)&byte_5D4594[1063124]));
   v9 = sub_46B0C0(*(_DWORD **)&byte_5D4594[1062476], 9151);
   sub_46AEE0((int)v9, (int)&byte_5D4594[1063124]);
   v10 = sub_46B0C0(*(_DWORD **)&byte_5D4594[1062476], 9156);
@@ -16206,12 +16233,13 @@ LABEL_14:
        * correct integer (e.g. 100). For the "Durability: %d / %d" format
        * we must pass them as ints, not as floats.
        */
-      nox_swprintf(v75, v11, *(int *)&v56, *(int *)&v63);
+      nox_snwprintf(v75, 256u, v11, *(int *)&v56, *(int *)&v63);
     }
     else
     {
       v12 = sub_40F1D0((char *)&byte_587000[137084], 0, (const char *)&byte_587000[137048], 2583);
-      nox_wcscpy(v75, v12);
+      nox_wcsncpy(v75, v12, 0xFFu);
+      v75[255] = 0;
     }
   }
   else
@@ -16335,34 +16363,38 @@ LABEL_51:
       nox_swprintf(v75, v54, v57);
     }
     sub_46B490((int)v10, 16397, (int)v75, -1);
-    nox_wcscpy(v75, (const wchar_t *)&byte_587000[137832]);
+    nox_wcsncpy(v75, (const wchar_t *)&byte_587000[137832], 0xFFu);
+    v75[255] = 0;
     v59 = v68;
     v35 = sub_40F1D0((char *)&byte_587000[137876], 0, (const char *)&byte_587000[137840], 2785);
-    nox_swprintf(v76, v35, v59);
-    nox_wcscat(v75, v76);
+    nox_snwprintf(v76, 256u, v35, v59);
+    nox_wcsncat(v75, v76, 255u - nox_wcslen(v75));
     sub_46B490((int)v10, 16397, (int)v75, -1);
-    nox_wcscpy(v75, (const wchar_t *)&byte_587000[137892]);
+    nox_wcsncpy(v75, (const wchar_t *)&byte_587000[137892], 0xFFu);
+    v75[255] = 0;
     v60 = v69;
     v36 = sub_40F1D0((char *)&byte_587000[137936], 0, (const char *)&byte_587000[137900], 2792);
-    nox_swprintf(v76, v36, v60);
-    nox_wcscat(v75, v76);
+    nox_snwprintf(v76, 256u, v36, v60);
+    nox_wcsncat(v75, v76, 255u - nox_wcslen(v75));
     sub_46B490((int)v10, 16397, (int)v75, -1);
     if ( v72 > 0.0 )
     {
-      nox_wcscpy(v75, (const wchar_t *)&byte_587000[137956]);
+      nox_wcsncpy(v75, (const wchar_t *)&byte_587000[137956], 0xFFu);
+      v75[255] = 0;
       v61 = v72;
       v37 = sub_40F1D0((char *)&byte_587000[138000], 0, (const char *)&byte_587000[137964], 2801);
-      nox_swprintf(v76, v37, v61);
-      nox_wcscat(v75, v76);
+      nox_snwprintf(v76, 256u, v37, v61);
+      nox_wcsncat(v75, v76, 255u - nox_wcslen(v75));
       sub_46B490((int)v10, 16397, (int)v75, -1);
     }
     if ( v71 > 0.0 )
     {
-      nox_wcscpy(v75, (const wchar_t *)&byte_587000[138016]);
+      nox_wcsncpy(v75, (const wchar_t *)&byte_587000[138016], 0xFFu);
+      v75[255] = 0;
       v62 = v71;
       v38 = sub_40F1D0((char *)&byte_587000[138060], 0, (const char *)&byte_587000[138024], 2811);
-      nox_swprintf(v76, v38, v62);
-      nox_wcscat(v75, v76);
+      nox_snwprintf(v76, 256u, v38, v62);
+      nox_wcsncat(v75, v76, 255u - nox_wcslen(v75));
       sub_46B490((int)v10, 16397, (int)v75, -1);
     }
     sub_46B490((int)v10, 16397, (int)&byte_5D4594[1063668], -1);
@@ -16408,12 +16440,13 @@ LABEL_72:
       if ( v44 && *(_DWORD *)(v44 + 16) )
       {
         v45 = sub_40F1D0((char *)&byte_587000[138236], 0, (const char *)&byte_587000[138200], 2851);
-        nox_swprintf(v75, v45);
+        nox_snwprintf(v75, 256u, v45);
         sub_46B490((int)v10, 16397, (int)v75, -1);
         v46 = 0;
-        nox_wcscpy(v75, (const wchar_t *)&byte_587000[138264]);
-        nox_swprintf(v76, *(const wchar_t **)(*(_DWORD *)(v43 + 8) + 16));
-        nox_wcscat(v75, v76);
+        nox_wcsncpy(v75, (const wchar_t *)&byte_587000[138264], 0xFFu);
+        v75[255] = 0;
+        nox_snwprintf(v76, 256u, *(const wchar_t **)(*(_DWORD *)(v43 + 8) + 16));
+        nox_wcsncat(v75, v76, 255u - nox_wcslen(v75));
         sub_46B490((int)v10, 16397, (int)v75, -1);
         v15 = *(_DWORD *)&byte_5D4594[1063116];
       }
@@ -16427,14 +16460,15 @@ LABEL_72:
         if ( v46 == 1 )
         {
           v48 = sub_40F1D0((char *)&byte_587000[138308], 0, (const char *)&byte_587000[138272], 2868);
-          nox_swprintf(v75, v48);
+          nox_snwprintf(v75, 256u, v48);
           sub_46B490((int)v10, 16397, (int)v75, -1);
           v73 = 0;
           v46 = 0;
         }
-        nox_wcscpy(v75, (const wchar_t *)&byte_587000[138336]);
-        nox_swprintf(v76, *(const wchar_t **)(*(_DWORD *)(v43 + 12) + 16));
-        nox_wcscat(v75, v76);
+        nox_wcsncpy(v75, (const wchar_t *)&byte_587000[138336], 0xFFu);
+        v75[255] = 0;
+        nox_snwprintf(v76, 256u, *(const wchar_t **)(*(_DWORD *)(v43 + 12) + 16));
+        nox_wcsncat(v75, v76, 255u - nox_wcslen(v75));
         sub_46B490((int)v10, 16397, (int)v75, -1);
         v15 = *(_DWORD *)&byte_5D4594[1063116];
       }
@@ -16939,7 +16973,8 @@ int *__cdecl sub_463880(int *a1)
       v10 += 39;
     sub_434390(v72);
     v31 = sub_40F1D0((char *)&byte_587000[138932], 0, (const char *)&byte_587000[138896], 2072);
-    nox_wcscpy(v77, v31);
+    nox_wcsncpy(v77, v31, 0xFFu);
+    v77[255] = 0;
     sub_43F840(0, v77, &v75, 0, 0);
     sub_43FAF0(0, v77, v10, v30, 0, 0);
     v49 = *(float *)&byte_5D4594[1062548] * 1000.0 + 0.5;
@@ -21056,9 +21091,10 @@ void sub_469BC0()
     v11 = v1;
     for ( i = -v1; v2; i += v11 + v12 )
     {
-      strcpy(v13, "Journal:");
+      strncpy(v13, "Journal:", sizeof(v13) - 1);
+      v13[sizeof(v13) - 1] = 0;
       HIWORD(v4) = 0;
-      strcat(&v13, (const char *)v2);
+      strncat(v13, (const char *)v2, sizeof(v13) - 1 - strlen(v13));
       LOWORD(v4) = *(_WORD *)(v2 + 72);
       v5 = v4 - 2;
       if ( v5 )
@@ -21069,7 +21105,8 @@ void sub_469BC0()
           if ( v6 == 4 )
           {
             v8 = sub_40F1D0((char *)&byte_587000[142564], 0, (const char *)&byte_587000[142524], 64);
-            nox_wcscpy(v14, v8);
+            nox_wcsncpy(v14, v8, 2047u);
+            v14[2047] = 0;
           }
           else
           {
@@ -21079,17 +21116,19 @@ void sub_469BC0()
         else
         {
           v9 = sub_40F1D0((char *)&byte_587000[142500], 0, (const char *)&byte_587000[142460], 60);
-          nox_wcscpy(v14, v9);
+          nox_wcsncpy(v14, v9, 2047u);
+          v14[2047] = 0;
         }
       }
       else
       {
         v10 = sub_40F1D0((char *)&byte_587000[142440], 0, (const char *)&byte_587000[142400], 56);
-        nox_wcscpy(v14, v10);
+        nox_wcsncpy(v14, v10, 2047u);
+        v14[2047] = 0;
       }
-      nox_wcscat(v14, (const wchar_t *)&byte_587000[142584]);
+      nox_wcsncat(v14, (const wchar_t *)&byte_587000[142584], 2047u - nox_wcslen(v14));
       v7 = sub_40F1D0((char *)&v13, 0, (const char *)&byte_587000[142588], 74);
-      nox_wcscat(v14, v7);
+      nox_wcsncat(v14, v7, 2047u - nox_wcslen(v14));
       sub_43F840(0, v14, 0, &v12, 240);
       v2 = *(_DWORD *)(v2 + 64);
     }
@@ -21131,8 +21170,9 @@ void __cdecl sub_469D40(int xLeft, int yTop, int a3)
       do
       {
         HIWORD(v7) = 0;
-        strcpy(v16, "Journal:");
-        strcat(v16, (const char *)v5);
+        strncpy(v16, "Journal:", sizeof(v16) - 1);
+        v16[sizeof(v16) - 1] = 0;
+        strncat(v16, (const char *)v5, sizeof(v16) - 1 - strlen(v16));
         LOWORD(v7) = *(_WORD *)(v5 + 72);
         switch ( v7 )
         {
@@ -21142,17 +21182,20 @@ void __cdecl sub_469D40(int xLeft, int yTop, int a3)
           case 2:
             v8 = *(_DWORD *)&byte_5D4594[2650644];
             v9 = sub_40F1D0((char *)&byte_587000[142680], 0, (const char *)&byte_587000[142640], 135);
-            nox_wcscpy(v17, v9);
+            nox_wcsncpy(v17, v9, 2047u);
+            v17[2047] = 0;
             break;
           case 4:
             v8 = *(_DWORD *)&byte_5D4594[2650660];
             v10 = sub_40F1D0((char *)&byte_587000[142740], 0, (const char *)&byte_587000[142700], 140);
-            nox_wcscpy(v17, v10);
+            nox_wcsncpy(v17, v10, 2047u);
+            v17[2047] = 0;
             break;
           case 8:
             v8 = *(_DWORD *)&byte_5D4594[2589772];
             v11 = sub_40F1D0((char *)&byte_587000[142804], 0, (const char *)&byte_587000[142764], 145);
-            nox_wcscpy(v17, v11);
+            nox_wcsncpy(v17, v11, 2047u);
+            v17[2047] = 0;
             break;
           default:
             v8 = *(_DWORD *)&byte_5D4594[2618904];
@@ -21160,9 +21203,9 @@ LABEL_12:
             v17[0] = 0;
             break;
         }
-        nox_wcscat(v17, (const wchar_t *)&byte_587000[142824]);
+        nox_wcsncat(v17, (const wchar_t *)&byte_587000[142824], 2047u - nox_wcslen(v17));
         v12 = sub_40F1D0((char *)&v16, 0, (const char *)&byte_587000[142828], 155);
-        nox_wcscat(v17, v12);
+        nox_wcsncat(v17, v12, 2047u - nox_wcslen(v17));
         sub_43F840(0, &v17, 0, &v15, 240);
         v13 = v15 + v4;
         if ( v15 + v4 > yTop )

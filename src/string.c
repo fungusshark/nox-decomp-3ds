@@ -382,11 +382,34 @@ wchar_t *nox_wcscat(wchar_t *dest, const wchar_t *src)
 {
     wchar_t *ret = dest;
 
+    if (!dest || !src || (unsigned long)src < 0x10000UL)
+        return ret;
+
     while (*dest)
         dest++;
 
     while (*src)
         *dest++ = *src++;
+    *dest = 0;
+
+    return ret;
+}
+
+wchar_t *nox_wcsncat(wchar_t *dest, const wchar_t *src, size_t n)
+{
+    wchar_t *ret = dest;
+
+    if (!dest || !src || (unsigned long)src < 0x10000UL || n == 0)
+        return ret;
+
+    while (*dest)
+        dest++;
+
+    while (n > 0 && *src)
+    {
+        *dest++ = *src++;
+        n--;
+    }
     *dest = 0;
 
     return ret;
