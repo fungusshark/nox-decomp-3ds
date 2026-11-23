@@ -32470,6 +32470,8 @@ int __cdecl sub_424880(const char *a1)
   unsigned __int8 *v3; // edi
   int result; // eax
 
+  if ( !a1 )
+    return -1;
   v1 = *(const char **)&byte_587000[65316];
   v2 = 0;
   if ( *(_DWORD *)&byte_587000[65316] )

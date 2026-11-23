@@ -24312,12 +24312,12 @@ int sub_5132E0()
   int v3; // edi
   float v5; // [esp+Ch] [ebp-54h]
   int v6[2]; // [esp+18h] [ebp-48h]
-  char v8[64]; // [esp+20h] [ebp-40h]
+  const char *v8; // [esp+20h] [ebp-40h]
 
   v5 = COERCE_FLOAT(script_pop());
   v0 = script_pop();
   v1 = script_pop();
-  strcpy(v8, *(const char **)&byte_5D4594[4 * v0 + 3831212]);
+  v8 = *(const char **)&byte_5D4594[4 * v0 + 3831212];
   v2 = sub_424880(v8);
   if ( v2 != -1 )
   {
@@ -24347,12 +24347,12 @@ int sub_5133B0()
   unsigned __int8 *v3; // eax
   float v5; // [esp+Ch] [ebp-54h]
   int v6[2]; // [esp+18h] [ebp-48h]
-  char v7[64]; // [esp+20h] [ebp-40h]
+  const char *v7; // [esp+20h] [ebp-40h]
 
   v5 = COERCE_FLOAT(script_pop());
   v0 = script_pop();
   v1 = script_pop();
-  strcpy(v7, *(const char **)&byte_5D4594[4 * v0 + 3831212]);
+  v7 = *(const char **)&byte_5D4594[4 * v0 + 3831212];
   v2 = sub_424880(v7);
   if ( v2 != -1 )
   {
@@ -24383,8 +24383,9 @@ int sub_513490()
   int v0; // eax
   char v2[76]; // [esp+4h] [ebp-4Ch]
 
-  strcpy(v2, *(const char **)&byte_5D4594[4 * script_pop() + 3831212]);
-  strcat(v2, (const char *)&byte_5D4594[3821644]);
+  strncpy(v2, *(const char **)&byte_5D4594[4 * script_pop() + 3831212], sizeof(v2) - 1);
+  v2[sizeof(v2) - 1] = 0;
+  strncat(v2, (const char *)&byte_5D4594[3821644], sizeof(v2) - 1 - strlen(v2));
   v0 = sub_4DA4F0(v2);
   if ( v0 )
     sub_507230(*(_DWORD *)(v0 + 44));
@@ -24849,11 +24850,11 @@ int sub_513C70()
   int v4; // eax
   int v5; // eax
   int result; // eax
-  char v7[64]; // [esp+Ch] [ebp-40h]
+  const char *v7; // [esp+Ch] [ebp-40h]
 
   v0 = script_pop();
   v1 = script_pop();
-  strcpy(v7, *(const char **)&byte_5D4594[4 * v0 + 3831212]);
+  v7 = *(const char **)&byte_5D4594[4 * v0 + 3831212];
   v2 = sub_424880(v7);
   v3 = v2;
   if ( v2 != -1 && (v4 = sub_511B60(v1)) != 0 )
@@ -24877,11 +24878,11 @@ int sub_513D00()
   int v1; // ebx
   int v2; // esi
   int v3; // eax
-  char v5[64]; // [esp+Ch] [ebp-40h]
+  const char *v5; // [esp+Ch] [ebp-40h]
 
   v0 = script_pop();
   v1 = script_pop();
-  strcpy(v5, *(const char **)&byte_5D4594[4 * v0 + 3831212]);
+  v5 = *(const char **)&byte_5D4594[4 * v0 + 3831212];
   v2 = sub_424880(v5);
   if ( v2 != -1 )
   {
@@ -25261,6 +25262,8 @@ int sub_514210()
   v17.field_4 = (double)*(int *)&byte_5D4594[3821640] + v15;
   v2 = v1;
   v3 = strlen(v1) + 1;
+  if ( v3 > sizeof(v20) - strlen(v20) )
+    v3 = sizeof(v20) - strlen(v20);
   v4 = &v20[strlen(v20)];
   qmemcpy(v4, v2, 4 * (v3 >> 2));
   v6 = &v2[4 * (v3 >> 2)];
@@ -25269,6 +25272,7 @@ int sub_514210()
   v8 = 87;
   v13 = 87;
   qmemcpy(v5, v6, v7 & 3);
+  v20[sizeof(v20) - 1] = 0;
   do
   {
     if ( !_strcmpi(*(const char **)&byte_587000[4 * v13 + 238648], v20) )
@@ -25320,6 +25324,10 @@ int sub_514210()
       result = 0;
       break;
     case 0x98u:
+      v19[0] = *(_DWORD *)&byte_5D4594[3821636] + sub_419A70(v14);
+      v19[1] = *(_DWORD *)&byte_5D4594[3821640] + sub_419A70(v15);
+      v19[2] = *(_DWORD *)&byte_5D4594[3821636] + sub_419A70(*(float *)&v0);
+      v19[3] = *(_DWORD *)&byte_5D4594[3821640] + sub_419A70(*(float *)&v16);
       sub_523790((int4 *)v19, 30);
       result = 0;
       break;
@@ -25635,8 +25643,9 @@ int sub_514800()
   int *v0; // eax
   char v2[76]; // [esp+4h] [ebp-4Ch]
 
-  strcpy(v2, *(const char **)&byte_5D4594[4 * script_pop() + 3831212]);
-  strcat(v2, (const char *)&byte_5D4594[3821644]);
+  strncpy(v2, *(const char **)&byte_5D4594[4 * script_pop() + 3831212], sizeof(v2) - 1);
+  v2[sizeof(v2) - 1] = 0;
+  strncat(v2, (const char *)&byte_5D4594[3821644], sizeof(v2) - 1 - strlen(v2));
   v0 = (int *)sub_579E30(v2);
   if ( v0 )
     sub_507230(*v0);
@@ -25651,8 +25660,9 @@ int sub_5148A0()
   int v0; // eax
   char v2[76]; // [esp+4h] [ebp-4Ch]
 
-  strcpy(v2, *(const char **)&byte_5D4594[4 * script_pop() + 3831212]);
-  strcat(v2, (const char *)&byte_5D4594[3821644]);
+  strncpy(v2, *(const char **)&byte_5D4594[4 * script_pop() + 3831212], sizeof(v2) - 1);
+  v2[sizeof(v2) - 1] = 0;
+  strncat(v2, (const char *)&byte_5D4594[3821644], sizeof(v2) - 1 - strlen(v2));
   v0 = sub_57C280(v2, 1);
   if ( v0 )
     sub_507230(*(_DWORD *)(v0 + 4));
@@ -25667,8 +25677,9 @@ int sub_514940()
   int v0; // eax
   char v2[76]; // [esp+4h] [ebp-4Ch]
 
-  strcpy(v2, *(const char **)&byte_5D4594[4 * script_pop() + 3831212]);
-  strcat(v2, (const char *)&byte_5D4594[3821644]);
+  strncpy(v2, *(const char **)&byte_5D4594[4 * script_pop() + 3831212], sizeof(v2) - 1);
+  v2[sizeof(v2) - 1] = 0;
+  strncat(v2, (const char *)&byte_5D4594[3821644], sizeof(v2) - 1 - strlen(v2));
   v0 = sub_57C280(v2, 0);
   if ( v0 )
     sub_507230(*(_DWORD *)(v0 + 4));
@@ -25683,8 +25694,9 @@ int sub_5149E0()
   int v0; // eax
   char v2[76];
 
-  strcpy(v2, *(const char **)&byte_5D4594[4 * script_pop() + 3831212]);
-  strcat(v2, (const char *)&byte_5D4594[3821644]);
+  strncpy(v2, *(const char **)&byte_5D4594[4 * script_pop() + 3831212], sizeof(v2) - 1);
+  v2[sizeof(v2) - 1] = 0;
+  strncat(v2, (const char *)&byte_5D4594[3821644], sizeof(v2) - 1 - strlen(v2));
   v0 = sub_57C280(v2, 2);
   if ( v0 )
     sub_507230(*(_DWORD *)(v0 + 4));
