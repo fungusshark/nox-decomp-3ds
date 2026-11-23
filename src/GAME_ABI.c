@@ -1686,16 +1686,15 @@ LABEL_32:
   }
 
   /* branch: (self+20) != 0 */
-  v4 = *(_DWORD *)(self + 32);
   v29.field_0 = *(float *)(self + 28);
-  *(_DWORD *)&byte_5D4594[2487868] = v29.field_0;
-  *(_DWORD *)&byte_5D4594[2487872] = v4;
+  v29.field_4 = *(float *)(self + 32);
+  *(float *)&byte_5D4594[2487868] = v29.field_0;
+  *(float *)&byte_5D4594[2487872] = v29.field_4;
   *(_DWORD *)&byte_5D4594[2487880] = 0;
   *(float *)&byte_5D4594[2487884] = v31 * v31;
   *(_DWORD *)&byte_5D4594[2487832] = 1;
 
   v5 = *(_DWORD *)(self + 16);
-  v29.field_4 = (float)v4;
   sub_517F90(&v29, v31, (void *)sub_52EC60, v5);
 
   if ( *(_DWORD *)&byte_5D4594[2487880] )

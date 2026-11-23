@@ -5635,6 +5635,8 @@ int __cdecl sub_4FD400(int a1, int a2, _DWORD *a3, int a4, int *a5, int a6)
     return 0;
   if ( !*a5 || sub_4FDC10(a1, *a5) )
   {
+    if ( a6 > 5 )
+      a6 = 5;
     switch ( a1 )
     {
       case 1:
@@ -61987,7 +61989,7 @@ void __cdecl sub_540780(float *a1, int a2)
       if ( !(v3 & 2) || (v4 = *((_DWORD *)a1 + 3), (v4 & 0x8000) == 0) )
       {
         if ( (!(v3 & 4) || !(*(_BYTE *)(*(_DWORD *)(*((_DWORD *)a1 + 187) + 276) + 3680) & 1))
-          && !((_DWORD)a1[4] & 0x8020) )
+          && !(*((_DWORD *)a1 + 4) & 0x8020) )
         {
           if ( !(v3 & 2) || (v5 = *((_DWORD *)a1 + 3), !(v5 & 0x4000)) )
           {
