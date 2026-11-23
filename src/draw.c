@@ -443,7 +443,8 @@ static int g_3ds_bot_sw_w = 0;
 static int g_3ds_bot_sw_h = 0;
 static void *g_3ds_saved_swbuf = NULL;
 static void *g_3ds_saved_swrows = NULL;
-static int g_3ds_bot_sw_active = 0;
+static int g_3ds_bot_sw_active = 0;   /* 1 = Bottom buffer is the CURRENT software render target */
+static int g_3ds_bot_pass_open = 0;   /* 1 = between nox_3ds_swbuf_begin_bottom() / _end_bottom() */
 static int g_3ds_bot_frame_ready = 0;
 static int g_3ds_cursor_already_blitted = 0;
 static SDL_Surface *g_3ds_cursor_dst = NULL;
@@ -553,9 +554,57 @@ static bool nox_3ds_ensure_bot_swbuf(int w, int h)
     return true;
 }
 
+/*
+ * Fast software render-target context switch (Top <-> Bottom).
+ *
+ * The 1999 blitters address the active surface ONLY through the pixel base
+ * pointer byte_5D4594[3798780] and the row table byte_5D4594[3798784]; both
+ * buffers share the same 640x480 geometry. Switching therefore costs exactly
+ * two pointer stores: no clear, no colour conversion, no allocation.
+ *
+ * Returns the previously selected target so callers nest/restore cleanly:
+ *     v_prev = nox_3ds_swbuf_select(NOX_3DS_SWBUF_BOTTOM);
+ *     ...draw...
+ *     nox_3ds_swbuf_select(v_prev);
+ *
+ * Selecting the Bottom buffer before its first allocation is a no-op
+ * (drawing stays on the Top buffer and TOP is returned).
+ */
+int nox_3ds_swbuf_select(int target)
+{
+    int prev;
+
+    prev = g_3ds_bot_sw_active ? NOX_3DS_SWBUF_BOTTOM : NOX_3DS_SWBUF_TOP;
+    if (target == prev)
+        return prev;
+
+    if (target == NOX_3DS_SWBUF_BOTTOM)
+    {
+        if (!g_3ds_bot_swbuf || !g_3ds_bot_swrows)
+            return prev;
+        g_3ds_saved_swbuf  = *(void **)&byte_5D4594[3798780];
+        g_3ds_saved_swrows = *(void **)&byte_5D4594[3798784];
+        *(void **)&byte_5D4594[3798780] = g_3ds_bot_swbuf;
+        *(void **)&byte_5D4594[3798784] = g_3ds_bot_swrows;
+        g_3ds_bot_sw_active = 1;
+    }
+    else
+    {
+        *(void **)&byte_5D4594[3798780] = g_3ds_saved_swbuf;
+        *(void **)&byte_5D4594[3798784] = g_3ds_saved_swrows;
+        g_3ds_bot_sw_active = 0;
+    }
+    return prev;
+}
+
+bool nox_3ds_is_bottom_swbuf_active(void)
+{
+    return (g_3ds_bot_sw_active != 0);
+}
+
 void nox_3ds_swbuf_begin_bottom(uint16_t clear_rgb555)
 {
-    if (g_3ds_bot_sw_active)
+    if (g_3ds_bot_pass_open)
         return;
 
     int w = *(_DWORD *)&byte_5D4594[3801784];
@@ -563,12 +612,8 @@ void nox_3ds_swbuf_begin_bottom(uint16_t clear_rgb555)
     if (!nox_3ds_ensure_bot_swbuf(w, h))
         return;
 
-    g_3ds_saved_swbuf  = *(void **)&byte_5D4594[3798780];
-    g_3ds_saved_swrows = *(void **)&byte_5D4594[3798784];
-
-    *(void **)&byte_5D4594[3798780] = g_3ds_bot_swbuf;
-    *(void **)&byte_5D4594[3798784] = g_3ds_bot_swrows;
-    g_3ds_bot_sw_active = 1;
+    nox_3ds_swbuf_select(NOX_3DS_SWBUF_BOTTOM);
+    g_3ds_bot_pass_open = 1;
 
     size_t count = (size_t)w * (size_t)h;
     if (clear_rgb555 == 0) {
@@ -588,7 +633,7 @@ void nox_3ds_swbuf_begin_bottom(uint16_t clear_rgb555)
 
 void nox_3ds_swbuf_end_bottom(void)
 {
-    if (!g_3ds_bot_sw_active)
+    if (!g_3ds_bot_pass_open)
         return;
 
     if (g_backbuffer_bot && g_backbuffer_bot->pixels && g_3ds_bot_swrows) {
@@ -634,9 +679,8 @@ void nox_3ds_swbuf_end_bottom(void)
         g_3ds_bot_frame_ready = 1;
     }
 
-    *(void **)&byte_5D4594[3798780] = g_3ds_saved_swbuf;
-    *(void **)&byte_5D4594[3798784] = g_3ds_saved_swrows;
-    g_3ds_bot_sw_active = 0;
+    nox_3ds_swbuf_select(NOX_3DS_SWBUF_TOP);
+    g_3ds_bot_pass_open = 0;
 }
 
 void nox_3ds_set_top_crop(int x, int y, int w, int h, bool fill_screen)

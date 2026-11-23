@@ -46213,6 +46213,9 @@ int sub_436100()
   int v23; // [esp+10h] [ebp-208h]
   int v24; // [esp+14h] [ebp-204h]
   wchar_t v25[128]; // [esp+18h] [ebp-200h]
+#ifdef __3DS__
+  int v3ds_prev; // previous software render target
+#endif
 
   v0 = sub_416BB0();
   v1 = HIDWORD(v0);
@@ -46295,8 +46298,28 @@ int sub_436100()
     }
     else if ( *(_DWORD *)&byte_5D4594[2614252] && sub_43C700() )
     {
+#ifdef __3DS__
+      /* World-Space UI: isometric world plus everything anchored to it through the
+       * viewport transform (floating health bars, damage numbers, spell words,
+       * speech bubbles) explicitly targets the Top Screen buffer. */
+      v3ds_prev = nox_3ds_swbuf_select(NOX_3DS_SWBUF_TOP);
       sub_475810((int *)&byte_5D4594[811068]);
       sub_4738E0();
+      if ( !*(_DWORD *)&byte_5D4594[1556112] )
+      {
+        int hp_bar = *(_DWORD *)&byte_5D4594[1093076];
+        int mp_bar = *(_DWORD *)&byte_5D4594[1093096];
+        sub_476E90();
+        if ( hp_bar && !(*(_DWORD *)(hp_bar + 4) & 0x10) )
+          sub_471C00(hp_bar);
+        if ( mp_bar && !(*(_DWORD *)(mp_bar + 4) & 0x10) )
+          sub_471C00(mp_bar);
+      }
+      nox_3ds_swbuf_select(v3ds_prev);
+#else
+      sub_475810((int *)&byte_5D4594[811068]);
+      sub_4738E0();
+#endif
     }
     else
     {
@@ -52204,6 +52227,19 @@ LABEL_24:
         {
           nox_3ds_set_gui_filter(NOX_3DS_GUI_ALL);
           sub_46C2E0();
+        }
+
+        /* Screen-Space UI: centered notification / system message text
+         * (sub_445530, skipped in the Top world pass) explicitly targets the
+         * Bottom Screen buffer, drawn above HUD/GUI windows and below the cursor. */
+        if ( *(_DWORD *)&byte_5D4594[2614252]
+          && *(_DWORD *)&byte_5D4594[1556112] != 1
+          && !(*(_DWORD *)&byte_5D4594[2650636] & 0x40000) )
+        {
+          int v3ds_prev = nox_3ds_swbuf_select(NOX_3DS_SWBUF_BOTTOM);
+          sub_437290();
+          sub_445530();
+          nox_3ds_swbuf_select(v3ds_prev);
         }
 
         {

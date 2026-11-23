@@ -162,6 +162,9 @@ int   nox_3ds_blit_scaled_16(const void *src_pixels, int sw_surf, int sh_surf, i
                              int dx, int dy, int dw, int dh);
 
 /* Dual-screen software buffer & GUI split helpers (implemented in src/draw.c) */
+#define NOX_3DS_SWBUF_TOP       0  /* primary 640x480 surface -> Top Screen (world)   */
+#define NOX_3DS_SWBUF_BOTTOM    1  /* secondary 640x480 surface -> Bottom Screen (UI) */
+int  nox_3ds_swbuf_select(int target);   /* fast pointer swap, returns previous target */
 void nox_3ds_swbuf_begin_bottom(uint16_t clear_rgb555);
 void nox_3ds_swbuf_end_bottom(void);
 bool nox_3ds_is_bottom_swbuf_active(void);

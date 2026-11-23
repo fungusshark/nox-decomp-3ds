@@ -27352,6 +27352,13 @@ int __cdecl sub_471C00(int a1)
   int v5; // ebx
   int v7; // [esp+Ch] [ebp+4h]
 
+#ifdef __3DS__
+  /* World-Space UI: floating player health/mana bars are drawn onto the Top Screen
+   * buffer inside sub_436100(), not during the Bottom Screen GUI pass. */
+  if ( nox_3ds_is_bottom_swbuf_active() )
+    return 1;
+#endif
+
   v1 = *(_DWORD *)(a1 + 32);
   v7 = v1;
   v2 = &byte_5D4594[20 * v1 + 1093036];
@@ -28765,7 +28772,14 @@ int sub_4738E0()
 #else
     (void)v1;
 #endif
+#ifdef __3DS__
+    /* Screen-Space UI: centered notification / system message text (sub_445530)
+     * is NOT drawn into the Top Screen world pass. It is redrawn explicitly into
+     * the Bottom Screen buffer from the mainloop() Bottom pass (above HUD/GUI). */
+    result = 1;
+#else
     result = sub_445530();
+#endif
   }
   return result;
 }
@@ -31361,6 +31375,13 @@ int sub_476E90()
 {
   unsigned __int8 *v0; // edi
   int v1; // esi
+
+#ifdef __3DS__
+  /* World-Space UI: spell hand signs are drawn onto the Top Screen buffer
+   * inside sub_436100(), not during the Bottom Screen GUI pass. */
+  if ( nox_3ds_is_bottom_swbuf_active() )
+    return 1;
+#endif
 
   v0 = &byte_587000[151208];
   v1 = 0;
