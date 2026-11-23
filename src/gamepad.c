@@ -43,7 +43,7 @@ static int g_gamepad_log_enabled(void);
 extern void nox_ctrl_inject_mouse_move(int dx, int dy, int wheel);
 extern void nox_ctrl_inject_mouse_button(int button, int down);
 extern void nox_ctrl_inject_key_scancode(int sdl_scancode, int down);
-extern void nox_ctrl_set_thumbstick_move(int active, int orientation, int move_cmd);
+extern void nox_ctrl_set_thumbstick_move(int active, int orientation, int move_cmd, double mag);
 extern void nox_ctrl_set_thumbstick_jump(int jump);
 //extern void nox_ctrl_inject_text_utf8(const char *utf8);
 
@@ -1053,13 +1053,13 @@ static void update_left_analog_absolute(void)
     struct action la_act = resolve_binding(IN_LEFT_ANALOG);
 
     if (la_act.type != ACT_MOUSE_ABSOLUTE) {
-        nox_ctrl_set_thumbstick_move(0, 0, 0);
+        nox_ctrl_set_thumbstick_move(0, 0, 0, 0.0);
         return;
     }
 
     /* Only use direct thumbstick movement while RMB/run is held. */
     if (!nox_thumbstick_absolute_active()) {
-        nox_ctrl_set_thumbstick_move(0, 0, 0);
+        nox_ctrl_set_thumbstick_move(0, 0, 0, 0.0);
         return;
     }
 
@@ -1087,7 +1087,7 @@ static void update_left_analog_absolute(void)
 
         /* Center deadzone: pressing run alone should not move. */
         if (mag <= deadzone) {
-            nox_ctrl_set_thumbstick_move(0, 0, 0);
+            nox_ctrl_set_thumbstick_move(0, 0, 0, 0.0);
             return;
         }
 
@@ -1102,7 +1102,12 @@ static void update_left_analog_absolute(void)
         else
             move_cmd = 1;
 
-        nox_ctrl_set_thumbstick_move(1, orientation, move_cmd);
+        {
+            double norm_mag = (mag - deadzone) / (1.0 - deadzone);
+            if (norm_mag < 0.0) norm_mag = 0.0;
+            if (norm_mag > 1.0) norm_mag = 1.0;
+            nox_ctrl_set_thumbstick_move(1, orientation, move_cmd, norm_mag);
+        }
     }
 }
 
@@ -1896,7 +1901,7 @@ void nox_gamepad_update(void)
                 NOX_GAMEPAD_LOG("[pad] thumbstick mode: relative\n");
             }
 
-            nox_ctrl_set_thumbstick_move(0, 0, 0);
+            nox_ctrl_set_thumbstick_move(0, 0, 0, 0.0);
         } else {
             g_thumbstick_mode_combo_latched = 0;
         }

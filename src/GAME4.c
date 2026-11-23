@@ -1867,9 +1867,11 @@ void __cdecl sub_4F8460(int a1)
       v21 = *(_DWORD *)(v2 + 276);
       v68 = 1;
       if ( *(_BYTE *)(v2 + 88) != 5
-        && (v23 = (double)*(int *)(v21 + 2288) - *(float *)(v1 + 60),
-            v22 = (double)*(int *)(v21 + 2284) - *(float *)(v1 + 56),
-            v23 * v23 + v22 * v22 <= 10000.0)
+        && ( (*(_DWORD *)(v2 + 240) & 0x40)
+             ? !(*(_DWORD *)(v2 + 240) & 1)
+             : (v23 = (double)*(int *)(v21 + 2288) - *(float *)(v1 + 60),
+                v22 = (double)*(int *)(v21 + 2284) - *(float *)(v1 + 56),
+                v23 * v23 + v22 * v22 <= 10000.0) )
         || sub_4FC250(v1, 4) )
       {
         a1 = 0;
@@ -2057,6 +2059,10 @@ LABEL_247:
                       LOBYTE(v56) = v56 | 1;
                     else
                       LOBYTE(v56) = v56 & 0xFE;
+                    if ( v5[12] & 4 )
+                      v56 |= 0x40;
+                    else
+                      v56 &= ~0x40;
                     *(_DWORD *)(v2 + 240) = v56;
                     if ( *((_DWORD *)v5 + 2) == 4 )
                       *(_DWORD *)(v2 + 240) |= 4u;

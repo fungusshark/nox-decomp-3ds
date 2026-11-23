@@ -69,6 +69,7 @@ static int g_limit_range_radius  = -1;  // cached radius in game pixels
 static int g_thumbstick_move_active = 0;
 static int g_thumbstick_orientation = 0;
 static int g_thumbstick_move_cmd = 0;
+static double g_thumbstick_mag = 0.0;
 static int g_thumbstick_jump = 0;
 static int g_radial_aim_active = 0;
 static int g_radial_aim_orientation = 0;
@@ -215,7 +216,7 @@ static void nox_escape_and_print_type(const char *s)
     fputs("\";\n", stderr);
 }
 
-void nox_ctrl_set_thumbstick_move(int active, int orientation, int move_cmd)
+void nox_ctrl_set_thumbstick_move(int active, int orientation, int move_cmd, double mag)
 {
     g_thumbstick_move_active = active ? 1 : 0;
     g_thumbstick_orientation = orientation & 255;
@@ -224,6 +225,15 @@ void nox_ctrl_set_thumbstick_move(int active, int orientation, int move_cmd)
         move_cmd = 0;
 
     g_thumbstick_move_cmd = move_cmd;
+
+    if (!g_thumbstick_move_active)
+        mag = 0.0;
+    else if (mag < 0.0)
+        mag = 0.0;
+    else if (mag > 1.0)
+        mag = 1.0;
+
+    g_thumbstick_mag = mag;
 }
 
 void nox_ctrl_set_thumbstick_jump(int jump)
@@ -1626,7 +1636,7 @@ int __cdecl sub_42D6B0(_DWORD *a3, int a4)
             /* Keep the movement facing/orientation and move command */
             sub_42E670(1, move_orient);
             if (move_cmd)
-                sub_42E670(2, move_cmd);
+                sub_42E670(2, move_cmd | 4);
         }
         else if (g_radial_aim_active)
         {
@@ -1640,7 +1650,6 @@ int __cdecl sub_42D6B0(_DWORD *a3, int a4)
 #endif
            )
         {
-            int radius;
             double ang;
             double dx, dy;
 
@@ -1678,11 +1687,14 @@ int __cdecl sub_42D6B0(_DWORD *a3, int a4)
             else
 #endif
             {
-                ang = (((double)move_orient / 128.0) - 1.0) * M_PI;
-                radius = (move_cmd == 3) ? 180 : 85;
+                const double min_radius = 24.0;
+                const double max_radius = 180.0;
+                double radius = min_radius + g_thumbstick_mag * (max_radius - min_radius);
 
-                dx = -cos(ang) * (double)radius;
-                dy = -sin(ang) * (double)radius;
+                ang = (((double)move_orient / 128.0) - 1.0) * M_PI;
+
+                dx = -cos(ang) * radius;
+                dy = -sin(ang) * radius;
 
                 screen_x += (int)lrint(dx);
                 screen_y += (int)lrint(dy);
