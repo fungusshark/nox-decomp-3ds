@@ -66,13 +66,15 @@ void nox_3ds_net_init(void)
 {
     g_net_mode = NOX_3DS_NET_MODE_LOOPBACK;
     g_nox_3ds_loopback_ops.init();
-    /* NOTE: g_nox_3ds_sockets_ops.init() is intentionally NOT called here.
-     * socInit() + 1 MB memalign buffer are acquired lazily only when the
-     * player actively enters Multiplayer menus. */
+    nox_3ds_lobby_init();
+    /* NOTE: g_nox_3ds_sockets_ops.init() and httpcInit() are intentionally NOT
+     * called here. Both are acquired lazily only when the player actively
+     * enters Multiplayer menus. */
 }
 
 void nox_3ds_net_shutdown(void)
 {
+    nox_3ds_lobby_shutdown();
     g_nox_3ds_sockets_ops.shutdown();
     g_nox_3ds_loopback_ops.shutdown();
     g_net_mode = NOX_3DS_NET_MODE_LOOPBACK;
@@ -83,6 +85,7 @@ void nox_3ds_net_set_mode(nox_3ds_net_mode_t mode)
     if (g_net_mode == mode)
         return;
     g_net_mode = mode;
+    nox_3ds_lobby_on_mode_change(mode);
     printf("[net3ds] Transport mode -> %s\n",
            (mode == NOX_3DS_NET_MODE_WIFI) ? "WIFI (soc:u)" : "LOOPBACK (offline)");
 }

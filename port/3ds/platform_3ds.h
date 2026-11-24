@@ -77,6 +77,7 @@ typedef struct {
     bool     sdmc_root_ready;
     bool     dsp_audio_ready;     /* true if sdmc:/3ds/dspfirm.cdc present and ndspInit() OK */
     bool     soc_ready;           /* true once lazy socInit() succeeded on Multiplayer entry */
+    bool     httpc_ready;         /* true once lazy httpcInit() succeeded for OpenNox lobby */
     bool     wide_stretch;        /* unused in dual-screen 1:1 mode, kept for compat */
     bool     bottom_console_mode; /* true during boot before citro2d takes GFX_BOTTOM */
     bool     touch_to_aim;        /* false in dual-screen mode (touch is strict bottom UI) */
@@ -400,6 +401,9 @@ void               nox_3ds_net_set_mode(nox_3ds_net_mode_t mode);
 nox_3ds_net_mode_t nox_3ds_net_get_mode(void);
 bool               nox_3ds_soc_is_ready(void);
 void               nox_3ds_net_on_apt_suspend(bool suspended);
+void               nox_3ds_lobby_init(void);
+void               nox_3ds_lobby_on_mode_change(nox_3ds_net_mode_t mode);
+void               nox_3ds_lobby_shutdown(void);
 int                nox_3ds_net_socket(int domain, int type, int protocol);
 int                nox_3ds_net_closesocket(int fd);
 int                nox_3ds_net_bind(int fd, const void *addr, unsigned int addrlen);
