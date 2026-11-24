@@ -52074,11 +52074,14 @@ LABEL_24:
     if ( !(*(_DWORD *)&byte_5D4594[2650636] & 0x80000000) )
     {
 #ifdef __3DS__
+      static int s_bot_was_gameplay = 0;
+      static unsigned int s_bot_idle_tick = 0;
       int do_present = (!(*(_DWORD *)&byte_5D4594[2650636] & 0x40000)
                         || (byte_5D4594[2650637] & 1)
                         || *(_DWORD *)&byte_5D4594[815132]);
       if ( *(_DWORD *)&byte_5D4594[815132] )
       {
+        s_bot_was_gameplay = 0;
         /* ================================================================
          * MAIN MENU DUAL-SCREEN SPLIT:
          *  - Top Screen (400x240):    Nox Title Splash (captured from legal.wnd)
@@ -52147,6 +52150,7 @@ LABEL_24:
       }
       else if ( !sub_43C700() )
       {
+        s_bot_was_gameplay = 0;
         /* ================================================================
          * TITLE / SPLASH SCREEN (pre-MainMenu, e.g. legal.wnd):
          *  - Top Screen (400x240):    Full Nox Title Splash (cached for Main Menu Top Screen)
@@ -52253,63 +52257,107 @@ LABEL_24:
         }
 
         /* --- Pass 2: Bottom Screen (Secondary SW buffer -> 320x240) --- */
-        nox_3ds_swbuf_begin_bottom(NOX_3DS_BOT_BG_RGB555);
-        if ( (byte_5D4594[1096424] & 1)
-          && *(_DWORD *)&byte_5D4594[1556112] != 1
-          && *(_DWORD *)&byte_5D4594[2614252]
-          && sub_43C700() )
         {
-          _DWORD *player_drw = sub_45A6F0(*(int *)&byte_5D4594[2616328]);
-          if ( player_drw )
-            sub_4725C0((int)player_drw);
-          sub_437290();
-        }
-        if ( !*(_DWORD *)&byte_5D4594[1556112] )
-        {
-          if ( world_mode && nox_3ds_input_is_bottom_touch_frame() )
-            nox_3ds_input_get_bottom_touch(&gm->field_0, &gm->field_4);
-          nox_3ds_set_gui_filter(NOX_3DS_GUI_ALL);
-          sub_46C2E0();
-          if ( world_mode && nox_3ds_input_is_bottom_touch_frame() )
+          const nox_3ds_input_t *in3ds = nox_3ds_input_get();
+          int minimap_on = ((byte_5D4594[1096424] & 1)
+                            && *(_DWORD *)&byte_5D4594[1556112] != 1
+                            && *(_DWORD *)&byte_5D4594[2614252]
+                            && sub_43C700());
+          int ui_drawer_open = (byte_5D4594[1049868] != 0
+                                || (*(_DWORD *)&byte_5D4594[1046860]
+                                    && !sub_46ACC0(*(int *)&byte_5D4594[1046860]))
+                                || (*(_DWORD *)&byte_5D4594[1049504]
+                                    && *(_DWORD *)(*(_DWORD *)&byte_5D4594[1049504] + 20)
+                                       != *(_DWORD *)&byte_5D4594[1049536]));
+          int touch_is_world_ctl = (nox_3ds_input_is_touch_move_active()
+                                    || nox_3ds_input_is_ranged_aim_held());
+          int ui_touch = (!touch_is_world_ctl
+                          && (nox_3ds_input_is_bottom_touch_active()
+                              || (in3ds && (in3ds->touch_active || in3ds->touch_down
+                                            || in3ds->touch_up))));
+          int bot_active = (!s_bot_was_gameplay
+                            || !world_mode
+                            || minimap_on
+                            || ui_drawer_open
+                            || sub_477600()
+                            || ui_touch
+                            || (in3ds && in3ds->keys_down != 0));
+          int skip_bot = 0;
+          s_bot_was_gameplay = 1;
+          if ( do_present && !bot_active )
           {
-            gm->field_0 = saved_mx;
-            gm->field_4 = saved_my;
+            ++s_bot_idle_tick;
+            if ( (s_bot_idle_tick & 1u) != 0u )
+              skip_bot = 1;
           }
-        }
-
-        /* Screen-Space UI: centered notification / system message text
-         * (sub_445530, skipped in the Top world pass) explicitly targets the
-         * Bottom Screen buffer, drawn above HUD/GUI windows and below the cursor. */
-        if ( *(_DWORD *)&byte_5D4594[2614252]
-          && *(_DWORD *)&byte_5D4594[1556112] != 1
-          && !(*(_DWORD *)&byte_5D4594[2650636] & 0x40000) )
-        {
-          int v3ds_prev = nox_3ds_swbuf_select(NOX_3DS_SWBUF_BOTTOM);
-          sub_437290();
-          sub_445530();
-          nox_3ds_swbuf_select(v3ds_prev);
-        }
-
-        {
-          int want_bot_cursor = do_present && (sub_477600() || nox_3ds_input_is_bottom_touch_active());
-          if ( want_bot_cursor )
+          else
           {
-            uint16_t saved_tip0 = *(_WORD *)&byte_5D4594[1096676];
-            nox_3ds_input_get_bottom_touch(&gm->field_0, &gm->field_4);
-            *(_DWORD *)&byte_5D4594[1097200] = nox_3ds_input_is_touch_move_active() ? 14 : 0;
-            if ( world_mode && !nox_3ds_input_is_bottom_touch_active() )
-              *(_WORD *)&byte_5D4594[1096676] = 0;
-            sub_477830();
-            *(_WORD *)&byte_5D4594[1096676] = saved_tip0;
-            gm->field_0 = saved_mx;
-            gm->field_4 = saved_my;
-            *(_DWORD *)&byte_5D4594[1097200] = saved_cid;
+            s_bot_idle_tick = 0;
           }
-          nox_3ds_swbuf_end_bottom();
-          if ( want_bot_cursor )
-            nox_3ds_blit_cursor_to_bottom();
-          else if ( do_present )
+
+          if ( skip_bot && nox_3ds_swbuf_reuse_bottom() )
+          {
             nox_3ds_skip_default_cursor_blit();
+          }
+          else
+          {
+            nox_3ds_swbuf_begin_bottom(NOX_3DS_BOT_BG_RGB555);
+            if ( minimap_on )
+            {
+              _DWORD *player_drw = sub_45A6F0(*(int *)&byte_5D4594[2616328]);
+              if ( player_drw )
+                sub_4725C0((int)player_drw);
+              sub_437290();
+            }
+            if ( !*(_DWORD *)&byte_5D4594[1556112] )
+            {
+              if ( world_mode && nox_3ds_input_is_bottom_touch_frame() )
+                nox_3ds_input_get_bottom_touch(&gm->field_0, &gm->field_4);
+              nox_3ds_set_gui_filter(NOX_3DS_GUI_ALL);
+              sub_46C2E0();
+              if ( world_mode && nox_3ds_input_is_bottom_touch_frame() )
+              {
+                gm->field_0 = saved_mx;
+                gm->field_4 = saved_my;
+              }
+            }
+
+            /* Screen-Space UI: centered notification / system message text
+             * (sub_445530, skipped in the Top world pass) explicitly targets the
+             * Bottom Screen buffer, drawn above HUD/GUI windows and below the cursor. */
+            if ( *(_DWORD *)&byte_5D4594[2614252]
+              && *(_DWORD *)&byte_5D4594[1556112] != 1
+              && !(*(_DWORD *)&byte_5D4594[2650636] & 0x40000) )
+            {
+              int v3ds_prev = nox_3ds_swbuf_select(NOX_3DS_SWBUF_BOTTOM);
+              sub_437290();
+              sub_445530();
+              nox_3ds_swbuf_select(v3ds_prev);
+            }
+
+            {
+              int want_bot_cursor = do_present && (sub_477600()
+                || (nox_3ds_input_is_bottom_touch_active() && !nox_3ds_input_is_touch_move_active()));
+              if ( want_bot_cursor )
+              {
+                uint16_t saved_tip0 = *(_WORD *)&byte_5D4594[1096676];
+                nox_3ds_input_get_bottom_touch(&gm->field_0, &gm->field_4);
+                *(_DWORD *)&byte_5D4594[1097200] = nox_3ds_input_is_touch_move_active() ? 14 : 0;
+                if ( world_mode && !nox_3ds_input_is_bottom_touch_active() )
+                  *(_WORD *)&byte_5D4594[1096676] = 0;
+                sub_477830();
+                *(_WORD *)&byte_5D4594[1096676] = saved_tip0;
+                gm->field_0 = saved_mx;
+                gm->field_4 = saved_my;
+                *(_DWORD *)&byte_5D4594[1097200] = saved_cid;
+              }
+              nox_3ds_swbuf_end_bottom();
+              if ( want_bot_cursor )
+                nox_3ds_blit_cursor_to_bottom();
+              else if ( do_present )
+                nox_3ds_skip_default_cursor_blit();
+            }
+          }
         }
       }
 

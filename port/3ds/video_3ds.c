@@ -16,6 +16,7 @@ typedef struct {
     uint16_t                *staging;
     bool                     inited;
     bool                     in_vram;
+    bool                     has_content;
     GPU_TEXCOLOR             fmt;
     GPU_TEXTURE_FILTER_PARAM filter;
 } nox_3ds_tex_slot_t;
@@ -52,6 +53,7 @@ static bool ensure_tex_slot(nox_3ds_tex_slot_t *slot, GPU_TEXCOLOR fmt, const ch
     if (slot->inited) {
         C3D_TexDelete(&slot->tex);
         slot->inited = false;
+        slot->has_content = false;
     }
 
     slot->in_vram = C3D_TexInitVRAM(&slot->tex, NOX_3DS_TEX_W, NOX_3DS_TEX_H, fmt);
@@ -68,6 +70,7 @@ static bool ensure_tex_slot(nox_3ds_tex_slot_t *slot, GPU_TEXCOLOR fmt, const ch
     C3D_TexSetWrap(&slot->tex, GPU_CLAMP_TO_EDGE, GPU_CLAMP_TO_EDGE);
     slot->fmt = fmt;
     slot->inited = true;
+    slot->has_content = false;
 
     fprintf(stderr, "[video3ds] %s tex %ux%u (%s, %s)\n",
             label, NOX_3DS_TEX_W, NOX_3DS_TEX_H,
@@ -151,6 +154,7 @@ static void enqueue_frame_upload(nox_3ds_tex_slot_t *slot,
         GX_BUFFER_DIM(NOX_3DS_TEX_W, NOX_3DS_TEX_H),
         xfer_flags
     );
+    slot->has_content = true;
 }
 
 static void build_subtex(Tex3DS_SubTexture *subtex, const nox_3ds_screen_frame_t *frame)
@@ -304,10 +308,12 @@ void nox_3ds_video_shutdown(void)
     if (s_top_slot.inited) {
         C3D_TexDelete(&s_top_slot.tex);
         s_top_slot.inited = false;
+        s_top_slot.has_content = false;
     }
     if (s_bot_slot.inited) {
         C3D_TexDelete(&s_bot_slot.tex);
         s_bot_slot.inited = false;
+        s_bot_slot.has_content = false;
     }
     s_top_target = NULL;
     s_bot_target = NULL;
@@ -365,12 +371,16 @@ void nox_3ds_video_present_dual(const nox_3ds_screen_frame_t *top,
     GX_TRANSFER_FORMAT top_gx_fmt = GX_TRANSFER_FMT_RGB5A1;
     GX_TRANSFER_FORMAT bot_gx_fmt = GX_TRANSFER_FMT_RGB5A1;
     bool top_ready = prepare_frame_slot(&s_top_slot, top, "Top", &top_src, &top_gx_fmt);
-    bool bot_ready = prepare_frame_slot(&s_bot_slot, bottom, "Bottom", &bot_src, &bot_gx_fmt);
+    bool bot_reuse = (bottom && bottom->reuse_tex && s_bot_slot.inited && s_bot_slot.has_content);
+    bool bot_upload = bot_reuse
+        ? false
+        : prepare_frame_slot(&s_bot_slot, bottom, "Bottom", &bot_src, &bot_gx_fmt);
+    bool bot_draw = bot_reuse || bot_upload;
 
     if (C3D_FrameBegin(C3D_FRAME_SYNCDRAW)) {
         if (top_ready)
             enqueue_frame_upload(&s_top_slot, top_src, top_gx_fmt);
-        if (bot_ready)
+        if (bot_upload)
             enqueue_frame_upload(&s_bot_slot, bot_src, bot_gx_fmt);
 
         draw_screen_pass(
@@ -382,7 +392,7 @@ void nox_3ds_video_present_dual(const nox_3ds_screen_frame_t *top,
 
         draw_screen_pass(
             s_bot_target, &s_bot_slot,
-            bot_ready ? bottom : NULL,
+            bot_draw ? bottom : NULL,
             NOX_3DS_BOT_W, NOX_3DS_BOT_H,
             C2D_Color32(16, 16, 20, 255)
         );

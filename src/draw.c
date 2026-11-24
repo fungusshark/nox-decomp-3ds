@@ -445,7 +445,8 @@ static void *g_3ds_saved_swbuf = NULL;
 static void *g_3ds_saved_swrows = NULL;
 static int g_3ds_bot_sw_active = 0;   /* 1 = Bottom buffer is the CURRENT software render target */
 static int g_3ds_bot_pass_open = 0;   /* 1 = between nox_3ds_swbuf_begin_bottom() / _end_bottom() */
-static int g_3ds_bot_frame_ready = 0;
+static int g_3ds_bot_frame_ready = 0; /* 0 = none, 1 = upload fresh, 2 = reuse VRAM tex */
+static int g_3ds_bot_has_frame = 0;   /* 1 = at least one bottom frame uploaded since init/movie */
 static int g_3ds_cursor_already_blitted = 0;
 static SDL_Surface *g_3ds_cursor_dst = NULL;
 static int g_3ds_top_crop_valid = 0;
@@ -696,10 +697,19 @@ void nox_3ds_swbuf_end_bottom(void)
             dst = (_WORD *)((char *)(dst + rem) + pad_bytes);
         }
         g_3ds_bot_frame_ready = 1;
+        g_3ds_bot_has_frame   = 1;
     }
 
     nox_3ds_swbuf_select(NOX_3DS_SWBUF_TOP);
     g_3ds_bot_pass_open = 0;
+}
+
+bool nox_3ds_swbuf_reuse_bottom(void)
+{
+    if (!g_3ds_bot_has_frame || !g_backbuffer_bot || !g_backbuffer_bot->pixels)
+        return false;
+    g_3ds_bot_frame_ready = 2;
+    return true;
 }
 
 void nox_3ds_set_top_crop(int x, int y, int w, int h, bool fill_screen)
@@ -1526,6 +1536,7 @@ void sdl_present()
             0, 0, srcsurf->w, srcsurf->h
         );
         g_3ds_bot_frame_ready        = 0;
+        g_3ds_bot_has_frame          = 0;
         g_3ds_top_crop_valid         = 0;
         g_3ds_cursor_already_blitted = 0;
         return;
@@ -1569,6 +1580,7 @@ void sdl_present()
             bot_frame.crop_w      = g_backbuffer_bot->w;
             bot_frame.crop_h      = g_backbuffer_bot->h;
             bot_frame.fill_screen = true;
+            bot_frame.reuse_tex   = (g_3ds_bot_frame_ready == 2);
             bot_ptr = &bot_frame;
         }
 

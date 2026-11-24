@@ -134,6 +134,7 @@ typedef struct {
     int         crop_h;
     bool        is_linear;
     bool        fill_screen;  /* true = fill full target; false = letterbox aspect */
+    bool        reuse_tex;    /* true = skip cache flush + GX upload, redraw existing VRAM tex */
 } nox_3ds_screen_frame_t;
 
 #if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
@@ -167,6 +168,7 @@ int   nox_3ds_blit_scaled_16(const void *src_pixels, int sw_surf, int sh_surf, i
 int  nox_3ds_swbuf_select(int target);   /* fast pointer swap, returns previous target */
 void nox_3ds_swbuf_begin_bottom(uint16_t clear_rgb555);
 void nox_3ds_swbuf_end_bottom(void);
+bool nox_3ds_swbuf_reuse_bottom(void);
 bool nox_3ds_is_bottom_swbuf_active(void);
 void nox_3ds_set_top_crop(int x, int y, int w, int h, bool fill_screen);
 void nox_3ds_blit_cursor_to_top(void);
