@@ -44,9 +44,9 @@ extern "C" {
 #define NOX_3DS_VP_RIGHT        (NOX_3DS_VP_LEFT + NOX_3DS_VP_W - 1)      /* 639 */
 #define NOX_3DS_VP_BOTTOM       (NOX_3DS_VP_TOP  + NOX_3DS_VP_H - 1)      /* 431 */
 
-/* Dark obsidian slate RGB555 backdrop for Bottom Screen UI (lets translucent
- * darkened panels from sub_49CF10 stand out cleanly against the background). */
-#define NOX_3DS_BOT_BG_RGB555   ((uint16_t)((4u << 10) | (4u << 5) | 5u))
+/* Near-black charcoal RGB555 backdrop for Bottom Screen UI (blends cleanly
+ * with the HUD and bezel while keeping sub_49CF10 darkened panels visible). */
+#define NOX_3DS_BOT_BG_RGB555   ((uint16_t)((2u << 10) | (2u << 5) | 2u))
 
 /* C-Stick aiming geometry (in 640x384 Top Screen logical pixels; 1.6x physical) */
 #define NOX_3DS_AIM_CLOSE_RADIUS 24.0f /* ~15px physical tight radius around hero */
