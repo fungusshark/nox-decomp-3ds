@@ -40475,6 +40475,11 @@ char *__cdecl sub_42E8E0(int a1, int a2)
   int v6; // ecx
   unsigned __int8 *v7; // eax
 
+#ifdef __3DS__
+  if ( a1 == 8 && a2 == 1 )
+    return (char *)L"L + Start";
+#endif
+
   v2 = *(_DWORD **)&byte_5D4594[754056];
   if ( !*(_DWORD *)&byte_5D4594[754056] )
     return (char *)&byte_5D4594[754072];

@@ -16,6 +16,7 @@ extern unsigned char byte_5D4594[];
 extern int sub_43C700(void);           /* world/map loaded */
 extern int sub_450560(void);           /* console text entry active */
 extern int sub_46A4A0(void);           /* multiplayer chat text entry active */
+extern int sub_46A430(int a1);         /* open multiplayer chat + swkbd */
 extern int sub_459DA0(void);           /* NPC dialog / shop modal active */
 extern unsigned int sub_446360(void);  /* Quit / Pause menu active */
 extern int sub_413A50(void);           /* Yes/No confirmation modal active */
@@ -48,6 +49,7 @@ static bool  g_prev_touch          = false;
 static bool  g_wait_touch_release  = false;
 static bool  g_prev_l_held         = false;
 static bool  g_cstick_or_r_active  = false;
+static bool  g_pending_chat        = false;
 static int   g_lmb_owner           = LMB_OWNER_NONE;
 static int   g_touch_mode          = TOUCH_MODE_NONE;
 
@@ -378,6 +380,25 @@ void nox_3ds_input_poll(nox_3ds_input_t *out)
         }
     }
 
+    /* Initiate multiplayer chat + virtual keyboard: hold L, tap START.
+     * Swallow START until released so the Pause/ESC menu does not fire. */
+    {
+        static bool s_swallow_start = false;
+        if ((g_in.keys_held & NOX_3DS_KEY_L) && (g_in.keys_down & NOX_3DS_KEY_START)) {
+            g_pending_chat = true;
+            s_swallow_start = true;
+        }
+        if (s_swallow_start) {
+            bool raw_start = (g_in.keys_held & NOX_3DS_KEY_START) != 0;
+            g_in.keys_held &= ~NOX_3DS_KEY_START;
+            g_in.keys_down &= ~NOX_3DS_KEY_START;
+            g_in.keys_up   &= ~NOX_3DS_KEY_START;
+            if (!raw_start) {
+                s_swallow_start = false;
+            }
+        }
+    }
+
     memset(&cpad, 0, sizeof(cpad));
     memset(&cstick, 0, sizeof(cstick));
     memset(&touch, 0, sizeof(touch));
@@ -425,6 +446,15 @@ void nox_3ds_input_process_hybrid(void)
 {
     const bool world_mode = g_in.in_gameplay;
     bool l_held = (g_in.keys_held & NOX_3DS_KEY_L) != 0;
+
+    if (g_pending_chat) {
+        g_pending_chat = false;
+        uint32_t chat_win = nox_read_u32(&byte_5D4594[1064860]);
+        if (chat_win != 0 && !sub_46A4A0() && !sub_446360() &&
+            !sub_413A50() && !sub_450560() && !sub_459DA0()) {
+            sub_46A430(0);
+        }
+    }
 
     /* =====================================================================
      * 1. Top-Screen World Aiming: C-Stick + L Modifier
@@ -660,6 +690,7 @@ void nox_3ds_input_reset_after_applet(void)
     release_lmb_if_owned(LMB_OWNER_TOUCH);
     release_lmb_if_owned(LMB_OWNER_WORLD_R);
     g_touch_mode = TOUCH_MODE_NONE;
+    g_pending_chat = false;
     nox_ctrl_set_touch_move(0, 0, 0);
 
     /* Drain stale HID state and ignore touch until stylus is lifted so tapping
