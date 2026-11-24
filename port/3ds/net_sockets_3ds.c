@@ -39,6 +39,9 @@
 #define MAX_SOC_SOCKS           NOX_3DS_SOCKETS_FD_MAX
 #define SOCKETS_FD_BASE         NOX_3DS_SOCKETS_FD_BASE
 #define SOC_MAX_DRAIN_PER_TICK  64u
+#define SOC_DRAIN_WINDOW_MS     16u       /* Half of a 30 Hz Nox tick (~33 ms) */
+/* libctru sys/socket.h rejects any send/recv flag > 0x4 with EOPNOTSUPP. */
+#define SOC_SAFE_MSG_FLAGS(f)   (((f) & (MSG_OOB | MSG_PEEK)) | MSG_DONTWAIT)
 
 #define NOX_FIONREAD            0x4004667Fu
 #define NOX_FIONBIO             0x8004667Eu
@@ -384,8 +387,19 @@ static int sockets_setsockopt(int vfd, int level, int opt, const void *val, unsi
 
     int orig_level = level;
     if (level == 0xFFFF && opt == 0x20) {
-        level = SOL_SOCKET;
-        opt = SO_BROADCAST;
+        /* libctru defines SO_BROADCAST as 0x0000 (broadcast is always enabled on soc:u).
+         * Short-circuit here to avoid a guaranteed-failing setsockopt() IPC. */
+        if (val && len >= sizeof(int)) {
+            int on = 0;
+            memcpy(&on, val, sizeof(int));
+            soc_lock();
+            s = lookup_slot(vfd);
+            if (s)
+                s->broadcast = (on != 0);
+            soc_unlock();
+        }
+        last_socket_error = 0;
+        return 0;
     }
 
     int r = setsockopt(rfd, level, opt, val, (socklen_t)len);
@@ -435,12 +449,16 @@ static int sockets_ioctlsocket(int vfd, long cmd, unsigned long *argp)
     }
     int rfd = s->real_fd;
     int stype = s->type;
-    uint32_t now_ms = nox_3ds_get_ticks_ms();
-    if (s->last_rx_tick_ms != now_ms) {
-        s->last_rx_tick_ms = now_ms;
-        s->rx_count_this_tick = 0;
+    bool capped = false;
+    if (s->rx_count_this_tick > 0u) {
+        uint32_t now_ms = nox_3ds_get_ticks_ms();
+        if ((uint32_t)(now_ms - s->last_rx_tick_ms) >= SOC_DRAIN_WINDOW_MS) {
+            s->last_rx_tick_ms = now_ms;
+            s->rx_count_this_tick = 0;
+        } else {
+            capped = (s->rx_count_this_tick >= SOC_MAX_DRAIN_PER_TICK);
+        }
     }
-    bool capped = (s->rx_count_this_tick >= SOC_MAX_DRAIN_PER_TICK);
     soc_unlock();
 
     if (ucmd == NOX_FIONBIO) {
@@ -530,12 +548,11 @@ static int sockets_sendto(int vfd, const void *buf, unsigned int len, int flags,
     soc_unlock();
 
     struct sockaddr_in dst_sin;
-    memset(&dst_sin, 0, sizeof(dst_sin));
     memcpy(&dst_sin, to, sizeof(dst_sin));
     dst_sin.sin_family = AF_INET;
     memset(dst_sin.sin_zero, 0, sizeof(dst_sin.sin_zero));
 
-    ssize_t r = sendto(rfd, buf, (size_t)len, flags | MSG_DONTWAIT,
+    ssize_t r = sendto(rfd, buf, (size_t)len, SOC_SAFE_MSG_FLAGS(flags),
                        (const struct sockaddr *)&dst_sin, (socklen_t)sizeof(dst_sin));
     if (r < 0) {
         last_socket_error = wsa_from_errno(errno);
@@ -572,10 +589,9 @@ static int sockets_recvfrom(int vfd, void *buf, unsigned int len, int flags,
     soc_unlock();
 
     struct sockaddr_in src_sin;
-    memset(&src_sin, 0, sizeof(src_sin));
     socklen_t src_len = (socklen_t)sizeof(src_sin);
 
-    ssize_t r = recvfrom(rfd, buf, (size_t)len, flags | MSG_DONTWAIT,
+    ssize_t r = recvfrom(rfd, buf, (size_t)len, SOC_SAFE_MSG_FLAGS(flags),
                          from ? (struct sockaddr *)&src_sin : NULL,
                          from ? &src_len : NULL);
     if (r < 0) {
@@ -595,11 +611,13 @@ static int sockets_recvfrom(int vfd, void *buf, unsigned int len, int flags,
     s = lookup_slot(vfd);
     if (s) {
         uint32_t now_ms = nox_3ds_get_ticks_ms();
-        if (s->last_rx_tick_ms != now_ms) {
+        if (s->rx_count_this_tick == 0u ||
+            (uint32_t)(now_ms - s->last_rx_tick_ms) >= SOC_DRAIN_WINDOW_MS) {
             s->last_rx_tick_ms = now_ms;
-            s->rx_count_this_tick = 0;
+            s->rx_count_this_tick = 1u;
+        } else {
+            s->rx_count_this_tick++;
         }
-        s->rx_count_this_tick++;
     }
     soc_unlock();
 
@@ -742,7 +760,7 @@ static int sockets_send(int vfd, const void *buf, unsigned int len, int flags)
     int rfd = s->real_fd;
     soc_unlock();
 
-    ssize_t r = send(rfd, buf, (size_t)len, flags | MSG_DONTWAIT);
+    ssize_t r = send(rfd, buf, (size_t)len, SOC_SAFE_MSG_FLAGS(flags));
     if (r < 0) {
         last_socket_error = wsa_from_errno(errno);
         return -1;
@@ -775,7 +793,7 @@ static int sockets_recv(int vfd, void *buf, unsigned int len, int flags)
     int rfd = s->real_fd;
     soc_unlock();
 
-    ssize_t r = recv(rfd, buf, (size_t)len, flags | MSG_DONTWAIT);
+    ssize_t r = recv(rfd, buf, (size_t)len, SOC_SAFE_MSG_FLAGS(flags));
     if (r < 0) {
         last_socket_error = wsa_from_errno(errno);
         return -1;

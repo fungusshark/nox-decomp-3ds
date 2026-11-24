@@ -47279,7 +47279,7 @@ int __cdecl sub_4375F0(const char *a1, __int16 a2, char *a3, int a4)
   {
     if ( memcmp(a1, &byte_5D4594[815108], 1u) )
     {
-      if ( *(_DWORD *)(a4 + 44) == *(_DWORD *)&byte_5D4594[814964] )
+      if ( nox_read_u32((const void *)(a4 + 44)) == *(_DWORD *)&byte_5D4594[814964] )
       {
         if ( sub_4A0410(a1, a2) )
         {

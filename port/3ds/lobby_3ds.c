@@ -37,7 +37,7 @@ extern int nox_env_truthy(const char *s);
 #define NOX_3DS_LOBBY_WORKER_STACK      (32u * 1024u)
 #define NOX_3DS_LOBBY_CACHE_TTL_MS      30000u
 #define NOX_3DS_LOBBY_RETRY_BACKOFF_MS  10000u
-#define NOX_3DS_LOBBY_HTTP_TIMEOUT_NS   5000000000ULL /* 5 seconds */
+#define NOX_3DS_LOBBY_HTTP_TIMEOUT_NS   3000000000ULL /* 3 seconds */
 #define NOX_3DS_LOBBY_MAX_REDIRECTS     4
 #define NOX_3DS_LOBBY_DEFAULT_PORT      18590u
 #define NOX_3DS_LOBBY_REG_PERIOD_MS     20000u
@@ -81,13 +81,18 @@ static bool g_worker_started = false;
 static volatile bool g_worker_stop = false;
 static bool g_httpc_inited = false;
 
+typedef struct {
+    nox_server_row row;
+    struct in_addr resolved_ip;
+} lobby_cached_row_t;
+
 /* Discovery fetch state & server cache */
 static bool g_fetch_requested = false;
 static bool g_fetch_inflight = false;
 static bool g_cache_valid = false;
 static uint32_t g_cache_last_ok_ms = 0;
 static uint32_t g_cache_next_try_ms = 0;
-static nox_server_row g_srv_cache[NOX_3DS_LOBBY_MAX_SERVERS];
+static lobby_cached_row_t g_srv_cache[NOX_3DS_LOBBY_MAX_SERVERS];
 static size_t g_srv_cache_count = 0;
 static char g_last_good_base_url[256];
 
@@ -261,8 +266,14 @@ static size_t lobby_load_endpoints(lobby_endpoint_t *eps, size_t max_eps, bool *
 
 static bool lobby_should_register_host(void)
 {
-    if (nox_env_truthy(getenv("NOX_LOBBY_REGISTER_ENABLE")))
+    static int s_cached = -1;
+    if (s_cached >= 0)
+        return s_cached != 0;
+
+    if (nox_env_truthy(getenv("NOX_LOBBY_REGISTER_ENABLE"))) {
+        s_cached = 1;
         return true;
+    }
 
     /* Opt-in via presence of sdmc:/3ds/nox/lobby_host.txt (OFF by default). */
     FILE *f = fopen(NOX_3DS_DATA_ROOT "/lobby_host.txt", "r");
@@ -271,10 +282,10 @@ static bool lobby_should_register_host(void)
         size_t n = fread(buf, 1, sizeof(buf) - 1, f);
         fclose(f);
         buf[n] = '\0';
-        if (n == 0)
-            return true; /* empty marker file enables host listing */
-        return nox_env_truthy(buf) != 0;
+        s_cached = (n == 0 || nox_env_truthy(buf) != 0) ? 1 : 0;
+        return s_cached != 0;
     }
+    s_cached = 0;
     return false;
 }
 
@@ -433,13 +444,8 @@ static size_t queue_cached_rows_locked(void)
 
     size_t queued = 0;
     for (size_t i = 0; i < g_srv_cache_count; ++i) {
-        const nox_server_row *row = &g_srv_cache[i];
-
-        struct in_addr srv_ip;
-        if (!resolve_ipv4_addr(row->addr, &srv_ip)) {
-            printf("[lobby3ds] Skip unresolvable server '%s' (%s)\n", row->name, row->addr);
-            continue;
-        }
+        const nox_server_row *row = &g_srv_cache[i].row;
+        struct in_addr srv_ip = g_srv_cache[i].resolved_ip;
 
         fake_srv_pkt_t *slot = alloc_fake_slot_locked();
         if (!slot)
@@ -756,7 +762,9 @@ static void worker_do_fetch_list(char *json_buf, size_t json_cap)
     }
 
     nox_server_row parsed[NOX_3DS_LOBBY_MAX_SERVERS];
+    lobby_cached_row_t resolved[NOX_3DS_LOBBY_MAX_SERVERS];
     size_t parsed_count = 0;
+    size_t resolved_count = 0;
     bool got_valid_response = false;
     char good_base[256] = {0};
 
@@ -778,10 +786,25 @@ static void worker_do_fetch_list(char *json_buf, size_t json_cap)
         }
 
         parsed_count = lobby_parse_games_json(json_buf, parsed, NOX_3DS_LOBBY_MAX_SERVERS);
+        /* Pre-resolve all server IPv4 addresses strictly on this background thread
+         * so the 30 Hz main thread never blocks on DNS or holds g_lobby_lock during DNS. */
+        resolved_count = 0;
+        for (size_t j = 0; j < parsed_count && !g_worker_stop; ++j) {
+            struct in_addr srv_ip;
+            if (!resolve_ipv4_addr(parsed[j].addr, &srv_ip)) {
+                printf("[lobby3ds] Skip unresolvable server '%s' (%s)\n",
+                       parsed[j].name, parsed[j].addr);
+                continue;
+            }
+            resolved[resolved_count].row = parsed[j];
+            resolved[resolved_count].resolved_ip = srv_ip;
+            resolved_count++;
+        }
+
         got_valid_response = true;
         snprintf(good_base, sizeof(good_base), "%s", endpoints[i].base_url);
-        printf("[lobby3ds] Parsed %zu server(s) from %s (%d bytes)\n",
-               parsed_count, endpoints[i].base_url, n);
+        printf("[lobby3ds] Parsed %zu server(s) (%zu resolved) from %s (%d bytes)\n",
+               parsed_count, resolved_count, endpoints[i].base_url, n);
         break;
     }
 
@@ -789,8 +812,8 @@ static void worker_do_fetch_list(char *json_buf, size_t json_cap)
     RecursiveLock_Lock(&g_lobby_lock);
     g_fetch_inflight = false;
     if (got_valid_response) {
-        memcpy(g_srv_cache, parsed, parsed_count * sizeof(nox_server_row));
-        g_srv_cache_count = parsed_count;
+        memcpy(g_srv_cache, resolved, resolved_count * sizeof(lobby_cached_row_t));
+        g_srv_cache_count = resolved_count;
         g_cache_valid = true;
         g_cache_last_ok_ms = now_ms ? now_ms : 1u;
         g_cache_next_try_ms = 0;
@@ -1002,15 +1025,22 @@ void nox_3ds_lobby_shutdown(void)
     g_worker_stop = true;
     LightEvent_Signal(&g_lobby_event);
 
+    bool worker_joined = true;
     if (g_worker_started && g_worker_thread) {
-        /* Wait up to 6 seconds for any in-flight httpc timeout to unwind cleanly */
-        threadJoin(g_worker_thread, 6000000000ULL);
-        threadFree(g_worker_thread);
-        g_worker_thread = NULL;
-        g_worker_started = false;
+        /* Wait up to 5 seconds (> 3s per-request httpc timeout) for clean unwind */
+        Result jrc = threadJoin(g_worker_thread, 5000000000ULL);
+        if (R_SUCCEEDED(jrc)) {
+            threadFree(g_worker_thread);
+            g_worker_thread = NULL;
+            g_worker_started = false;
+        } else {
+            worker_joined = false;
+            printf("[lobby3ds] WARN: worker threadJoin timed out (0x%08lX); skipping httpcExit\n",
+                   (unsigned long)jrc);
+        }
     }
 
-    if (g_httpc_inited) {
+    if (worker_joined && g_httpc_inited) {
         httpcExit();
         g_httpc_inited = false;
         nox_3ds_state_mut()->httpc_ready = false;

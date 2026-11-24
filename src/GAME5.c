@@ -12347,7 +12347,7 @@ int __cdecl sub_554D70(char a1)
   int v11; // [esp+18h] [ebp-218h]
   int v12; // [esp+1Ch] [ebp-214h]
   struct sockaddr_in from; // [esp+20h] [ebp-210h]
-  char buf[256]; // [esp+30h] [ebp-200h]
+  NOX_ALIGN4 char buf[256]; // [esp+30h] [ebp-200h]
   NOX_ALIGN4 char in[256]; // [esp+130h] [ebp-100h]
 
   fromlen = 16;
