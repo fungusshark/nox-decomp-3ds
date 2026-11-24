@@ -97,7 +97,16 @@ static bool prepare_frame_slot(nox_3ds_tex_slot_t *slot,
 
     const void *xfer_src = NULL;
     if (frame->is_linear && frame->pitch == NOX_3DS_TEX_W * 2) {
-        GSPGPU_FlushDataCache((void *)frame->pixels, (u32)(frame->pitch * h));
+        int fy = (frame->crop_h > 0) ? (frame->crop_y - 2) : 0;
+        int fe = (frame->crop_h > 0) ? (frame->crop_y + frame->crop_h + 2) : h;
+        if (fy < 0) fy = 0;
+        if (fe > h) fe = h;
+        if (fe > fy) {
+            GSPGPU_FlushDataCache(
+                (uint8_t *)frame->pixels + (size_t)fy * (size_t)frame->pitch,
+                (u32)(frame->pitch * (fe - fy))
+            );
+        }
         xfer_src = frame->pixels;
     } else {
         if (!slot->staging) {

@@ -62,6 +62,20 @@ add_executable(nox
     "${CMAKE_CURRENT_SOURCE_DIR}/stubs.c"
 )
 
+# Hand-written 3DS platform glue (audio/minimp3, video, input, fs) does not rely on
+# IDA-decompiled x86 idioms and benefits from -O3 + loop optimizations on ARM11.
+set_source_files_properties(
+    "${CMAKE_CURRENT_SOURCE_DIR}/platform_3ds.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/fs_3ds.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/audio_3ds.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/video_3ds.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/input_3ds.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/swkbd_3ds.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/net_loopback_3ds.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/stubs.c"
+    PROPERTIES COMPILE_OPTIONS "-O3;-faggressive-loop-optimizations"
+)
+
 target_include_directories(nox PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}"
     "${CMAKE_CURRENT_SOURCE_DIR}/include"

@@ -52189,6 +52189,14 @@ LABEL_24:
         v25 = (int *)sub_437250();
         sub_431720(v25);
 
+        if ( do_present )
+        {
+          if ( sub_43C700() && !(*(_DWORD *)&byte_5D4594[2650636] & 0x40000) )
+            nox_3ds_set_top_crop(NOX_3DS_VP_LEFT, NOX_3DS_VP_TOP, NOX_3DS_VP_W, NOX_3DS_VP_H, true);
+          else
+            nox_3ds_set_top_crop(0, 0, NOX_3DS_LOGICAL_W, NOX_3DS_LOGICAL_H, true);
+        }
+
         if ( do_present && world_mode &&
              (nox_3ds_input_is_ranged_aim_held() ||
               nox_3ds_input_is_touch_move_active() ||
@@ -52242,14 +52250,6 @@ LABEL_24:
           sub_4AD170();
           if ( world_mode )
             nox_3ds_skip_default_cursor_blit();
-        }
-
-        if ( do_present )
-        {
-          if ( sub_43C700() && !(*(_DWORD *)&byte_5D4594[2650636] & 0x40000) )
-            nox_3ds_set_top_crop(NOX_3DS_VP_LEFT, NOX_3DS_VP_TOP, NOX_3DS_VP_W, NOX_3DS_VP_H, true);
-          else
-            nox_3ds_set_top_crop(0, 0, NOX_3DS_LOGICAL_W, NOX_3DS_LOGICAL_H, true);
         }
 
         /* --- Pass 2: Bottom Screen (Secondary SW buffer -> 320x240) --- */

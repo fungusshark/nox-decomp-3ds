@@ -651,25 +651,44 @@ void nox_3ds_swbuf_end_bottom(void)
         for (int y = 0; y < h; ++y) {
             const uint16_t *src = g_3ds_bot_swrows[y];
             int b = blocks16;
-            while (b-- > 0) {
-                dst[0]  = (_WORD)((src[0]  << 1) | A);
-                dst[1]  = (_WORD)((src[1]  << 1) | A);
-                dst[2]  = (_WORD)((src[2]  << 1) | A);
-                dst[3]  = (_WORD)((src[3]  << 1) | A);
-                dst[4]  = (_WORD)((src[4]  << 1) | A);
-                dst[5]  = (_WORD)((src[5]  << 1) | A);
-                dst[6]  = (_WORD)((src[6]  << 1) | A);
-                dst[7]  = (_WORD)((src[7]  << 1) | A);
-                dst[8]  = (_WORD)((src[8]  << 1) | A);
-                dst[9]  = (_WORD)((src[9]  << 1) | A);
-                dst[10] = (_WORD)((src[10] << 1) | A);
-                dst[11] = (_WORD)((src[11] << 1) | A);
-                dst[12] = (_WORD)((src[12] << 1) | A);
-                dst[13] = (_WORD)((src[13] << 1) | A);
-                dst[14] = (_WORD)((src[14] << 1) | A);
-                dst[15] = (_WORD)((src[15] << 1) | A);
-                dst += 16;
-                src += 16;
+            if ((((uintptr_t)src | (uintptr_t)dst) & 3u) == 0u) {
+                uint32_t *dst32 = (uint32_t *)(void *)dst;
+                const uint32_t *src32 = (const uint32_t *)(const void *)src;
+                while (b-- > 0) {
+                    dst32[0] = ((src32[0] & 0x7FFF7FFFu) << 1) | 0x00010001u;
+                    dst32[1] = ((src32[1] & 0x7FFF7FFFu) << 1) | 0x00010001u;
+                    dst32[2] = ((src32[2] & 0x7FFF7FFFu) << 1) | 0x00010001u;
+                    dst32[3] = ((src32[3] & 0x7FFF7FFFu) << 1) | 0x00010001u;
+                    dst32[4] = ((src32[4] & 0x7FFF7FFFu) << 1) | 0x00010001u;
+                    dst32[5] = ((src32[5] & 0x7FFF7FFFu) << 1) | 0x00010001u;
+                    dst32[6] = ((src32[6] & 0x7FFF7FFFu) << 1) | 0x00010001u;
+                    dst32[7] = ((src32[7] & 0x7FFF7FFFu) << 1) | 0x00010001u;
+                    dst32 += 8;
+                    src32 += 8;
+                }
+                dst = (_WORD *)(void *)dst32;
+                src = (const uint16_t *)(const void *)src32;
+            } else {
+                while (b-- > 0) {
+                    dst[0]  = (_WORD)((src[0]  << 1) | A);
+                    dst[1]  = (_WORD)((src[1]  << 1) | A);
+                    dst[2]  = (_WORD)((src[2]  << 1) | A);
+                    dst[3]  = (_WORD)((src[3]  << 1) | A);
+                    dst[4]  = (_WORD)((src[4]  << 1) | A);
+                    dst[5]  = (_WORD)((src[5]  << 1) | A);
+                    dst[6]  = (_WORD)((src[6]  << 1) | A);
+                    dst[7]  = (_WORD)((src[7]  << 1) | A);
+                    dst[8]  = (_WORD)((src[8]  << 1) | A);
+                    dst[9]  = (_WORD)((src[9]  << 1) | A);
+                    dst[10] = (_WORD)((src[10] << 1) | A);
+                    dst[11] = (_WORD)((src[11] << 1) | A);
+                    dst[12] = (_WORD)((src[12] << 1) | A);
+                    dst[13] = (_WORD)((src[13] << 1) | A);
+                    dst[14] = (_WORD)((src[14] << 1) | A);
+                    dst[15] = (_WORD)((src[15] << 1) | A);
+                    dst += 16;
+                    src += 16;
+                }
             }
             for (int r = 0; r < rem; ++r) {
                 dst[r] = (_WORD)((src[r] << 1) | A);
@@ -3453,38 +3472,84 @@ void sub_4AD1E0()
 
     if (!result)
     {
+#ifdef __3DS__
+        {
+            int y_start = 0;
+            int y_end   = *(_DWORD *)&byte_5D4594[3801788];
+            if (g_3ds_top_crop_valid && g_3ds_top_crop_h > 0) {
+                /* Include 2-row guard band for GPU_LINEAR edge filtering */
+                int cy = g_3ds_top_crop_y - 2;
+                int ce = g_3ds_top_crop_y + g_3ds_top_crop_h + 2;
+                if (cy < 0) cy = 0;
+                if (ce > y_end) ce = y_end;
+                if (cy < ce) {
+                    y_start = cy;
+                    y_end   = ce;
+                }
+            }
+            v2 = y_end - y_start;
+            v3 = (*(_WORD ***)&byte_5D4594[3798784]) + y_start;
+            v1 = (_WORD *)(void *)((char *)v1 + (size_t)y_start * (size_t)g_backbuffer1->pitch);
+        }
+#else
         v2 = *(_DWORD *)&byte_5D4594[3801788];          // height
         v3 = *(_WORD ***)&byte_5D4594[3798784];         // source row pointers
+#endif
 
         while (v2 > 0)
         {
             v4 = *v3;                                   // src row
             v5 = *(_DWORD *)&byte_5D4594[3801800];      // blocks per row (width / 16)
 
-            const WORD A = 1;
-            while (v5 > 0)
+            if ((((uintptr_t)v4 | (uintptr_t)v1) & 3u) == 0u)
             {
-                // unroll 16 pixels -> RGBA5551 (alpha bit = 1)
-                v1[0]  = (WORD)((v4[0]  << 1) | A);
-                v1[1]  = (WORD)((v4[1]  << 1) | A);
-                v1[2]  = (WORD)((v4[2]  << 1) | A);
-                v1[3]  = (WORD)((v4[3]  << 1) | A);
-                v1[4]  = (WORD)((v4[4]  << 1) | A);
-                v1[5]  = (WORD)((v4[5]  << 1) | A);
-                v1[6]  = (WORD)((v4[6]  << 1) | A);
-                v1[7]  = (WORD)((v4[7]  << 1) | A);
-                v1[8]  = (WORD)((v4[8]  << 1) | A);
-                v1[9]  = (WORD)((v4[9]  << 1) | A);
-                v1[10] = (WORD)((v4[10] << 1) | A);
-                v1[11] = (WORD)((v4[11] << 1) | A);
-                v1[12] = (WORD)((v4[12] << 1) | A);
-                v1[13] = (WORD)((v4[13] << 1) | A);
-                v1[14] = (WORD)((v4[14] << 1) | A);
-                v1[15] = (WORD)((v4[15] << 1) | A);
+                uint32_t *dst32 = (uint32_t *)(void *)v1;
+                const uint32_t *src32 = (const uint32_t *)(const void *)v4;
+                while (v5 > 0)
+                {
+                    /* unroll 16 pixels (8x 32-bit pairs) -> RGBA5551 (alpha bit = 1) */
+                    dst32[0] = ((src32[0] & 0x7FFF7FFFu) << 1) | 0x00010001u;
+                    dst32[1] = ((src32[1] & 0x7FFF7FFFu) << 1) | 0x00010001u;
+                    dst32[2] = ((src32[2] & 0x7FFF7FFFu) << 1) | 0x00010001u;
+                    dst32[3] = ((src32[3] & 0x7FFF7FFFu) << 1) | 0x00010001u;
+                    dst32[4] = ((src32[4] & 0x7FFF7FFFu) << 1) | 0x00010001u;
+                    dst32[5] = ((src32[5] & 0x7FFF7FFFu) << 1) | 0x00010001u;
+                    dst32[6] = ((src32[6] & 0x7FFF7FFFu) << 1) | 0x00010001u;
+                    dst32[7] = ((src32[7] & 0x7FFF7FFFu) << 1) | 0x00010001u;
 
-                v1 += 16;
-                v4 += 16;
-                v5--;
+                    dst32 += 8;
+                    src32 += 8;
+                    v5--;
+                }
+                v1 = (_WORD *)(void *)dst32;
+            }
+            else
+            {
+                const WORD A = 1;
+                while (v5 > 0)
+                {
+                    // unroll 16 pixels -> RGBA5551 (alpha bit = 1)
+                    v1[0]  = (WORD)((v4[0]  << 1) | A);
+                    v1[1]  = (WORD)((v4[1]  << 1) | A);
+                    v1[2]  = (WORD)((v4[2]  << 1) | A);
+                    v1[3]  = (WORD)((v4[3]  << 1) | A);
+                    v1[4]  = (WORD)((v4[4]  << 1) | A);
+                    v1[5]  = (WORD)((v4[5]  << 1) | A);
+                    v1[6]  = (WORD)((v4[6]  << 1) | A);
+                    v1[7]  = (WORD)((v4[7]  << 1) | A);
+                    v1[8]  = (WORD)((v4[8]  << 1) | A);
+                    v1[9]  = (WORD)((v4[9]  << 1) | A);
+                    v1[10] = (WORD)((v4[10] << 1) | A);
+                    v1[11] = (WORD)((v4[11] << 1) | A);
+                    v1[12] = (WORD)((v4[12] << 1) | A);
+                    v1[13] = (WORD)((v4[13] << 1) | A);
+                    v1[14] = (WORD)((v4[14] << 1) | A);
+                    v1[15] = (WORD)((v4[15] << 1) | A);
+
+                    v1 += 16;
+                    v4 += 16;
+                    v5--;
+                }
             }
 
             v1 = (_WORD *)((char *)v1 + dword_974868);
