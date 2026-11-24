@@ -10898,6 +10898,40 @@ int __cdecl sub_45BD40(int a1)
   sub_46AA20(a1, &v66, &v67);
   v1 = v66 - 24;
   v2 = v67 - 76;
+#ifdef __3DS__
+  bool v3ds_sb_fb = false;
+  if ( *(_DWORD *)&byte_587000[132132]
+    && *(_DWORD *)&byte_5D4594[1046868] != 2
+    && *(_DWORD *)&byte_5D4594[1046868] != 3
+    && nox_3ds_font_is_enabled() )
+  {
+    int sb_lh = sub_43F320(0) + 2;
+    int sb_per_col = (sb_lh > 0) ? (141 / sb_lh - 1) : 0;
+    int sb_page = *(_DWORD *)&byte_5D4594[1046936];
+    int sb_total = *(int *)&byte_5D4594[1047508] - *(_DWORD *)&byte_5D4594[1047512];
+    int sb_cls = *(_BYTE *)(*(_DWORD *)&byte_5D4594[1047516] + 2251);
+    for ( int sbi = 0; sbi < 2 * sb_per_col; ++sbi )
+    {
+      int sbe = sbi + 2 * sb_per_col * sb_page;
+      if ( sbe >= sb_total )
+        break;
+      const uint16_t *sb_name;
+      if ( *(_DWORD *)&byte_5D4594[1046868] == 1 )
+        sb_name = (const uint16_t *)sub_427240(*(_DWORD *)&byte_5D4594[4 * sbe + 1046960]);
+      else if ( sb_cls )
+        sb_name = (const uint16_t *)sub_424930(*(_DWORD *)&byte_5D4594[4 * sbe + 1046960]);
+      else
+        sb_name = (const uint16_t *)sub_425260(*(_DWORD *)&byte_5D4594[4 * sbe + 1046960]);
+      if ( sb_name && !nox_3ds_font_fits_single(0, sb_name, 108, 0) )
+      {
+        v3ds_sb_fb = true;
+        break;
+      }
+    }
+  }
+  nox_3ds_font_push_fallback(v3ds_sb_fb);
+  bool v3ds_desc_fb = false;
+#endif
   v3 = sub_43F320(0);
   *(_DWORD *)&byte_5D4594[1046656] = v3 + 2;
   sub_434390(*(int *)&byte_5D4594[1046880]);
@@ -11043,6 +11077,10 @@ int __cdecl sub_45BD40(int a1)
     v30 = v67 + 52;
     if ( v28 )
     {
+#ifdef __3DS__
+      v3ds_desc_fb = !nox_3ds_font_fits_multiline(0, v28, 92, 141, 0);
+      nox_3ds_font_push_fallback(v3ds_desc_fb);
+#endif
       sub_43F840(0, v28, 0, WideCharStr, 92);
       v31 = *(_DWORD *)WideCharStr;
       v32 = v66 + 153;
@@ -11069,6 +11107,10 @@ int __cdecl sub_45BD40(int a1)
       v30 = v67 + 52;
       if ( !v36 )
         goto LABEL_75;
+#ifdef __3DS__
+      v3ds_desc_fb = !nox_3ds_font_fits_multiline(0, v36, 92, 141, 0);
+      nox_3ds_font_push_fallback(v3ds_desc_fb);
+#endif
       sub_43F840(0, v36, 0, WideCharStr, 92);
       v31 = *(_DWORD *)WideCharStr;
       v32 = v66 + 153;
@@ -11153,6 +11195,10 @@ LABEL_53:
     v30 = v67 + 52;
     if ( v53 )
     {
+#ifdef __3DS__
+      v3ds_desc_fb = !nox_3ds_font_fits_multiline(0, v53, 92, 141, 0);
+      nox_3ds_font_push_fallback(v3ds_desc_fb);
+#endif
       sub_43F840(0, v53, 0, WideCharStr, 92);
       v32 = v66 + 153;
       v37 = (141 - *(_DWORD *)WideCharStr) / 2 + v67 + 17;
@@ -11161,10 +11207,17 @@ LABEL_73:
         v37 = v30;
 LABEL_74:
       sub_43FAF0(0, v29, v32, v37, 92, 0);
+#ifdef __3DS__
+      nox_3ds_font_pop_fallback(v3ds_desc_fb);
+      v3ds_desc_fb = false;
+#endif
       goto LABEL_75;
     }
   }
 LABEL_75:
+#ifdef __3DS__
+  nox_3ds_font_pop_fallback(v3ds_sb_fb);
+#endif
   if ( !*(_DWORD *)&byte_587000[132132]
     && *(int *)&byte_5D4594[1046932] >= *(int *)&byte_5D4594[1047508] - *(int *)&byte_5D4594[1047512] - 1 )
   {
@@ -45096,9 +45149,21 @@ int __cdecl sub_488160(int a1, int a2)
   }
   if ( *(_WORD *)(a2 + 72) )
   {
+#ifdef __3DS__
+    int v3ds_ebw = (v23[521] > 0) ? (int)v23[521] : 0;
+    bool v3ds_lfb = !nox_3ds_font_fits_single(
+      nox_3ds_font_slot_from_ptr(*(_DWORD *)(a2 + 200)),
+      (const uint16_t *)(a2 + 72),
+      v21 - v3ds_ebw - 6,
+      *(_DWORD *)&byte_5D4594[816456]);
+    nox_3ds_font_push_fallback(v3ds_lfb);
+#endif
     sub_43F840(*(_DWORD *)(a2 + 200), (unsigned __int16 *)(a2 + 72), &v22, 0, 0);
     sub_434390(*(_DWORD *)(a2 + 68));
     sub_43FAF0(*(_DWORD *)(a2 + 200), (_WORD *)(a2 + 72), v4 + 2, v7, v21, 0);
+#ifdef __3DS__
+    nox_3ds_font_pop_fallback(v3ds_lfb);
+#endif
     v4 += v22 + 6;
     v21 += -6 - v22;
   }
@@ -45145,6 +45210,14 @@ int __cdecl sub_488160(int a1, int a2)
     {
       nox_wcscpy((wchar_t *)v31, v8);
     }
+#ifdef __3DS__
+    bool v3ds_vfb = !nox_3ds_font_fits_single(
+      nox_3ds_font_slot_from_ptr(*(_DWORD *)(a2 + 200)),
+      (const uint16_t *)v31,
+      v21 - 10,
+      *(_DWORD *)&byte_5D4594[816456]);
+    nox_3ds_font_push_fallback(v3ds_vfb);
+#endif
     sub_43F840(*(_DWORD *)(a2 + 200), (unsigned __int16 *)v31, &v22, 0, 0);
     v19 = *(_DWORD *)(a2 + 200);
     v25 = v23 + 256;
@@ -45167,6 +45240,9 @@ int __cdecl sub_488160(int a1, int a2)
     v15 = sub_4344A0(192, 0, 192);
     sub_434390(v15);
     sub_43FAF0(*(_DWORD *)(a2 + 200), v25, v4 + v22 + 5, v7, 0, 0);
+#ifdef __3DS__
+    nox_3ds_font_pop_fallback(v3ds_vfb);
+#endif
     v16 = v4 + v22 + v24 + 5;
     if ( v2 == sub_46B4F0() )
     {
@@ -45373,8 +45449,19 @@ int __cdecl sub_488870(int a1, int a2)
   sub_434390(*(_DWORD *)(a2 + 68));
   if ( *(_WORD *)(a2 + 72) )
   {
+#ifdef __3DS__
+    bool v3ds_lfb = !nox_3ds_font_fits_single(
+      nox_3ds_font_slot_from_ptr(*(_DWORD *)(a2 + 200)),
+      (const uint16_t *)(a2 + 72),
+      v3 - 6,
+      *(_DWORD *)&byte_5D4594[816456]);
+    nox_3ds_font_push_fallback(v3ds_lfb);
+#endif
     sub_43F840(*(_DWORD *)(a2 + 200), (unsigned __int16 *)(a2 + 72), &v17, 0, 0);
     sub_43FAF0(*(_DWORD *)(a2 + 200), (_WORD *)(a2 + 72), xLeft + 2, v6, v3, 0);
+#ifdef __3DS__
+    nox_3ds_font_pop_fallback(v3ds_lfb);
+#endif
     v3 += -6 - v17;
     xLeft += v17 + 6;
   }
@@ -45402,6 +45489,14 @@ int __cdecl sub_488870(int a1, int a2)
     {
       nox_wcscpy((wchar_t *)v24, v22);
     }
+#ifdef __3DS__
+    bool v3ds_vfb = !nox_3ds_font_fits_single(
+      nox_3ds_font_slot_from_ptr(*(_DWORD *)(a2 + 200)),
+      (const uint16_t *)v24,
+      v3 - 10,
+      *(_DWORD *)&byte_5D4594[816456]);
+    nox_3ds_font_push_fallback(v3ds_vfb);
+#endif
     sub_43F840(*(_DWORD *)(a2 + 200), (unsigned __int16 *)v24, &v17, 0, 0);
     v20 = v22 + 256;
     sub_43F840(*(_DWORD *)(a2 + 200), v22 + 256, &v19, 0, 0);
@@ -45420,6 +45515,9 @@ int __cdecl sub_488870(int a1, int a2)
     v12 = sub_4344A0(192, 0, 192);
     sub_434390(v12);
     sub_43FAF0(*(_DWORD *)(a2 + 200), v20, v17 + xLeft + 5, v6, v3, 0);
+#ifdef __3DS__
+    nox_3ds_font_pop_fallback(v3ds_vfb);
+#endif
     xLeft += v17 + v19 + 5;
     if ( v2 == sub_46B4F0() )
     {
@@ -45598,6 +45696,12 @@ int __cdecl sub_488D00(int a1, int xLeft)
   }
   if ( *v3 && *(_DWORD *)(v2 + 68) != 0x80000000 )
   {
+#ifdef __3DS__
+    bool v3ds_fb = !nox_3ds_font_fits_multiline(
+      nox_3ds_font_slot_from_ptr(*(_DWORD *)(v2 + 200)),
+      *v3, v5, *(_DWORD *)(a1 + 12), *(_DWORD *)&byte_5D4594[816456]);
+    nox_3ds_font_push_fallback(v3ds_fb);
+#endif
     sub_434390(*(_DWORD *)(v2 + 68));
     sub_43F840(*(_DWORD *)(v2 + 200), *v3, &v29, &v23, v5);
     v8 = v23 / -2 + v6;
@@ -45762,6 +45866,9 @@ LABEL_40:
     {
       sub_43FAF0(*(_DWORD *)(v2 + 200), *v3, xLeft + 2, v8, v5, 0);
     }
+#ifdef __3DS__
+    nox_3ds_font_pop_fallback(v3ds_fb);
+#endif
   }
   sub_43F670(0);
   return 1;
@@ -45912,6 +46019,12 @@ int __cdecl sub_489550(_DWORD *a1, _DWORD *a2)
     sub_47D2C0(v8, (int)a1 + v2[24], v11 + v2[25]);
   if ( *v3 )
   {
+#ifdef __3DS__
+    bool v3ds_fb = !nox_3ds_font_fits_single(
+      nox_3ds_font_slot_from_ptr(v4[50]),
+      *v3, v12, *(_DWORD *)&byte_5D4594[816456]);
+    nox_3ds_font_push_fallback(v3ds_fb);
+#endif
     sub_434390(v4[17]);
     if ( v3[1] )
     {
@@ -45924,6 +46037,9 @@ int __cdecl sub_489550(_DWORD *a1, _DWORD *a2)
     {
       sub_43FAF0(v4[50], *v3, (int)a1 + 2, v6, v12, 0);
     }
+#ifdef __3DS__
+    nox_3ds_font_pop_fallback(v3ds_fb);
+#endif
   }
   sub_43F670(0);
   return 1;

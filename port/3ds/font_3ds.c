@@ -1,22 +1,18 @@
 /*
- * Exact-Parity Native 1:1 PICA200 / citro2d GPU Font Renderer for Nox 3DS
+ * Smart Auto-Fit Native 1:1 PICA200 / citro2d Pixel Font Renderer for Nox 3DS
  *
- * Bakes all 4 of Nox's loaded .fnt files (default.fnt, large.fnt, number.fnt,
- * small.fnt) into a single 256x512 GPU_RGBA8 VRAM atlas using exact area-coverage
- * supersampling (0.5x for 320x240 Bottom Screen, 0.625x for 400x240 Top Screen)
- * with stem-preserving contrast-boosted alpha.
+ * - large.fnt (slot 1): Authentic supersampled Nox medieval serif glyphs baked
+ *   directly from large.fnt at 0.5x (Bottom) and 0.625x (Top) with 100% exact
+ *   stock metrics (zero layout shift).
+ * - default.fnt / number.fnt / small.fnt (slots 0, 2, 3): Razor-sharp 1:1
+ *   proportional 3x5 pixel font (GBA/NDS RPG style) with per-widget smart
+ *   auto-fit: bounded Bottom Screen widgets that would wrap or overflow in 3x5
+ *   automatically fall back to stock software text (with per-list uniformity
+ *   for listboxes), while Top Screen text, scrollable Quest/NPC dialogs,
+ *   buttons, tooltips, speech bubbles, and headers get crisp 1:1 GPU glyphs.
  *
- * Keeps 100% exact width & height parity with stock Nox (zero layout overruns,
- * zero extra line wraps, authentic medieval typography) while eliminating:
- *   1. Nox's 3x3 software smoothing smudge (sub_43F670)
- *   2. Framebuffer bilinear background-color bleed into glyph strokes
- *   3. Half-pixel downscale phase jitter between adjacent glyphs
- *   4. Thin 1px stem washout (alpha contrast boost preserves ~91% stem brightness)
- *
- * Uses Nox's unused RGB555 bit 15 (0x8000) as a pixel-exact occlusion stencil
- * against overlapping windows, stone frames, dragged items, and tooltips.
- *
- * Live toggle: L + R + SELECT (hold L + R, tap SELECT) to A/B compare vs software.
+ * Uses Nox's unused RGB555 bit 15 (0x8000) as a pixel-exact occlusion stencil.
+ * Default: OFF (stock software). Live toggle: L + R + SELECT.
  */
 
 #include "platform_3ds.h"
@@ -30,7 +26,7 @@
 #include <string.h>
 
 #define ATLAS_W           256
-#define ATLAS_H           512
+#define ATLAS_H           256
 #define ATLAS_COLS        16
 #define FONT_SLOTS        4
 #define FONT_GLYPH_COUNT  95   /* ASCII 0x20..0x7E */
@@ -38,52 +34,34 @@
 #define FONT_MAX_GLYPHS   1800
 #define TOAST_MS          2000u
 
-/* Atlas layout inside 256x512 GPU_RGBA8 (16 cols x 6 rows = 96 cells per band,
- * with >= 1px transparent gutter around every glyph cell):
- *   y =   0.. 59 : slot 0 (default.fnt) Bot [0..127, 8x8]  & Top [128..255, 8x10]
- *   y =  64..111 : slot 3 (small.fnt)   Bot [0..127, 8x8]  & Top [128..255, 8x8]
- *   y = 116..175 : slot 2 (number.fnt)  Bot [0..191, 12x10]
- *   y = 180..251 : slot 2 (number.fnt)  Top [0..191, 12x12]
- *   y = 256..339 : slot 1 (large.fnt)   Bot [0..255, 16x14]
- *   y = 344..439 : slot 1 (large.fnt)   Top [0..255, 16x16]
- *   y = 448..495 : embedded 3x5 toast/fallback font [0..127, 8x8]
+/* Atlas layout inside 256x256 GPU_RGBA8 (256 KB VRAM):
+ *   y =   0.. 47, x = 0..127 : crisp 3x5 proportional pixel font (8x8 cells)
+ *   y =  64..147, x = 0..255 : authentic large.fnt Bottom 0.5x   (16x14 cells)
+ *   y = 152..247, x = 0..255 : authentic large.fnt Top    0.625x (16x16 cells)
  */
-#define TOAST_BASE_X      0
-#define TOAST_BASE_Y      448
-#define TOAST_CELL_W      8
-#define TOAST_CELL_H      8
+#define CRISP_BASE_X      0
+#define CRISP_BASE_Y      0
+#define CRISP_CELL_W      8
+#define CRISP_CELL_H      8
+#define LARGE_BOT_BASE_X  0
+#define LARGE_BOT_BASE_Y  64
+#define LARGE_BOT_CELL_W  16
+#define LARGE_BOT_CELL_H  14
+#define LARGE_TOP_BASE_X  0
+#define LARGE_TOP_BASE_Y  152
+#define LARGE_TOP_CELL_W  16
+#define LARGE_TOP_CELL_H  16
 
-typedef struct {
-    int base_x;
-    int base_y;
-    int cell_w;
-    int cell_h;
-} atlas_band_t;
-
-/* [font_slot][screen: 0=Top, 1=Bottom] */
-static const atlas_band_t s_slot_bands[FONT_SLOTS][FONT_SCREENS] = {
-    /* slot 0: default.fnt */
-    { { 128,   0,  8, 10 }, {   0,   0,  8,  8 } },
-    /* slot 1: large.fnt   */
-    { {   0, 344, 16, 16 }, {   0, 256, 16, 14 } },
-    /* slot 2: number.fnt  */
-    { {   0, 180, 12, 12 }, {   0, 116, 12, 10 } },
-    /* slot 3: small.fnt   */
-    { { 128,  64,  8,  8 }, {   0,  64,  8,  8 } }
-};
+typedef enum {
+    TIER_CRISP     = 0, /* 3x5 cap + 1px descender 1:1 proportional pixel font */
+    TIER_LARGE_BOT = 1, /* Nox's real large.fnt supersampled 0.5x for Bottom 320x240 */
+    TIER_LARGE_TOP = 2  /* Nox's real large.fnt supersampled 0.625x for Top 400x240 */
+} font_tier_t;
 
 typedef struct {
     uint8_t w;       /* glyph bitmap width in physical pixels (0..5) */
     uint8_t rows[6]; /* MSB-first in bits 7..3 (bit 7 = leftmost pixel) */
-} toast_glyph_t;
-
-typedef struct {
-    bool    loaded;
-    int     logical_h;
-    uint8_t logical_w[FONT_GLYPH_COUNT];
-    uint8_t phys_w[FONT_SCREENS][FONT_GLYPH_COUNT];
-    uint8_t phys_h[FONT_SCREENS][FONT_GLYPH_COUNT];
-} baked_fnt_slot_t;
+} crisp_glyph_t;
 
 typedef struct {
     uint16_t ch;
@@ -98,14 +76,14 @@ typedef struct {
     int16_t  probe1_x;   /* bit-15 occlusion probe 1 in 640x480 SW buffer */
     int16_t  probe1_y;
     uint16_t rgb555;
-    uint8_t  slot;       /* 0..3 = baked .fnt slot, 4 = toast fallback */
+    uint8_t  tier;       /* font_tier_t */
     uint8_t  clip_en;
     uint8_t  visible;    /* set during bit-15 occlusion resolve */
     uint8_t  _pad;
 } queued_glyph_t;
 
-/* Crisp 3x5 embedded pixel font for L+SELECT status toast & pre-load fallback */
-static const toast_glyph_t s_toast_font[FONT_GLYPH_COUNT] = {
+/* Crisp hand-tuned proportional 3x5 (+1px descender) pixel font (ASCII 0x20..0x7E) */
+static const crisp_glyph_t s_crisp_font[FONT_GLYPH_COUNT] = {
     /* 0x20 ' ' */ { 1, { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 } },
     /* 0x21 '!' */ { 1, { 0x80, 0x80, 0x80, 0x00, 0x80, 0x00 } },
     /* 0x22 '"' */ { 3, { 0xA0, 0xA0, 0x00, 0x00, 0x00, 0x00 } },
@@ -203,17 +181,36 @@ static const toast_glyph_t s_toast_font[FONT_GLYPH_COUNT] = {
     /* 0x7E '~' */ { 4, { 0x00, 0x50, 0xA0, 0x00, 0x00, 0x00 } }
 };
 
-static C3D_Tex          s_atlas_tex;
-static uint32_t        *s_atlas_staging = NULL;
-static bool             s_staging_baked = false;
-static bool             s_atlas_inited = false;
-static bool             s_atlas_uploaded = false;
-static bool             s_native_enabled = false;
-static uint32_t         s_toast_until_ms = 0;
+static C3D_Tex        s_atlas_tex;
+static uint32_t      *s_atlas_staging = NULL;
+static bool           s_staging_baked = false;
+static bool           s_atlas_inited = false;
+static bool           s_atlas_uploaded = false;
+static bool           s_native_enabled = false;
+static int            s_fallback_depth = 0;
+static uint32_t       s_toast_until_ms = 0;
 
-static baked_fnt_slot_t s_fnt[FONT_SLOTS];
-static queued_glyph_t   s_queues[FONT_SCREENS][FONT_MAX_GLYPHS];
-static int              s_counts[FONT_SCREENS] = { 0, 0 };
+/* Stock .fnt metrics recorded from all 4 slots for exact auto-fit comparison */
+static bool           s_stock_loaded[FONT_SLOTS];
+static int            s_stock_h[FONT_SLOTS] = { 10, 18, 12, 8 };
+static uint8_t        s_stock_w[FONT_SLOTS][FONT_GLYPH_COUNT];
+
+/* Supersampled authentic large.fnt (slot 1) physical dimensions */
+static bool           s_large_loaded = false;
+static uint8_t        s_large_bot_w[FONT_GLYPH_COUNT];
+static uint8_t        s_large_bot_h[FONT_GLYPH_COUNT];
+static uint8_t        s_large_top_w[FONT_GLYPH_COUNT];
+static uint8_t        s_large_top_h[FONT_GLYPH_COUNT];
+
+static queued_glyph_t s_queues[FONT_SCREENS][FONT_MAX_GLYPHS];
+static int            s_counts[FONT_SCREENS] = { 0, 0 };
+
+static font_tier_t tier_for_slot(int font_slot, bool is_bottom)
+{
+    if (font_slot == 1 && s_large_loaded)
+        return is_bottom ? TIER_LARGE_BOT : TIER_LARGE_TOP;
+    return TIER_CRISP;
+}
 
 static bool ensure_staging_baked(void)
 {
@@ -228,13 +225,13 @@ static bool ensure_staging_baked(void)
         memset(s_atlas_staging, 0, staging_bytes);
     }
 
-    /* Bake embedded 3x5 toast/fallback glyphs into rows 448..495 */
+    /* Bake crisp 3x5 proportional pixel glyphs into x=0..127, y=0..47 */
     for (int i = 0; i < FONT_GLYPH_COUNT; ++i) {
         int col = i % ATLAS_COLS;
         int row = i / ATLAS_COLS;
-        int bx = TOAST_BASE_X + col * TOAST_CELL_W;
-        int by = TOAST_BASE_Y + row * TOAST_CELL_H;
-        const toast_glyph_t *g = &s_toast_font[i];
+        int bx = CRISP_BASE_X + col * CRISP_CELL_W;
+        int by = CRISP_BASE_Y + row * CRISP_CELL_H;
+        const crisp_glyph_t *g = &s_crisp_font[i];
         for (int y = 0; y < 6; ++y) {
             uint8_t bits = g->rows[y];
             for (int x = 0; x < g->w; ++x) {
@@ -256,31 +253,26 @@ static inline int sample_fnt_bit(const uint8_t *bits, int row_stride, int src_w,
     return (bits[y * row_stride + (x >> 3)] & (uint8_t)(0x80u >> (x & 7))) ? 1 : 0;
 }
 
-static void clear_band(const atlas_band_t *b)
-{
-    int band_w = ATLAS_COLS * b->cell_w;
-    int band_h = 6 * b->cell_h;
-    if (b->base_x + band_w > ATLAS_W) band_w = ATLAS_W - b->base_x;
-    if (b->base_y + band_h > ATLAS_H) band_h = ATLAS_H - b->base_y;
-    for (int y = 0; y < band_h; ++y) {
-        memset(s_atlas_staging + (size_t)(b->base_y + y) * ATLAS_W + (size_t)b->base_x,
-               0, (size_t)band_w * sizeof(uint32_t));
-    }
-}
-
 void nox_3ds_font_begin_slot(int font_slot, int src_h, int line_pitch)
 {
     if (font_slot < 0 || font_slot >= FONT_SLOTS)
         return;
-    if (!ensure_staging_baked())
-        return;
 
-    clear_band(&s_slot_bands[font_slot][NOX_3DS_SWBUF_TOP]);
-    clear_band(&s_slot_bands[font_slot][NOX_3DS_SWBUF_BOTTOM]);
+    s_stock_loaded[font_slot] = false;
+    s_stock_h[font_slot] = (line_pitch > 0) ? line_pitch : ((src_h > 0) ? src_h : 10);
+    memset(s_stock_w[font_slot], 0, sizeof(s_stock_w[font_slot]));
 
-    memset(&s_fnt[font_slot], 0, sizeof(s_fnt[font_slot]));
-    s_fnt[font_slot].logical_h = (line_pitch > 0) ? line_pitch : ((src_h > 0) ? src_h : 10);
-    s_fnt[font_slot].loaded = false;
+    if (font_slot == 1) {
+        if (!ensure_staging_baked())
+            return;
+        memset(s_atlas_staging + (size_t)LARGE_BOT_BASE_Y * ATLAS_W, 0,
+               (size_t)(ATLAS_H - LARGE_BOT_BASE_Y) * ATLAS_W * sizeof(uint32_t));
+        memset(s_large_bot_w, 0, sizeof(s_large_bot_w));
+        memset(s_large_bot_h, 0, sizeof(s_large_bot_h));
+        memset(s_large_top_w, 0, sizeof(s_large_top_w));
+        memset(s_large_top_h, 0, sizeof(s_large_top_h));
+        s_large_loaded = false;
+    }
 }
 
 void nox_3ds_font_add_glyph(int font_slot, uint16_t ch, int src_w,
@@ -288,49 +280,40 @@ void nox_3ds_font_add_glyph(int font_slot, uint16_t ch, int src_w,
 {
     if (font_slot < 0 || font_slot >= FONT_SLOTS)
         return;
-    if (!s_atlas_staging || !bits || ch < 0x20 || ch > 0x7E)
-        return;
-    if (src_w < 0 || src_h <= 0 || row_stride <= 0)
+    if (ch < 0x20 || ch > 0x7E || src_w < 0)
         return;
 
     int idx = (int)(ch - 0x20);
-    int col = idx % ATLAS_COLS;
-    int row = idx / ATLAS_COLS;
-    baked_fnt_slot_t *slot = &s_fnt[font_slot];
+    s_stock_w[font_slot][idx] = (uint8_t)((src_w > 255) ? 255 : src_w);
 
-    slot->logical_w[idx] = (uint8_t)((src_w > 255) ? 255 : src_w);
-    if (src_w == 0)
+    /* Only slot 1 (large.fnt) is supersampled into the atlas; slots 0, 2, 3
+     * use the crisp 3x5 proportional pixel font with smart auto-fit. */
+    if (font_slot != 1 || !s_atlas_staging || !bits || src_w == 0 || src_h <= 0 || row_stride <= 0)
         return;
 
-    /* Thin-stroke fonts (default.fnt, small.fnt) get stronger stem-preserving
-     * alpha boost so 1px stems stay ~91% bright instead of washing out to 50%. */
-    bool thin_strokes = (font_slot == 0 || font_slot == 3);
+    int col = idx % ATLAS_COLS;
+    int row = idx / ATLAS_COLS;
 
     /* 1) Bottom Screen (0.5x = exact 2x2 area box filter) */
     {
-        static const uint8_t k_alpha4_thin[5]  = { 0, 145, 232, 250, 255 };
-        static const uint8_t k_alpha4_bold[5]  = { 0, 115, 200, 242, 255 };
-        const uint8_t *lut = thin_strokes ? k_alpha4_thin : k_alpha4_bold;
-        const atlas_band_t *b = &s_slot_bands[font_slot][NOX_3DS_SWBUF_BOTTOM];
-
+        static const uint8_t k_alpha4[5] = { 0, 115, 200, 242, 255 };
         int dw = (src_w + 1) / 2;
         int dh = (src_h + 1) / 2;
-        if (dw > b->cell_w - 1) dw = b->cell_w - 1;
-        if (dh > b->cell_h - 1) dh = b->cell_h - 1;
-        slot->phys_w[NOX_3DS_SWBUF_BOTTOM][idx] = (uint8_t)dw;
-        slot->phys_h[NOX_3DS_SWBUF_BOTTOM][idx] = (uint8_t)dh;
+        if (dw > LARGE_BOT_CELL_W - 1) dw = LARGE_BOT_CELL_W - 1;
+        if (dh > LARGE_BOT_CELL_H - 1) dh = LARGE_BOT_CELL_H - 1;
+        s_large_bot_w[idx] = (uint8_t)dw;
+        s_large_bot_h[idx] = (uint8_t)dh;
 
-        int bx = b->base_x + col * b->cell_w;
-        int by = b->base_y + row * b->cell_h;
+        int bx = LARGE_BOT_BASE_X + col * LARGE_BOT_CELL_W;
+        int by = LARGE_BOT_BASE_Y + row * LARGE_BOT_CELL_H;
         for (int dy = 0; dy < dh; ++dy) {
             for (int dx = 0; dx < dw; ++dx) {
                 int hits = sample_fnt_bit(bits, row_stride, src_w, src_h, dx * 2,     dy * 2)
                          + sample_fnt_bit(bits, row_stride, src_w, src_h, dx * 2 + 1, dy * 2)
                          + sample_fnt_bit(bits, row_stride, src_w, src_h, dx * 2,     dy * 2 + 1)
                          + sample_fnt_bit(bits, row_stride, src_w, src_h, dx * 2 + 1, dy * 2 + 1);
-                uint8_t a = lut[hits];
+                uint8_t a = k_alpha4[hits];
                 if (a > 0) {
-                    /* PICA200 GPU_RGBA8: R[31:24] G[23:16] B[15:8] A[7:0] */
                     s_atlas_staging[(size_t)(by + dy) * ATLAS_W + (size_t)(bx + dx)] = 0xFFFFFF00u | (uint32_t)a;
                 }
             }
@@ -339,21 +322,19 @@ void nox_3ds_font_add_glyph(int font_slot, uint16_t ch, int src_w,
 
     /* 2) Top Screen (0.625x = exact 1.6x1.6 area-coverage resample) */
     {
-        const atlas_band_t *b = &s_slot_bands[font_slot][NOX_3DS_SWBUF_TOP];
         int dw = (src_w * 5 + 4) / 8;
         int dh = (src_h * 5 + 4) / 8;
         if (dw < 1) dw = 1;
         if (dh < 1) dh = 1;
-        if (dw > b->cell_w - 1) dw = b->cell_w - 1;
-        if (dh > b->cell_h - 1) dh = b->cell_h - 1;
-        slot->phys_w[NOX_3DS_SWBUF_TOP][idx] = (uint8_t)dw;
-        slot->phys_h[NOX_3DS_SWBUF_TOP][idx] = (uint8_t)dh;
+        if (dw > LARGE_TOP_CELL_W - 1) dw = LARGE_TOP_CELL_W - 1;
+        if (dh > LARGE_TOP_CELL_H - 1) dh = LARGE_TOP_CELL_H - 1;
+        s_large_top_w[idx] = (uint8_t)dw;
+        s_large_top_h[idx] = (uint8_t)dh;
 
-        int bx = b->base_x + col * b->cell_w;
-        int by = b->base_y + row * b->cell_h;
+        int bx = LARGE_TOP_BASE_X + col * LARGE_TOP_CELL_W;
+        int by = LARGE_TOP_BASE_Y + row * LARGE_TOP_CELL_H;
         const float step = 1.6f;
         const float inv_area = 1.0f / (step * step);
-        const float gamma_exp = thin_strokes ? 0.58f : 0.72f;
 
         for (int dy = 0; dy < dh; ++dy) {
             float sy0 = (float)dy * step;
@@ -384,7 +365,7 @@ void nox_3ds_font_add_glyph(int font_slot, uint16_t ch, int src_w,
                 if (area > 0.0f) {
                     float cov = area * inv_area;
                     if (cov > 1.0f) cov = 1.0f;
-                    int ai = (int)(powf(cov, gamma_exp) * 255.0f + 0.5f);
+                    int ai = (int)(powf(cov, 0.72f) * 255.0f + 0.5f);
                     if (ai > 255) ai = 255;
                     if (ai > 0) {
                         s_atlas_staging[(size_t)(by + dy) * ATLAS_W + (size_t)(bx + dx)] = 0xFFFFFF00u | (uint32_t)ai;
@@ -397,14 +378,18 @@ void nox_3ds_font_add_glyph(int font_slot, uint16_t ch, int src_w,
 
 void nox_3ds_font_finish_slot(int font_slot)
 {
-    if (font_slot < 0 || font_slot >= FONT_SLOTS || !s_atlas_staging)
+    if (font_slot < 0 || font_slot >= FONT_SLOTS)
         return;
-    size_t staging_bytes = (size_t)ATLAS_W * (size_t)ATLAS_H * 4u;
-    GSPGPU_FlushDataCache(s_atlas_staging, (u32)staging_bytes);
-    s_fnt[font_slot].loaded = true;
-    s_atlas_uploaded = false;
-    fprintf(stderr, "[font3ds] Baked exact-parity GPU .fnt slot %d (logical_h=%d)\n",
-            font_slot, s_fnt[font_slot].logical_h);
+    s_stock_loaded[font_slot] = true;
+
+    if (font_slot == 1 && s_atlas_staging) {
+        size_t staging_bytes = (size_t)ATLAS_W * (size_t)ATLAS_H * 4u;
+        GSPGPU_FlushDataCache(s_atlas_staging, (u32)staging_bytes);
+        s_large_loaded = true;
+        s_atlas_uploaded = false;
+        fprintf(stderr, "[font3ds] Baked authentic large.fnt into smart auto-fit atlas (h=%d)\n",
+                s_stock_h[1]);
+    }
 }
 
 bool nox_3ds_font_init(void)
@@ -435,7 +420,7 @@ bool nox_3ds_font_init(void)
     s_atlas_inited = true;
     s_counts[0] = 0;
     s_counts[1] = 0;
-    fprintf(stderr, "[font3ds] Exact-parity GPU font atlas prepared (%dx%d %s, deferred GX upload)\n",
+    fprintf(stderr, "[font3ds] Smart auto-fit GPU font atlas prepared (%dx%d %s, default OFF)\n",
             ATLAS_W, ATLAS_H, in_vram ? "VRAM" : "FCRAM");
     return true;
 }
@@ -470,7 +455,9 @@ void nox_3ds_font_shutdown(void)
         s_atlas_staging = NULL;
     }
     s_staging_baked = false;
-    memset(s_fnt, 0, sizeof(s_fnt));
+    s_large_loaded = false;
+    s_fallback_depth = 0;
+    memset(s_stock_loaded, 0, sizeof(s_stock_loaded));
     if (!s_atlas_inited)
         return;
     C3D_TexDelete(&s_atlas_tex);
@@ -482,12 +469,13 @@ void nox_3ds_font_shutdown(void)
 
 bool nox_3ds_font_is_enabled(void)
 {
-    return s_native_enabled && s_atlas_inited;
+    return s_native_enabled && s_atlas_inited && (s_fallback_depth == 0);
 }
 
 void nox_3ds_font_set_enabled(bool enabled)
 {
     s_native_enabled = enabled;
+    s_fallback_depth = 0;
     s_counts[0] = 0;
     s_counts[1] = 0;
 }
@@ -495,12 +483,25 @@ void nox_3ds_font_set_enabled(bool enabled)
 void nox_3ds_font_toggle(void)
 {
     s_native_enabled = !s_native_enabled;
+    s_fallback_depth = 0;
     s_counts[0] = 0;
     s_counts[1] = 0;
     nox_3ds_swbuf_invalidate_bottom();
     s_toast_until_ms = nox_3ds_get_ticks_ms() + TOAST_MS;
-    fprintf(stderr, "[font3ds] Native GPU font: %s\n",
+    fprintf(stderr, "[font3ds] Native Auto-Fit GPU font: %s\n",
             s_native_enabled ? "ON" : "OFF");
+}
+
+void nox_3ds_font_push_fallback(bool force_software)
+{
+    if (force_software)
+        ++s_fallback_depth;
+}
+
+void nox_3ds_font_pop_fallback(bool force_software)
+{
+    if (force_software && s_fallback_depth > 0)
+        --s_fallback_depth;
 }
 
 void nox_3ds_font_clear_screen(int screen)
@@ -515,28 +516,159 @@ void nox_3ds_font_clear_all(void)
     s_counts[1] = 0;
 }
 
+static int crisp_glyph_width_logical(uint16_t ch, bool is_bottom)
+{
+    if (ch < 0x20 || ch > 0x7E)
+        return -1;
+    int pw = (int)s_crisp_font[ch - 0x20].w;
+    int adv_phys = pw + 1;
+    int adv_logical = is_bottom ? (adv_phys * 2) : ((adv_phys * 8 + 2) / 5);
+    return (adv_logical > 1) ? (adv_logical - 1) : 1;
+}
+
 int nox_3ds_font_glyph_width_logical(int font_slot, uint16_t ch, bool is_bottom)
 {
-    (void)is_bottom;
     if (!nox_3ds_font_is_enabled())
         return -1;
     if (ch < 0x20 || ch > 0x7E)
         return -1;
-    if (font_slot < 0 || font_slot >= FONT_SLOTS || !s_fnt[font_slot].loaded)
-        return -1;
-    /* Exact 100% width parity with Nox's stock .fnt glyph metrics. */
-    return (int)s_fnt[font_slot].logical_w[ch - 0x20];
+    if (font_slot == 1 && s_large_loaded)
+        return (int)s_stock_w[1][ch - 0x20];
+    return crisp_glyph_width_logical(ch, is_bottom);
 }
 
 int nox_3ds_font_line_height_logical(int font_slot, bool is_bottom)
 {
-    (void)is_bottom;
     if (!nox_3ds_font_is_enabled())
         return -1;
-    if (font_slot < 0 || font_slot >= FONT_SLOTS || !s_fnt[font_slot].loaded)
-        return -1;
-    /* Exact 100% height parity with Nox's stock .fnt line pitch. */
-    return s_fnt[font_slot].logical_h;
+    if (font_slot == 1 && s_large_loaded)
+        return s_stock_h[1];
+    if (font_slot == 3)
+        return is_bottom ? 10 : 9;
+    return 10;
+}
+
+/* Measure wrapped string dimensions using either crisp 3x5 or stock .fnt metrics */
+static void measure_string_wrapped(int font_slot, const uint16_t *wstr, int wrap_w, int tab_w,
+                                   bool use_crisp, bool is_bottom,
+                                   int *out_max_w, int *out_lines, int *out_line_h)
+{
+    int line_h = use_crisp
+        ? ((font_slot == 3 && !is_bottom) ? 9 : 10)
+        : ((font_slot >= 0 && font_slot < FONT_SLOTS && s_stock_h[font_slot] > 0) ? s_stock_h[font_slot] : 10);
+    if (tab_w <= 0)
+        tab_w = 64;
+
+    int max_w = 0;
+    int cur_w = 0;
+    int lines = 1;
+    int word_w = 0;
+    bool has_space = false;
+    uint16_t prev = 0;
+
+    for (const uint16_t *p = wstr; p && *p; ++p) {
+        uint16_t ch = *p;
+        if (ch == 9u) {
+            cur_w = cur_w + tab_w - (cur_w + tab_w) % tab_w;
+            has_space = true;
+            word_w = 0;
+            if (cur_w > max_w) max_w = cur_w;
+        } else if (ch == 10u || ch == 13u) {
+            if (prev != 13u) {
+                ++lines;
+                cur_w = 0;
+                word_w = 0;
+                has_space = false;
+            }
+        } else {
+            int gw = -1;
+            if (use_crisp) {
+                gw = crisp_glyph_width_logical(ch, is_bottom);
+            }
+            if (gw < 0) {
+                if (font_slot >= 0 && font_slot < FONT_SLOTS && ch >= 0x20 && ch <= 0x7E && s_stock_loaded[font_slot])
+                    gw = (int)s_stock_w[font_slot][ch - 0x20];
+                else
+                    gw = 5;
+            }
+            int adv = gw + 1;
+            if (ch == 0x20u) {
+                cur_w += adv;
+                has_space = true;
+                word_w = 0;
+            } else {
+                cur_w += adv;
+                word_w += adv;
+            }
+            if (wrap_w > 0 && cur_w > wrap_w) {
+                ++lines;
+                if (has_space && word_w <= wrap_w) {
+                    cur_w = word_w;
+                } else {
+                    cur_w = adv;
+                    word_w = adv;
+                }
+                has_space = false;
+            }
+            if (cur_w > max_w) max_w = cur_w;
+        }
+        prev = ch;
+    }
+
+    if (out_max_w) *out_max_w = max_w;
+    if (out_lines) *out_lines = lines;
+    if (out_line_h) *out_line_h = line_h;
+}
+
+bool nox_3ds_font_fits_single(int font_slot, const uint16_t *wstr, int max_w, int tab_w)
+{
+    if (!nox_3ds_font_is_enabled() || !wstr || !*wstr)
+        return true;
+    /* Top Screen (0.625x) and authentic large.fnt (slot 1) always fit cleanly. */
+    if (!nox_3ds_is_bottom_swbuf_active())
+        return true;
+    if (font_slot == 1 && s_large_loaded)
+        return true;
+    if (max_w <= 0)
+        return true;
+
+    int cw = 0, clines = 1, clh = 10;
+    measure_string_wrapped(font_slot, wstr, 0, tab_w, true, true, &cw, &clines, &clh);
+    return (clines == 1 && cw <= max_w);
+}
+
+bool nox_3ds_font_fits_multiline(int font_slot, const uint16_t *wstr, int max_w, int max_h, int tab_w)
+{
+    if (!nox_3ds_font_is_enabled() || !wstr || !*wstr)
+        return true;
+    if (!nox_3ds_is_bottom_swbuf_active())
+        return true;
+    if (font_slot == 1 && s_large_loaded)
+        return true;
+    if (max_w <= 0)
+        return true;
+
+    int sw = 0, slines = 1, slh = 10;
+    int cw = 0, clines = 1, clh = 10;
+    measure_string_wrapped(font_slot, wstr, max_w, tab_w, false, true, &sw, &slines, &slh);
+    measure_string_wrapped(font_slot, wstr, max_w, tab_w, true,  true, &cw, &clines, &clh);
+
+    /* If stock renders on 1 line, crisp must also stay on 1 line inside max_w
+     * so labels never wrap into sibling controls below them. */
+    if (slines == 1) {
+        int raw_cw = 0;
+        measure_string_wrapped(font_slot, wstr, 0, tab_w, true, true, &raw_cw, NULL, NULL);
+        return (clines == 1 && raw_cw <= max_w);
+    }
+
+    /* Multi-line static box: allow at most 1 extra wrapped line over stock
+     * (and stay inside max_h when max_h is taller than a single line). */
+    int crisp_h = clines * (clh + 1);
+    if (clines > slines + 1)
+        return false;
+    if (max_h >= slh * 2 && crisp_h > max_h)
+        return false;
+    return true;
 }
 
 bool nox_3ds_font_enqueue_glyph(int screen, int font_slot, uint16_t ch,
@@ -549,26 +681,27 @@ bool nox_3ds_font_enqueue_glyph(int screen, int font_slot, uint16_t ch,
         return false;
     if (screen < 0 || screen >= FONT_SCREENS)
         return false;
-    if (font_slot < 0 || font_slot >= FONT_SLOTS || !s_fnt[font_slot].loaded)
-        return false;
     if (ch < 0x20 || ch > 0x7E)
         return false;
 
-    int w_logical = (int)s_fnt[font_slot].logical_w[ch - 0x20];
+    bool is_bottom = (screen == NOX_3DS_SWBUF_BOTTOM);
+    int w_logical = nox_3ds_font_glyph_width_logical(font_slot, ch, is_bottom);
+    if (w_logical < 0)
+        return false;
+
     if (out_logical_advance)
         *out_logical_advance = w_logical;
 
-    /* Space has no visible ink; just advance cursor. */
     if (ch == 0x20 || w_logical <= 0)
         return true;
 
-    int h_logical = s_fnt[font_slot].logical_h;
+    int h_logical = nox_3ds_font_line_height_logical(font_slot, is_bottom);
     if (h_logical <= 0)
         h_logical = 10;
 
     int gl = x;
     int gt = y;
-    int gr = x + w_logical;
+    int gr = x + w_logical + 1;
     int gb = y + h_logical;
 
     if (clip_enabled) {
@@ -582,15 +715,12 @@ bool nox_3ds_font_enqueue_glyph(int screen, int font_slot, uint16_t ch,
     if (gr > sw_w) gr = sw_w;
     if (gb > sw_h) gb = sw_h;
     if (gl >= gr || gt >= gb)
-        return true; /* clipped out cleanly */
+        return true;
 
     int cnt = s_counts[screen];
     if (cnt >= FONT_MAX_GLYPHS)
         return true;
 
-    /* Pick two interior probe pixels in the clipped glyph rect and set unused
-     * RGB555 bit 15 (0x8000). Any later opaque software draw clears bit 15;
-     * translucent overlays (sub_49D4A0 / sub_49D6F0) preserve bit 15. */
     int p0x = gl + (gr - gl) / 2;
     int p0y = gt + (gb - gt) / 2;
     int p1x = gl + (gr - gl) / 4;
@@ -618,7 +748,7 @@ bool nox_3ds_font_enqueue_glyph(int screen, int font_slot, uint16_t ch,
     q->probe1_x = (int16_t)p1x;
     q->probe1_y = (int16_t)p1y;
     q->rgb555   = rgb555;
-    q->slot     = (uint8_t)font_slot;
+    q->tier     = (uint8_t)tier_for_slot(font_slot, is_bottom);
     q->clip_en  = clip_enabled ? 1u : 0u;
     q->visible  = 1u;
     q->_pad     = 0u;
@@ -701,26 +831,40 @@ static void draw_subrect_clipped(int ax_base, int ay_base, int gw, int gh,
     C2D_DrawImageAt(img, (float)(gx0 + trim_l), (float)(gy0 + trim_t), 0.0f, &tint, 1.0f, 1.0f);
 }
 
-static void draw_baked_glyph_clipped(int font_slot, int screen, uint16_t ch,
-                                     int px, int py,
-                                     int clip_x0, int clip_y0, int clip_x1, int clip_y1,
-                                     u32 rgba32)
+static void draw_tier_glyph_clipped(font_tier_t tier, uint16_t ch,
+                                    int px, int py,
+                                    int clip_x0, int clip_y0, int clip_x1, int clip_y1,
+                                    u32 rgba32)
 {
-    if (ch < 0x20 || ch > 0x7E || font_slot < 0 || font_slot >= FONT_SLOTS)
+    if (ch < 0x20 || ch > 0x7E)
         return;
     int idx = (int)(ch - 0x20);
-    int gw = (int)s_fnt[font_slot].phys_w[screen][idx];
-    int gh = (int)s_fnt[font_slot].phys_h[screen][idx];
-    if (gw <= 0 || gh <= 0)
-        return;
-
-    const atlas_band_t *b = &s_slot_bands[font_slot][screen];
     int col = idx % ATLAS_COLS;
     int row = idx / ATLAS_COLS;
-    draw_subrect_clipped(b->base_x + col * b->cell_w,
-                         b->base_y + row * b->cell_h,
-                         gw, gh, px, py,
-                         clip_x0, clip_y0, clip_x1, clip_y1, rgba32);
+    int ax = 0, ay = 0, gw = 0, gh = 0;
+
+    switch (tier) {
+        case TIER_CRISP:
+            ax = CRISP_BASE_X + col * CRISP_CELL_W;
+            ay = CRISP_BASE_Y + row * CRISP_CELL_H;
+            gw = (int)s_crisp_font[idx].w;
+            gh = 6;
+            break;
+        case TIER_LARGE_BOT:
+            ax = LARGE_BOT_BASE_X + col * LARGE_BOT_CELL_W;
+            ay = LARGE_BOT_BASE_Y + row * LARGE_BOT_CELL_H;
+            gw = (int)s_large_bot_w[idx];
+            gh = (int)s_large_bot_h[idx];
+            break;
+        case TIER_LARGE_TOP:
+            ax = LARGE_TOP_BASE_X + col * LARGE_TOP_CELL_W;
+            ay = LARGE_TOP_BASE_Y + row * LARGE_TOP_CELL_H;
+            gw = (int)s_large_top_w[idx];
+            gh = (int)s_large_top_h[idx];
+            break;
+    }
+
+    draw_subrect_clipped(ax, ay, gw, gh, px, py, clip_x0, clip_y0, clip_x1, clip_y1, rgba32);
 }
 
 static void draw_toast_overlay(int target_w, int target_h)
@@ -733,12 +877,12 @@ static void draw_toast_overlay(int target_w, int target_h)
         return;
     }
 
-    const char *msg = s_native_enabled ? "NATIVE FONT: ON" : "NATIVE FONT: OFF";
+    const char *msg = s_native_enabled ? "NATIVE FONT: AUTO" : "NATIVE FONT: OFF";
     int total_w = 0;
     for (const char *p = msg; *p; ++p) {
         uint16_t c = (uint16_t)(unsigned char)*p;
         if (c >= 0x20 && c <= 0x7E)
-            total_w += (int)s_toast_font[c - 0x20].w + 1;
+            total_w += (int)s_crisp_font[c - 0x20].w + 1;
     }
     int pad_x = 4, pad_y = 3;
     int box_w = total_w + pad_x * 2;
@@ -755,14 +899,8 @@ static void draw_toast_overlay(int target_w, int target_h)
     for (const char *p = msg; *p; ++p) {
         uint16_t c = (uint16_t)(unsigned char)*p;
         if (c >= 0x20 && c <= 0x7E) {
-            int idx = (int)(c - 0x20);
-            int w = (int)s_toast_font[idx].w;
-            int col = idx % ATLAS_COLS;
-            int row = idx / ATLAS_COLS;
-            draw_subrect_clipped(TOAST_BASE_X + col * TOAST_CELL_W,
-                                 TOAST_BASE_Y + row * TOAST_CELL_H,
-                                 w, 6, cx, cy, 0, 0, target_w, target_h, fg);
-            cx += w + 1;
+            draw_tier_glyph_clipped(TIER_CRISP, c, cx, cy, 0, 0, target_w, target_h, fg);
+            cx += (int)s_crisp_font[c - 0x20].w + 1;
         }
     }
 }
@@ -788,10 +926,8 @@ void nox_3ds_font_render_screen(int screen,
         int cnt = s_counts[screen];
         const queued_glyph_t *arr = s_queues[screen];
 
-        /* Pass 1: subtle 1px physical black drop-shadow behind non-dark glyphs
-         * (gentler on tight Bottom default/small text so chars stay airy). */
-        u32 shadow_soft = C2D_Color32(0, 0, 0, (u8)(125.0f * g_mul));
-        u32 shadow_bold = C2D_Color32(0, 0, 0, (u8)(175.0f * g_mul));
+        /* Pass 1: crisp 1px physical black drop-shadow behind non-dark glyphs */
+        u32 shadow_rgba = C2D_Color32(0, 0, 0, (u8)(180.0f * g_mul));
         for (int i = 0; i < cnt; ++i) {
             const queued_glyph_t *q = &arr[i];
             if (!q->visible)
@@ -804,7 +940,7 @@ void nox_3ds_font_render_screen(int screen,
             int g8 = (g5 << 3) | (g5 >> 2);
             int b8 = (b5 << 3) | (b5 >> 2);
             if (r8 + g8 + b8 < 96)
-                continue; /* skip shadow for dark ink (books/parchment/manual shadow) */
+                continue;
 
             int px = (int)floorf(draw_x + (float)(q->x - crop_x) * scale_x + 0.5f);
             int py = (int)floorf(draw_y + (float)(q->y - crop_y) * scale_y + 0.5f);
@@ -821,14 +957,12 @@ void nox_3ds_font_render_screen(int screen,
                 if (cy1 > target_h) cy1 = target_h;
             }
 
-            u32 sh = (screen == NOX_3DS_SWBUF_BOTTOM && (q->slot == 0 || q->slot == 3))
-                     ? shadow_soft : shadow_bold;
-            draw_baked_glyph_clipped((int)q->slot, screen, q->ch,
-                                     px + 1, py + 1,
-                                     cx0, cy0, cx1, cy1, sh);
+            draw_tier_glyph_clipped((font_tier_t)q->tier, q->ch,
+                                    px + 1, py + 1,
+                                    cx0, cy0, cx1, cy1, shadow_rgba);
         }
 
-        /* Pass 2: crisp 1:1 exact-parity foreground glyphs */
+        /* Pass 2: crisp 1:1 foreground glyphs */
         for (int i = 0; i < cnt; ++i) {
             const queued_glyph_t *q = &arr[i];
             if (!q->visible)
@@ -857,13 +991,12 @@ void nox_3ds_font_render_screen(int screen,
                 if (cy1 > target_h) cy1 = target_h;
             }
 
-            draw_baked_glyph_clipped((int)q->slot, screen, q->ch,
-                                     px, py,
-                                     cx0, cy0, cx1, cy1, fg);
+            draw_tier_glyph_clipped((font_tier_t)q->tier, q->ch,
+                                    px, py,
+                                    cx0, cy0, cx1, cy1, fg);
         }
     }
 
-    /* Show L+SELECT toggle toast on Bottom Screen */
     if (screen == NOX_3DS_SWBUF_BOTTOM) {
         draw_toast_overlay(target_w, target_h);
     }

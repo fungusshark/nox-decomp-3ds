@@ -53330,7 +53330,7 @@ void *sub_43F2E0()
 }
 
 #ifdef __3DS__
-static int nox_3ds_font_slot_from_ptr(int font_ptr)
+int nox_3ds_font_slot_from_ptr(int font_ptr)
 {
   int tbl = *(_DWORD *)&byte_5D4594[816488];
   if ( !font_ptr )
