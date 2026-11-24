@@ -127,11 +127,18 @@ void     nox_3ds_commit_save(void);
  * S: 1024 uint32_t S-box entries (&byte_5D4594[2655724]) */
 int      nox_3ds_blowfish_crypt(uint8_t *dst, const uint8_t *src, int len,
                                 const uint32_t *P, const uint32_t *S);
+FILE    *nox_3ds_crypt_try_open_cached(const char *path);
+bool     nox_3ds_crypt_is_virtual(FILE *fp);
+bool     nox_3ds_crypt_cache_has(const char *resolved_path);
 void     nox_3ds_crypt_on_open(FILE *fp, const char *path, int mode);
 int      nox_3ds_crypt_try_cache(FILE *fp, int key_id);
+void     nox_3ds_crypt_set_promote_ctx(FILE *fp,
+                                       const uint32_t *P_dec, const uint32_t *S,
+                                       void (*pump_cb)(void));
 bool     nox_3ds_crypt_arm_reader(FILE *fp, int key_id,
                                   const uint32_t *P_dec, const uint32_t *S,
                                   void (*pump_cb)(void));
+bool     nox_3ds_crypt_arm_raw(FILE *fp);
 bool     nox_3ds_crypt_read(FILE *fp, void *dst, int elem_size, int count,
                             int *out_pos, int *out_eof, int *out_ret);
 bool     nox_3ds_crypt_seek(FILE *fp, int offset, int whence,

@@ -209,13 +209,20 @@ int compat_open(const char *filename, int oflag, ...)
     if (oflag & (O_CREAT | O_WRONLY | O_RDWR)) {
 #ifdef __3DS__
         nox_3ds_crypt_cache_invalidate(use);
-#endif
+#else
         ensure_parent_dirs(use);
+#endif
     }
 
     int fd;
     if (oflag & O_CREAT) {
         fd = open(use, oflag, mode);
+#ifdef __3DS__
+        if (fd < 0 && errno == ENOENT) {
+            ensure_parent_dirs(use);
+            fd = open(use, oflag, mode);
+        }
+#endif
     } else {
         fd = open(use, oflag);
     }
@@ -1328,6 +1335,9 @@ struct _FIND_FILE {
     size_t count;
     char **paths;   // full paths for stat/fill
     char **names;   // just the entry names (cFileName)
+#ifdef __3DS__
+    unsigned char *types; // dirent->d_type (DT_DIR / DT_REG / DT_UNKNOWN)
+#endif
 };
 
 static int has_wildcards(const char *s) {
@@ -1380,15 +1390,28 @@ static void free_findfile(struct _FIND_FILE *ff) {
     }
     free(ff->paths);
     free(ff->names);
+#ifdef __3DS__
+    free(ff->types);
+#endif
     free(ff);
 }
 
 /* Use compat_do_stat to avoid recursion. */
 static void fill_find_data_fullpath(const char *fullpath, const char *name,
+#ifdef __3DS__
+                                   unsigned char d_type,
+#endif
                                    LPWIN32_FIND_DATAA out) {
     struct stat st;
     memset(out, 0, sizeof(*out));
 
+#ifdef __3DS__
+    if (d_type == DT_DIR) {
+        out->dwFileAttributes = FILE_ATTRIBUTE_DIRECTORY;
+    } else if (d_type == DT_REG) {
+        out->dwFileAttributes = FILE_ATTRIBUTE_NORMAL;
+    } else
+#endif
     if (compat_do_stat(fullpath, &st) == 0) {
         out->dwFileAttributes =
             S_ISDIR(st.st_mode) ? FILE_ATTRIBUTE_DIRECTORY : FILE_ATTRIBUTE_NORMAL;
@@ -1494,7 +1517,12 @@ HANDLE WINAPI FindFirstFileA(LPCSTR lpFileName, LPWIN32_FIND_DATAA lpFindFileDat
     size_t cap = 64;
     ff->paths = calloc(cap, sizeof(char*));
     ff->names = calloc(cap, sizeof(char*));
+#ifdef __3DS__
+    ff->types = calloc(cap, sizeof(unsigned char));
+    if (!ff->paths || !ff->names || !ff->types) {
+#else
     if (!ff->paths || !ff->names) {
+#endif
         closedir(d);
         free(converted);
         free_findfile(ff);
@@ -1513,17 +1541,28 @@ HANDLE WINAPI FindFirstFileA(LPCSTR lpFileName, LPWIN32_FIND_DATAA lpFindFileDat
             cap *= 2;
             char **np = realloc(ff->paths, cap * sizeof(char*));
             char **nn = realloc(ff->names, cap * sizeof(char*));
+#ifdef __3DS__
+            unsigned char *nt = realloc(ff->types, cap * sizeof(unsigned char));
+            if (!np || !nn || !nt) {
+#else
             if (!np || !nn) {
+#endif
                 closedir(d);
                 free(converted);
                 ff->paths = np ? np : ff->paths;
                 ff->names = nn ? nn : ff->names;
+#ifdef __3DS__
+                ff->types = nt ? nt : ff->types;
+#endif
                 free_findfile(ff);
                 last_error = ERROR_INVALID_PARAMETER;
                 return (HANDLE)-1;
             }
             ff->paths = np;
             ff->names = nn;
+#ifdef __3DS__
+            ff->types = nt;
+#endif
         }
 
         size_t need = strlen(opendir_path) + 1 + strlen(name) + 1;
@@ -1542,6 +1581,9 @@ HANDLE WINAPI FindFirstFileA(LPCSTR lpFileName, LPWIN32_FIND_DATAA lpFindFileDat
             ff->paths[ff->count] = NULL;
             continue;
         }
+#ifdef __3DS__
+        ff->types[ff->count] = e->d_type;
+#endif
 
         ff->count++;
     }
@@ -1556,7 +1598,11 @@ HANDLE WINAPI FindFirstFileA(LPCSTR lpFileName, LPWIN32_FIND_DATAA lpFindFileDat
     }
 
     ff->idx = 0;
+#ifdef __3DS__
+    fill_find_data_fullpath(ff->paths[ff->idx], ff->names[ff->idx], ff->types[ff->idx], lpFindFileData);
+#else
     fill_find_data_fullpath(ff->paths[ff->idx], ff->names[ff->idx], lpFindFileData);
+#endif
     ff->idx++;
 
     free(converted);
@@ -1577,7 +1623,11 @@ BOOL WINAPI FindNextFileA(HANDLE hFindFile, LPWIN32_FIND_DATAA lpFindFileData)
         return FALSE;
     }
 
+#ifdef __3DS__
+    fill_find_data_fullpath(ff->paths[ff->idx], ff->names[ff->idx], ff->types[ff->idx], lpFindFileData);
+#else
     fill_find_data_fullpath(ff->paths[ff->idx], ff->names[ff->idx], lpFindFileData);
+#endif
     ff->idx++;
     last_error = 0;
     return TRUE;
@@ -1632,11 +1682,18 @@ HANDLE WINAPI CreateFileA(LPCSTR lpFileName, DWORD dwDesiredAccess, DWORD dwShar
     if ((dwDesiredAccess & GENERIC_WRITE) || (flags & O_CREAT)) {
 #ifdef __3DS__
         nox_3ds_crypt_cache_invalidate(converted);
-#endif
+#else
         ensure_parent_dirs(converted);
+#endif
     }
 
     fd = open(converted, flags, 0666);
+#ifdef __3DS__
+    if (fd < 0 && errno == ENOENT && (flags & O_CREAT)) {
+        ensure_parent_dirs(converted);
+        fd = open(converted, flags, 0666);
+    }
+#endif
     dprintf("%s: CreateFileA(%s) = %d\n", __FUNCTION__, converted, fd);
     free(converted);
     return (HANDLE)fd;
@@ -1900,6 +1957,15 @@ int _access(const char *filename, int mode)
         use = r;
 
     if (cwd) free(cwd);
+#endif
+
+#ifdef __3DS__
+    if ((mode == 0 || mode == 2 || mode == 4) &&
+        strncasecmp(use, "sdmc:/", 6) == 0 &&
+        nox_3ds_crypt_cache_has(use)) {
+        if (converted_ptr) free(converted_ptr);
+        return 0;
+    }
 #endif
 
     int result = access(use, mode);

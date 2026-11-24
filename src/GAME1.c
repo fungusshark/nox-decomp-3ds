@@ -7615,6 +7615,10 @@ FILE *__cdecl sub_408CC0(char *a1, int a2)
   }
   else
   {
+#ifdef __3DS__
+    result = nox_3ds_crypt_try_open_cached(a1);
+    if ( !result )
+#endif
     result = fopen(a1, "rb");
   }
   *(_DWORD *)&byte_5D4594[1300] = a2;
@@ -7629,7 +7633,8 @@ FILE *__cdecl sub_408CC0(char *a1, int a2)
     *(_DWORD *)&byte_5D4594[1304] = 0;
   }
 #ifdef __3DS__
-  nox_3ds_crypt_on_open(result, a1, a2);
+  if ( !nox_3ds_crypt_is_virtual(result) )
+    nox_3ds_crypt_on_open(result, a1, a2);
 #endif
   return result;
 }
@@ -7640,7 +7645,13 @@ int __cdecl sub_408D40(int a1, int a2)
   if ( sub_409A60() )
     return 0;
   if ( a2 == -1 )
+  {
     sub_409580(0, 0);
+#ifdef __3DS__
+    if ( !*(_DWORD *)&byte_5D4594[1300] && nox_3ds_crypt_is_virtual((FILE *)a1) )
+      nox_3ds_crypt_arm_raw((FILE *)a1);
+#endif
+  }
   else
   {
 #ifdef __3DS__
@@ -7653,7 +7664,15 @@ int __cdecl sub_408D40(int a1, int a2)
         return 1;
       }
       sub_409580((int *)&byte_587000[28 * a2 + 3744], 56);
-      if ( cr == 0 )
+      if ( cr == 2 )
+      {
+        nox_3ds_crypt_set_promote_ctx(
+          (FILE *)a1,
+          (const uint32_t *)&byte_5D4594[2659916],
+          (const uint32_t *)&byte_5D4594[2655724],
+          (void (*)(void))sub_4312C0);
+      }
+      else if ( cr == 0 )
       {
         nox_3ds_crypt_arm_reader(
           (FILE *)a1,
