@@ -512,6 +512,7 @@ bool nox_3ds_present_top_splash(void)
                g_3ds_top_splash_pixels + (size_t)y * (size_t)g_3ds_top_splash_w,
                (size_t)w * sizeof(uint16_t));
     }
+    nox_3ds_font_clear_screen(NOX_3DS_SWBUF_TOP);
     return true;
 }
 
@@ -615,6 +616,7 @@ void nox_3ds_swbuf_begin_bottom(uint16_t clear_rgb555)
 
     nox_3ds_swbuf_select(NOX_3DS_SWBUF_BOTTOM);
     g_3ds_bot_pass_open = 1;
+    nox_3ds_font_clear_screen(NOX_3DS_SWBUF_BOTTOM);
 
     size_t count = (size_t)w * (size_t)h;
     if (clear_rgb555 == 0) {
@@ -642,6 +644,9 @@ void nox_3ds_swbuf_end_bottom(void)
         int h = *(_DWORD *)&byte_5D4594[3801788];
         if (w > g_backbuffer_bot->w) w = g_backbuffer_bot->w;
         if (h > g_backbuffer_bot->h) h = g_backbuffer_bot->h;
+
+        /* Resolve pixel-exact bit-15 occlusion for Bottom native glyphs before upload */
+        nox_3ds_font_resolve_occlusion(NOX_3DS_SWBUF_BOTTOM, g_3ds_bot_swrows, w, h);
 
         int blocks16 = w >> 4;
         int rem      = w & 15;
@@ -710,6 +715,11 @@ bool nox_3ds_swbuf_reuse_bottom(void)
         return false;
     g_3ds_bot_frame_ready = 2;
     return true;
+}
+
+void nox_3ds_swbuf_invalidate_bottom(void)
+{
+    g_3ds_bot_has_frame = 0;
 }
 
 void nox_3ds_set_top_crop(int x, int y, int w, int h, bool fill_screen)
@@ -1539,6 +1549,7 @@ void sdl_present()
         g_3ds_bot_has_frame          = 0;
         g_3ds_top_crop_valid         = 0;
         g_3ds_cursor_already_blitted = 0;
+        nox_3ds_font_clear_all();
         return;
     }
     {
@@ -1586,6 +1597,9 @@ void sdl_present()
 
         nox_3ds_video_present_dual(&top_frame, bot_ptr);
     }
+    /* Clear Top queue for next frame; Bottom queue persists across reuse_tex
+     * frames and is cleared at the start of each fresh nox_3ds_swbuf_begin_bottom(). */
+    nox_3ds_font_clear_screen(NOX_3DS_SWBUF_TOP);
     g_3ds_bot_frame_ready        = 0;
     g_3ds_top_crop_valid         = 0;
     g_3ds_cursor_already_blitted = 0;
@@ -3486,6 +3500,13 @@ void sub_4AD1E0()
     {
 #ifdef __3DS__
         {
+            /* Resolve pixel-exact bit-15 occlusion for Top native glyphs before upload */
+            nox_3ds_font_resolve_occlusion(
+                NOX_3DS_SWBUF_TOP,
+                *(uint16_t ***)&byte_5D4594[3798784],
+                *(_DWORD *)&byte_5D4594[3801784],
+                *(_DWORD *)&byte_5D4594[3801788]
+            );
             int y_start = 0;
             int y_end   = *(_DWORD *)&byte_5D4594[3801788];
             if (g_3ds_top_crop_valid && g_3ds_top_crop_h > 0) {

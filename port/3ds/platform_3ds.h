@@ -168,6 +168,7 @@ int   nox_3ds_blit_scaled_16(const void *src_pixels, int sw_surf, int sh_surf, i
 int  nox_3ds_swbuf_select(int target);   /* fast pointer swap, returns previous target */
 void nox_3ds_swbuf_begin_bottom(uint16_t clear_rgb555);
 void nox_3ds_swbuf_end_bottom(void);
+void nox_3ds_swbuf_invalidate_bottom(void);
 bool nox_3ds_swbuf_reuse_bottom(void);
 bool nox_3ds_is_bottom_swbuf_active(void);
 void nox_3ds_set_top_crop(int x, int y, int w, int h, bool fill_screen);
@@ -182,6 +183,31 @@ void nox_3ds_capture_top_splash(void);
 bool nox_3ds_has_top_splash(void);
 bool nox_3ds_present_top_splash(void);
 void nox_3ds_skip_default_cursor_blit(void);
+
+/* Native 1:1 PICA200/citro2d Pixel Font Renderer (port/3ds/font_3ds.c) */
+bool nox_3ds_font_init(void);
+void nox_3ds_font_upload_pending(void);
+void nox_3ds_font_shutdown(void);
+void nox_3ds_font_begin_slot(int font_slot, int src_h, int line_pitch);
+void nox_3ds_font_add_glyph(int font_slot, uint16_t ch, int src_w, const uint8_t *bits, int row_stride, int src_h);
+void nox_3ds_font_finish_slot(int font_slot);
+bool nox_3ds_font_is_enabled(void);
+void nox_3ds_font_set_enabled(bool enabled);
+void nox_3ds_font_toggle(void);
+void nox_3ds_font_clear_screen(int screen);
+void nox_3ds_font_clear_all(void);
+int  nox_3ds_font_glyph_width_logical(int font_slot, uint16_t ch, bool is_bottom);
+int  nox_3ds_font_line_height_logical(int font_slot, bool is_bottom);
+bool nox_3ds_font_enqueue_glyph(int screen, int font_slot, uint16_t ch,
+                                int x, int y, uint16_t rgb555,
+                                bool clip_enabled, int clip_l, int clip_t, int clip_r, int clip_b,
+                                uint16_t **sw_rows, int sw_w, int sw_h,
+                                int *out_logical_advance);
+void nox_3ds_font_resolve_occlusion(int screen, uint16_t **sw_rows, int sw_w, int sw_h);
+void nox_3ds_font_render_screen(int screen,
+                                int crop_x, int crop_y, int crop_w, int crop_h,
+                                float draw_x, float draw_y, float dst_w, float dst_h,
+                                float gamma);
 
 /* =========================================================================
  * 4. Hybrid Dual-Screen Touch, C-Stick & Button Input Bridge (input_3ds.c)

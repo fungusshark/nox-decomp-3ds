@@ -51777,6 +51777,7 @@ int map_download_loop(int first)
 #ifdef __3DS__
   if ( !nox_3ds_present_top_splash() )
   {
+    nox_3ds_font_clear_screen(NOX_3DS_SWBUF_TOP);
     sub_437290();
     sub_434350(0);
     sub_440900();
@@ -51954,6 +51955,9 @@ map_loaded:
     sub_4453A0();
     sub_413520();
     sub_435770();
+#ifdef __3DS__
+    nox_3ds_font_clear_screen(NOX_3DS_SWBUF_TOP);
+#endif
     if ( !(*(int (**)(void))&byte_5D4594[816388])() )
       goto done;
     sub_435780();
@@ -52092,6 +52096,7 @@ LABEL_24:
           if ( !nox_3ds_present_top_splash() )
           {
             _DWORD *legal_wnd = *(_DWORD **)&byte_5D4594[1522892];
+            nox_3ds_font_clear_screen(NOX_3DS_SWBUF_TOP);
             sub_437290();
             sub_434350(0);
             sub_440900();
@@ -52156,6 +52161,7 @@ LABEL_24:
          *  - Top Screen (400x240):    Full Nox Title Splash (cached for Main Menu Top Screen)
          *  - Bottom Screen (320x240): Clean obsidian touch surface (tap to skip)
          * ================================================================ */
+        nox_3ds_font_clear_screen(NOX_3DS_SWBUF_TOP);
         sub_437290();
         sub_434350(0);
         sub_440900();
@@ -53149,6 +53155,32 @@ LABEL_18:
   }
   while ( v0 < 60 );
   *(_DWORD *)&byte_5D4594[816492] = *((_DWORD *)v2 + 2);
+#ifdef __3DS__
+  {
+    int fnt_tbl = *(_DWORD *)&byte_5D4594[816488];
+    if ( fnt_tbl )
+    {
+      for ( int fslot = 0; fslot < 4; ++fslot )
+      {
+        int fptr = *(_DWORD *)(fnt_tbl + 12 * fslot + 8);
+        if ( fptr )
+        {
+          int fh = *(_DWORD *)(fptr + 8);
+          int fstride = *(_DWORD *)(fptr + 4);
+          int fpitch = *(_DWORD *)(fptr + 28);
+          nox_3ds_font_begin_slot(fslot, fh, fpitch);
+          for ( unsigned __int16 ch = 0x20u; ch <= 0x7Eu; ++ch )
+          {
+            unsigned __int8 *g = (unsigned __int8 *)sub_43FE30(fptr, ch);
+            if ( g )
+              nox_3ds_font_add_glyph(fslot, ch, g[0], g + 1, fstride, fh);
+          }
+          nox_3ds_font_finish_slot(fslot);
+        }
+      }
+    }
+  }
+#endif
   return 1;
 }
 
@@ -53179,12 +53211,39 @@ void *sub_43F2E0()
   return result;
 }
 
+#ifdef __3DS__
+static int nox_3ds_font_slot_from_ptr(int font_ptr)
+{
+  int tbl = *(_DWORD *)&byte_5D4594[816488];
+  if ( !font_ptr )
+    font_ptr = *(_DWORD *)&byte_5D4594[816492];
+  if ( !tbl || !font_ptr )
+    return 0;
+  for ( int i = 0; i < 5; ++i )
+  {
+    if ( *(_DWORD *)(tbl + 12 * i + 8) == font_ptr )
+      return i;
+  }
+  return 0;
+}
+#endif
+
 //----- (0043F320) --------------------------------------------------------
 int __cdecl sub_43F320(int a1)
 {
   int v1; // ecx
   int result; // eax
 
+#ifdef __3DS__
+  if ( nox_3ds_font_is_enabled() && (a1 || *(_DWORD *)&byte_5D4594[816492]) )
+  {
+    int h = nox_3ds_font_line_height_logical(
+              nox_3ds_font_slot_from_ptr(a1),
+              nox_3ds_is_bottom_swbuf_active());
+    if ( h > 0 )
+      return h;
+  }
+#endif
   v1 = a1;
   result = 0;
   if ( a1 || (v1 = *(_DWORD *)&byte_5D4594[816492]) != 0 )
@@ -53377,7 +53436,11 @@ int __cdecl sub_43F670(int a1)
   int result; // eax
 
   result = *(_DWORD *)&byte_5D4594[816452];
+#ifdef __3DS__
+  *(_DWORD *)&byte_5D4594[816452] = nox_3ds_font_is_enabled() ? 0 : a1;
+#else
   *(_DWORD *)&byte_5D4594[816452] = a1;
+#endif
   return result;
 }
 
@@ -53439,6 +53502,10 @@ int __cdecl sub_43F730(int a1, __int16 *a2, int a3, int a4)
       return 0;
   }
   *(_DWORD *)&byte_5D4594[816460] = a3;
+#ifdef __3DS__
+  if ( nox_3ds_font_is_enabled() )
+    return sub_4407F0(v5, a2, a3, a4);
+#endif
   v6 = *(_DWORD *)(*(_DWORD *)&byte_5D4594[3799572] + 236);
   sub_434390(*(_DWORD *)(*(_DWORD *)&byte_5D4594[3799572] + 240));
   sub_4407F0(v5, a2, a3 + 1, a4 + 1);
@@ -53462,6 +53529,10 @@ int __cdecl sub_43F7B0(int a1, __int16 *a2, int a3, int a4)
       return 0;
   }
   *(_DWORD *)&byte_5D4594[816460] = a3;
+#ifdef __3DS__
+  if ( nox_3ds_font_is_enabled() )
+    return sub_4407F0(v5, a2, a3, a4);
+#endif
   if ( !*(_DWORD *)&byte_5D4594[816484] )
     return sub_4407F0(v5, a2, a3, a4);
   *(_DWORD *)&byte_5D4594[816440] = 2;
@@ -53494,7 +53565,11 @@ int __cdecl sub_43F840(int a1, unsigned __int16 *a2, int *a3, _DWORD *a4, int a5
     v7 = 0;
     v8 = 0;
     v9 = a2 + 1;
+#ifdef __3DS__
+    v16 = sub_43F320(a1);
+#else
     v16 = *(_DWORD *)(a1 + 28);
+#endif
     for ( i = 0; v6; ++v9 )
     {
       switch ( v6 )
@@ -53519,6 +53594,15 @@ LABEL_10:
           if ( v10 || (v10 = (unsigned __int8 *)sub_43FE30(a1, 0x3Fu)) != 0 )
           {
             v11 = *v10;
+#ifdef __3DS__
+            {
+              int nw = nox_3ds_font_glyph_width_logical(
+                         nox_3ds_font_slot_from_ptr(a1), v6,
+                         nox_3ds_is_bottom_swbuf_active());
+              if ( nw >= 0 )
+                v11 = nw;
+            }
+#endif
             v8 += v11 + *(_DWORD *)&byte_5D4594[816440];
             if ( a5 && v8 > a5 )
             {
@@ -53530,14 +53614,25 @@ LABEL_10:
               }
               else
               {
-                --v9;
                 v12 = v8 - (*(_DWORD *)&byte_5D4594[816440] + v11);
-                if ( v12 > v7 )
-                  v7 = v12;
+                if ( v12 > 0 )
+                {
+                  --v9;
+                  if ( v12 > v7 )
+                    v7 = v12;
+                }
+                else if ( v8 > v7 )
+                {
+                  v7 = v8;
+                }
               }
 LABEL_7:
               v8 = 0;
+#ifdef __3DS__
+              v16 += sub_43F320(a1);
+#else
               v16 += *(_DWORD *)(a1 + 28);
+#endif
             }
             else if ( v8 > v7 )
             {
@@ -53601,7 +53696,17 @@ int __cdecl sub_43F9E0(int a1, unsigned __int16 *a2, int a3)
     {
       v8 = (unsigned __int8 *)sub_43FE30(v3, v6);
       if ( v8 || (v8 = (unsigned __int8 *)sub_43FE30(v3, 0x3Fu)) != 0 )
-        v5 += *(_DWORD *)&byte_5D4594[816440] + *v8;
+      {
+        int gw = *v8;
+#ifdef __3DS__
+        int nw = nox_3ds_font_glyph_width_logical(
+                   nox_3ds_font_slot_from_ptr(v3), v6,
+                   nox_3ds_is_bottom_swbuf_active());
+        if ( nw >= 0 )
+          gw = nw;
+#endif
+        v5 += *(_DWORD *)&byte_5D4594[816440] + gw;
+      }
     }
     if ( v5 > a3 )
       break;
@@ -53689,7 +53794,11 @@ int __cdecl sub_43FAF0(int a1, _WORD *a2, int a3, int a4, int a5, int a6)
             LOWORD(v8) = *v13;
             ++v13;
           }
+#ifdef __3DS__
+          v14 = sub_43F320(v7);
+#else
           v14 = *(_DWORD *)(v7 + 28);
+#endif
           v11 = 0;
           v21 += v14;
           if ( a6 && v21 >= a6 )
@@ -53711,27 +53820,53 @@ LABEL_17:
               goto LABEL_31;
           }
           v17 = *(_DWORD *)&byte_5D4594[816440] + *(unsigned __int8 *)v14;
+#ifdef __3DS__
+          {
+            int nw = nox_3ds_font_glyph_width_logical(
+                       nox_3ds_font_slot_from_ptr(v7), (unsigned __int16)v22,
+                       nox_3ds_is_bottom_swbuf_active());
+            if ( nw >= 0 )
+              v17 = *(_DWORD *)&byte_5D4594[816440] + nw;
+          }
+#endif
           HIWORD(v14) = HIWORD(a5);
           v11 += v17;
           if ( !a5 || v11 <= a5 )
             goto LABEL_31;
           if ( v20 )
+          {
             v9 = v20;
-          else
-            --v9;
-          for ( j = a3;
-                v13 < v9;
-                j = (*(int (__cdecl **)(_DWORD, _DWORD, _DWORD, _DWORD))&byte_5D4594[816448])(v7, v17, j, a4) )
-          {
-            LOWORD(v17) = *v13;
-            ++v13;
-          }
-          if ( v20 )
-          {
+            for ( j = a3;
+                  v13 < v9;
+                  j = (*(int (__cdecl **)(_DWORD, _DWORD, _DWORD, _DWORD))&byte_5D4594[816448])(v7, v17, j, a4) )
+            {
+              LOWORD(v17) = *v13;
+              ++v13;
+            }
             v20 = 0;
             ++v13;
           }
+          else if ( v9 > v13 )
+          {
+            for ( j = a3;
+                  v13 < v9;
+                  j = (*(int (__cdecl **)(_DWORD, _DWORD, _DWORD, _DWORD))&byte_5D4594[816448])(v7, v17, j, a4) )
+            {
+              LOWORD(v17) = *v13;
+              ++v13;
+            }
+            --v9;
+          }
+          else
+          {
+            (*(int (__cdecl **)(_DWORD, _DWORD, _DWORD, _DWORD))&byte_5D4594[816448])(v7, (unsigned __int16)*v13, a3, a4);
+            ++v13;
+          }
+#ifdef __3DS__
+          v14 = sub_43F320(v7);
+#else
           v14 = *(_DWORD *)(v7 + 28);
+#endif
           v11 = 0;
           v21 += v14;
           if ( a6 && v21 >= a6 )
@@ -53773,6 +53908,10 @@ int __cdecl sub_43FD00(int a1, _WORD *a2, int a3, int a4, int a5, int a6)
   if ( *(_DWORD *)&byte_5D4594[2650636] & 0x10000 )
     return a3;
   *(_DWORD *)&byte_5D4594[816460] = a3;
+#ifdef __3DS__
+  if ( nox_3ds_font_is_enabled() )
+    return sub_43FAF0(a1, a2, a3, a4, a5, a6);
+#endif
   v7 = *(_DWORD *)(*(_DWORD *)&byte_5D4594[3799572] + 236);
   sub_434390(*(_DWORD *)(*(_DWORD *)&byte_5D4594[3799572] + 240));
   sub_43FAF0(a1, a2, a3 + 1, a4 + 1, a5, a6);
@@ -53788,6 +53927,10 @@ int __cdecl sub_43FD80(int a1, _WORD *a2, int a3, int a4, int a5, int a6)
   if ( *(_DWORD *)&byte_5D4594[2650636] & 0x10000 )
     return a3;
   *(_DWORD *)&byte_5D4594[816460] = a3;
+#ifdef __3DS__
+  if ( nox_3ds_font_is_enabled() )
+    return sub_43FAF0(a1, a2, a3, a4, a5, a6);
+#endif
   if ( !*(_DWORD *)&byte_5D4594[816484] )
     return sub_43FAF0(a1, a2, a3, a4, a5, a6);
   *(_DWORD *)&byte_5D4594[816440] = 2;
@@ -53912,6 +54055,30 @@ int __cdecl sub_43FE90(int a1, __int16 a2, int xLeft, int yTop)
   v7 = a1;
   LOWORD(v4) = *(_WORD *)(*(_DWORD *)&byte_5D4594[3799572] + 236);
   yTop = v4;
+#ifdef __3DS__
+  if ( nox_3ds_font_is_enabled() )
+  {
+    int fslot = nox_3ds_font_slot_from_ptr(a1);
+    int scr = nox_3ds_is_bottom_swbuf_active() ? NOX_3DS_SWBUF_BOTTOM : NOX_3DS_SWBUF_TOP;
+    int ctx = *(_DWORD *)&byte_5D4594[3799572];
+    bool clip_en = (*(_DWORD *)ctx != 0);
+    int cl = *(_DWORD *)(ctx + 4);
+    int ct = *(_DWORD *)(ctx + 8);
+    int cr = *(_DWORD *)(ctx + 12);
+    int cb = *(_DWORD *)(ctx + 16);
+    uint16_t **sw_rows = *(uint16_t ***)&byte_5D4594[3798784];
+    int sw_w = *(_DWORD *)&byte_5D4594[3801784];
+    int sw_h = *(_DWORD *)&byte_5D4594[3801788];
+    int gw_log = 0;
+    if ( nox_3ds_font_enqueue_glyph(scr, fslot, (uint16_t)a2,
+                                    xLeft, v5, (uint16_t)v4,
+                                    clip_en, cl, ct, cr, cb,
+                                    sw_rows, sw_w, sw_h, &gw_log) )
+    {
+      return xLeft + *(_DWORD *)&byte_5D4594[816440] + gw_log;
+    }
+  }
+#endif
   v8 = (unsigned __int8 *)sub_43FE30(a1, a2);
   if ( !v8 )
   {
@@ -58017,6 +58184,9 @@ int sub_445530()
     v7 = *(_DWORD *)&byte_5D4594[3805496] - v14;
     v8 = &byte_587000[107848];
     v9 = (*(int *)&byte_5D4594[3805496] - v14) / 2;
+#ifdef __3DS__
+    if ( !nox_3ds_font_is_enabled() )
+#endif
     do
     {
       sub_43F6E0(0, (__int16 *)v6, v9 + *(_DWORD *)v8, v1 + *((_DWORD *)v8 + 1));
@@ -61021,8 +61191,10 @@ _DWORD *__cdecl sub_449A10(int a1, int a2, int a3, int a4, int (*a5)(void), int 
   else
   {
     *(_DWORD *)&byte_5D4594[830240] = 0;
+#ifndef __3DS__
     if ( sub_43F320(0) > 10 )
       v6 = 2;
+#endif
     result = sub_4A0AD0(*(const char **)&byte_587000[4 * v6 + 112976], sub_449CA0);
     *(_DWORD *)&byte_5D4594[830224] = result;
     if ( result )

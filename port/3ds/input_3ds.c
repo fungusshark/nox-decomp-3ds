@@ -358,6 +358,26 @@ void nox_3ds_input_poll(nox_3ds_input_t *out)
     g_in.keys_down = hidKeysDown();
     g_in.keys_up   = hidKeysUp();
 
+    /* Live A/B toggle for Native GPU Font: hold L + R, tap SELECT.
+     * Swallow SELECT until released so minimap / movie skip do not fire. */
+    {
+        static bool s_swallow_select = false;
+        if (((g_in.keys_held & (NOX_3DS_KEY_L | NOX_3DS_KEY_R)) == (NOX_3DS_KEY_L | NOX_3DS_KEY_R)) &&
+            (g_in.keys_down & NOX_3DS_KEY_SELECT)) {
+            nox_3ds_font_toggle();
+            s_swallow_select = true;
+        }
+        if (s_swallow_select) {
+            bool raw_sel = (g_in.keys_held & NOX_3DS_KEY_SELECT) != 0;
+            g_in.keys_held &= ~NOX_3DS_KEY_SELECT;
+            g_in.keys_down &= ~NOX_3DS_KEY_SELECT;
+            g_in.keys_up   &= ~NOX_3DS_KEY_SELECT;
+            if (!raw_sel) {
+                s_swallow_select = false;
+            }
+        }
+    }
+
     memset(&cpad, 0, sizeof(cpad));
     memset(&cstick, 0, sizeof(cstick));
     memset(&touch, 0, sizeof(touch));

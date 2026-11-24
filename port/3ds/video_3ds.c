@@ -188,13 +188,19 @@ static void draw_screen_pass(C3D_RenderTarget *target,
                              nox_3ds_tex_slot_t *slot,
                              const nox_3ds_screen_frame_t *frame,
                              int target_w, int target_h,
-                             u32 clear_color)
+                             u32 clear_color,
+                             int screen_id)
 {
     C2D_TargetClear(target, clear_color);
     C2D_SceneBegin(target);
 
-    if (!frame || !slot->inited)
+    if (!frame || !slot->inited) {
+        if (screen_id == NOX_3DS_SWBUF_BOTTOM) {
+            nox_3ds_font_render_screen(screen_id, 0, 0, NOX_3DS_LOGICAL_W, NOX_3DS_LOGICAL_H,
+                                       0.0f, 0.0f, (float)target_w, (float)target_h, s_gamma);
+        }
         return;
+    }
 
     Tex3DS_SubTexture subtex;
     build_subtex(&subtex, frame);
@@ -238,6 +244,15 @@ static void draw_screen_pass(C3D_RenderTarget *target,
         C2D_DrawImageAt(img, draw_x, draw_y, 0.0f, &tint, scale_x, scale_y);
     } else {
         C2D_DrawImageAt(img, draw_x, draw_y, 0.0f, NULL, scale_x, scale_y);
+    }
+
+    if (screen_id >= 0) {
+        int cx = (frame->crop_x >= 0) ? frame->crop_x : 0;
+        int cy = (frame->crop_y >= 0) ? frame->crop_y : 0;
+        int cw = (frame->crop_w > 0) ? frame->crop_w : frame->w;
+        int ch = (frame->crop_h > 0) ? frame->crop_h : frame->h;
+        nox_3ds_font_render_screen(screen_id, cx, cy, cw, ch,
+                                   draw_x, draw_y, dst_w, dst_h, s_gamma);
     }
 }
 
@@ -284,6 +299,8 @@ bool nox_3ds_video_init(int logical_w, int logical_h)
         return false;
     }
 
+    nox_3ds_font_init();
+
     s_fps_last_ms = nox_3ds_get_ticks_ms();
     s_frame_count = 0;
     s_video_inited = true;
@@ -296,6 +313,8 @@ void nox_3ds_video_shutdown(void)
 {
     if (!s_video_inited && !s_top_target && !s_bot_target)
         return;
+
+    nox_3ds_font_shutdown();
 
     if (s_top_slot.staging) {
         linearFree(s_top_slot.staging);
@@ -378,6 +397,7 @@ void nox_3ds_video_present_dual(const nox_3ds_screen_frame_t *top,
     bool bot_draw = bot_reuse || bot_upload;
 
     if (C3D_FrameBegin(C3D_FRAME_SYNCDRAW)) {
+        nox_3ds_font_upload_pending();
         if (top_ready)
             enqueue_frame_upload(&s_top_slot, top_src, top_gx_fmt);
         if (bot_upload)
@@ -387,14 +407,16 @@ void nox_3ds_video_present_dual(const nox_3ds_screen_frame_t *top,
             s_top_target, &s_top_slot,
             top_ready ? top : NULL,
             NOX_3DS_TOP_W, NOX_3DS_TOP_H,
-            C2D_Color32(0, 0, 0, 255)
+            C2D_Color32(0, 0, 0, 255),
+            NOX_3DS_SWBUF_TOP
         );
 
         draw_screen_pass(
             s_bot_target, &s_bot_slot,
             bot_draw ? bottom : NULL,
             NOX_3DS_BOT_W, NOX_3DS_BOT_H,
-            C2D_Color32(16, 16, 20, 255)
+            C2D_Color32(16, 16, 20, 255),
+            NOX_3DS_SWBUF_BOTTOM
         );
 
         C3D_FrameEnd(0);
@@ -470,6 +492,7 @@ void nox_3ds_video_present_movie(const void *pixels, int w, int h, int pitch,
     s_gamma = 1.0f;
 
     if (C3D_FrameBegin(C3D_FRAME_SYNCDRAW)) {
+        nox_3ds_font_upload_pending();
         if (top_ready)
             enqueue_frame_upload(&s_top_slot, top_src, top_gx_fmt);
 
@@ -477,7 +500,8 @@ void nox_3ds_video_present_movie(const void *pixels, int w, int h, int pitch,
             s_top_target, &s_top_slot,
             top_ready ? &top : NULL,
             NOX_3DS_TOP_W, NOX_3DS_TOP_H,
-            C2D_Color32(0, 0, 0, 255)
+            C2D_Color32(0, 0, 0, 255),
+            -1
         );
 
         C2D_TargetClear(s_bot_target, C2D_Color32(0, 0, 0, 255));

@@ -8204,8 +8204,10 @@ int __cdecl sub_4AD320(int a1)
   _DWORD *v10; // eax
 
   v1 = *(_DWORD *)&byte_587000[26048];
+#ifndef __3DS__
   if ( sub_43F320(0) > 10 )
     v1 = 2;
+#endif
   if ( *(_DWORD *)&byte_5D4594[1309812] )
     return 0;
   if ( sub_43AF70() == 1 )
@@ -15735,8 +15737,13 @@ LABEL_37:
       sub_43F840(0, (unsigned __int16 *)v3 + 2352, &v34, 0, 0);
       v22 = *v10 + *(_DWORD *)(v2 + 12) + v34 / -2 - v10[4];
       a2 = v10[1] - v10[5] + *(_DWORD *)(v2 + 16) - 64;
-      sub_434390(*(int *)&byte_5D4594[2614248]);
-      sub_43F6E0(0, v21, v22 + 1, a2 + 1);
+#ifdef __3DS__
+      if ( !nox_3ds_font_is_enabled() )
+#endif
+      {
+        sub_434390(*(int *)&byte_5D4594[2614248]);
+        sub_43F6E0(0, v21, v22 + 1, a2 + 1);
+      }
       sub_434390(a1);
       if ( v35 )
       {
@@ -20154,8 +20161,10 @@ int sub_4BDFD0()
   v0 = sub_416640();
   v1 = *(_DWORD *)&byte_587000[26048];
   v2 = (int)v0;
+#ifndef __3DS__
   if ( sub_43F320(0) > 10 )
     v1 = 2;
+#endif
   if ( sub_43AF70() == 1 )
     v3 = sub_4A0AD0(*(const char **)&byte_587000[4 * v1 + 180088], sub_4BE330);
   else
