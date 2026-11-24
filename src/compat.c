@@ -1703,8 +1703,17 @@ DWORD WINAPI SetFilePointer(HANDLE hFile, LONG lDistanceToMove, PLONG lpDistance
 BOOL WINAPI CopyFileA(LPCSTR lpExistingFileName, LPCSTR lpNewFileName, BOOL bFailIfExists)
 {
     char stack_buf[4096];
+#ifdef __3DS__
+    size_t buf_sz = 262144;
+    char *heap_buf = (char *)malloc(buf_sz);
+    if (!heap_buf) {
+        buf_sz = 65536;
+        heap_buf = (char *)malloc(buf_sz);
+    }
+#else
     size_t buf_sz = 65536;
     char *heap_buf = (char *)malloc(buf_sz);
+#endif
     char *buf = heap_buf ? heap_buf : stack_buf;
     if (!heap_buf)
         buf_sz = sizeof(stack_buf);

@@ -63689,7 +63689,11 @@ void *__cdecl sub_44C840(char *a1)
   *(_DWORD *)&byte_5D4594[2649708] = 1;
   if ( *(_DWORD *)&byte_5D4594[260] )
   {
-    if ( sub_40A5C0(1) && *(_DWORD *)&byte_5D4594[2650664] )
+    if ( sub_40A5C0(1) && *(_DWORD *)&byte_5D4594[2650664]
+#ifdef __3DS__
+         && !nox_3ds_get_state()->is_new_3ds
+#endif
+    )
     {
       sub_40ACA0(*(LPVOID *)&byte_5D4594[260]);
       *(_DWORD *)&byte_5D4594[260] = 0;

@@ -43567,6 +43567,95 @@ void sub_4DB9C0()
   }
 }
 
+#ifdef __3DS__
+#define NOX_3DS_EXT_HT_BITS 14u
+#define NOX_3DS_EXT_HT_SIZE (1u << NOX_3DS_EXT_HT_BITS)
+#define NOX_3DS_EXT_HT_MASK (NOX_3DS_EXT_HT_SIZE - 1u)
+#define NOX_3DS_EXT_HT_MAX  12000u
+
+typedef struct {
+  int key;
+  int obj;
+} nox_3ds_ext_entry_t;
+
+static bool nox_3ds_ext_ht_insert(nox_3ds_ext_entry_t *tbl, unsigned int *count, int obj)
+{
+  if ( !obj || (*(_BYTE *)(obj + 16) & 0x20) )
+    return true;
+  int key = *(_DWORD *)(obj + 44);
+  unsigned int idx = ((unsigned int)key * 2654435761u) >> (32u - NOX_3DS_EXT_HT_BITS);
+  for ( unsigned int probe = 0; probe < NOX_3DS_EXT_HT_SIZE; ++probe )
+  {
+    unsigned int slot = (idx + probe) & NOX_3DS_EXT_HT_MASK;
+    if ( !tbl[slot].obj )
+    {
+      if ( *count >= NOX_3DS_EXT_HT_MAX )
+        return false;
+      tbl[slot].key = key;
+      tbl[slot].obj = obj;
+      ++(*count);
+      return true;
+    }
+    if ( tbl[slot].key == key )
+      return true; /* preserve first match priority, matching sub_4ECF10 */
+  }
+  return false;
+}
+
+static nox_3ds_ext_entry_t *nox_3ds_ext_ht_build(void)
+{
+  nox_3ds_ext_entry_t *tbl = (nox_3ds_ext_entry_t *)calloc(NOX_3DS_EXT_HT_SIZE, sizeof(*tbl));
+  if ( !tbl )
+    return NULL;
+  unsigned int count = 0;
+  for ( int o = sub_4DA790(); o; o = sub_4DA7A0(o) )
+  {
+    if ( !nox_3ds_ext_ht_insert(tbl, &count, o) )
+      goto fail;
+    for ( int inv = *(_DWORD *)(o + 504); inv; inv = *(_DWORD *)(inv + 496) )
+    {
+      if ( !nox_3ds_ext_ht_insert(tbl, &count, inv) )
+        goto fail;
+    }
+  }
+  for ( int o = sub_4DA870(); o; o = sub_4DA880(o) )
+  {
+    if ( !nox_3ds_ext_ht_insert(tbl, &count, o) )
+      goto fail;
+  }
+  for ( int o = sub_4DA840(); o; o = sub_4DA850(o) )
+  {
+    if ( !nox_3ds_ext_ht_insert(tbl, &count, o) )
+      goto fail;
+  }
+  return tbl;
+fail:
+  free(tbl);
+  return NULL;
+}
+
+static int nox_3ds_ext_ht_lookup(const nox_3ds_ext_entry_t *tbl, int key)
+{
+  if ( !tbl )
+    return sub_4ECF10(key);
+  unsigned int idx = ((unsigned int)key * 2654435761u) >> (32u - NOX_3DS_EXT_HT_BITS);
+  for ( unsigned int probe = 0; probe < NOX_3DS_EXT_HT_SIZE; ++probe )
+  {
+    unsigned int slot = (idx + probe) & NOX_3DS_EXT_HT_MASK;
+    int obj = tbl[slot].obj;
+    if ( !obj )
+      return 0;
+    if ( tbl[slot].key == key )
+    {
+      if ( !(*(_BYTE *)(obj + 16) & 0x20) && *(_DWORD *)(obj + 44) == key )
+        return obj;
+      return sub_4ECF10(key);
+    }
+  }
+  return sub_4ECF10(key);
+}
+#endif
+
 //----- (004DBA30) --------------------------------------------------------
 char *__cdecl sub_4DBA30(int a1)
 {
@@ -43617,6 +43706,12 @@ char *__cdecl sub_4DBA30(int a1)
       }
       if ( a1 == 1 )
       {
+#ifdef __3DS__
+        nox_3ds_ext_entry_t *ext_ht_3ds = nox_3ds_ext_ht_build();
+#define NOX_LOOKUP_EXT(k) nox_3ds_ext_ht_lookup(ext_ht_3ds, (k))
+#else
+#define NOX_LOOKUP_EXT(k) sub_4ECF10(k)
+#endif
         v5 = sub_4DA790();
         if ( v5 )
         {
@@ -43642,7 +43737,7 @@ char *__cdecl sub_4DBA30(int a1)
                   v9 = (int *)(v7 + 1132);
                   do
                   {
-                    v10 = sub_4ECF10(*v9);
+                    v10 = NOX_LOOKUP_EXT(*v9);
                     *v9 = v10;
                     if ( !v10 )
                       *(_BYTE *)(v7 + 1129) = 0;
@@ -43652,27 +43747,27 @@ char *__cdecl sub_4DBA30(int a1)
                   while ( v8 < *(unsigned __int8 *)(v7 + 1129) );
                   v3 = 0;
                 }
-                *(_DWORD *)(v7 + 1196) = sub_4ECF10(*(_DWORD *)(v7 + 1196));
+                *(_DWORD *)(v7 + 1196) = NOX_LOOKUP_EXT(*(_DWORD *)(v7 + 1196));
                 if ( (int)*(_DWORD *)(v5 + 16) >= 0 )
                   sub_52BAF0(v5);
-                v11 = sub_4ECF10(*(_DWORD *)(v7 + 392));
+                v11 = NOX_LOOKUP_EXT(*(_DWORD *)(v7 + 392));
                 if ( v11 )
                   *(_DWORD *)(v7 + 392) = *(_DWORD *)(v11 + 36);
                 else
                   *(_DWORD *)(v7 + 392) = 0;
-                v12 = sub_4ECF10(*(_DWORD *)(v7 + 1200));
+                v12 = NOX_LOOKUP_EXT(*(_DWORD *)(v7 + 1200));
                 if ( v12 )
                   *(_DWORD *)(v7 + 1200) = *(_DWORD *)(v12 + 36);
                 else
                   *(_DWORD *)(v7 + 1200) = 0;
-                *(_DWORD *)(v7 + 1216) = sub_4ECF10(*(_DWORD *)(v7 + 1216));
+                *(_DWORD *)(v7 + 1216) = NOX_LOOKUP_EXT(*(_DWORD *)(v7 + 1216));
                 v13 = 0;
                 if ( *(_BYTE *)(v7 + 2172) )
                 {
                   v14 = (int *)(v7 + 2140);
                   do
                   {
-                    v15 = sub_4ECF10(*v14);
+                    v15 = NOX_LOOKUP_EXT(*v14);
                     if ( v15 )
                       *v14 = *(_DWORD *)(v15 + 36);
                     else
@@ -43708,6 +43803,10 @@ char *__cdecl sub_4DBA30(int a1)
           }
           while ( v26 );
         }
+#undef NOX_LOOKUP_EXT
+#ifdef __3DS__
+        free(ext_ht_3ds);
+#endif
         sub_51B0C0();
         sub_516FC0();
         if ( *(_DWORD *)&byte_5D4594[1563096] )
@@ -49245,7 +49344,11 @@ LABEL_53:
   *(_DWORD *)&byte_5D4594[2650664] = 1;
   if ( *(_DWORD *)&byte_5D4594[260] )
   {
-    if ( sub_40A5C0(2) && *(_DWORD *)&byte_5D4594[2649708] )
+    if ( sub_40A5C0(2) && *(_DWORD *)&byte_5D4594[2649708]
+#ifdef __3DS__
+         && !nox_3ds_get_state()->is_new_3ds
+#endif
+    )
     {
       sub_40ACA0(*(LPVOID *)&byte_5D4594[260]);
       *(_DWORD *)&byte_5D4594[260] = 0;
