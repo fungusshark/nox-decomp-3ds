@@ -32183,6 +32183,7 @@ int __cdecl sub_477A30(int a1, int a2, int a3)
         sub_4BE6D0(*(int *)&byte_5D4594[1097252], v3, v4);
         *(_DWORD *)&byte_5D4594[1097208] = 2 * v5 + 4;
         break;
+      case 5:
       case 9:
       case 10:
       case 11:
