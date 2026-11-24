@@ -7628,6 +7628,9 @@ FILE *__cdecl sub_408CC0(char *a1, int a2)
     *(_DWORD *)&byte_5D4594[1280] = 0;
     *(_DWORD *)&byte_5D4594[1304] = 0;
   }
+#ifdef __3DS__
+  nox_3ds_crypt_on_open(result, a1, a2);
+#endif
   return result;
 }
 
@@ -7639,7 +7642,31 @@ int __cdecl sub_408D40(int a1, int a2)
   if ( a2 == -1 )
     sub_409580(0, 0);
   else
+  {
+#ifdef __3DS__
+    if ( !*(_DWORD *)&byte_5D4594[1300] )
+    {
+      int cr = nox_3ds_crypt_try_cache((FILE *)a1, a2);
+      if ( cr == 1 )
+      {
+        *(_DWORD *)&byte_5D4594[1308] = 1;
+        return 1;
+      }
+      sub_409580((int *)&byte_587000[28 * a2 + 3744], 56);
+      if ( cr == 0 )
+      {
+        nox_3ds_crypt_arm_reader(
+          (FILE *)a1,
+          a2,
+          (const uint32_t *)&byte_5D4594[2659916],
+          (const uint32_t *)&byte_5D4594[2655724],
+          (void (*)(void))sub_4312C0);
+      }
+      return 1;
+    }
+#endif
     sub_409580((int *)&byte_587000[28 * a2 + 3744], 56);
+  }
   return 1;
 }
 
@@ -7648,6 +7675,19 @@ int __cdecl sub_408D90(FILE *a1)
 {
   int v1; // esi
 
+#ifdef __3DS__
+  if ( !*(_DWORD *)&byte_5D4594[1300] && nox_3ds_crypt_close(a1) )
+  {
+    *(_DWORD *)&byte_5D4594[1276] = 0;
+    *(_DWORD *)&byte_5D4594[1288] = 0;
+    *(_DWORD *)&byte_5D4594[1296] = 0;
+    *(_DWORD *)&byte_5D4594[1284] = 0;
+    *(_DWORD *)&byte_5D4594[1292] = 0;
+    *(_DWORD *)&byte_5D4594[1280] = 0;
+    *(_DWORD *)&byte_5D4594[1308] = 0;
+    return 1;
+  }
+#endif
   if ( sub_409A60() )
   {
     if ( byte_5D4594[1284] & 7 )
@@ -7689,6 +7729,19 @@ signed int __cdecl sub_408E40(char *a1, int a2, signed int a3, FILE *a4)
   signed int v12; // eax
   int v14; // [esp+18h] [ebp+8h]
 
+#ifdef __3DS__
+  {
+    int c_pos = *(_DWORD *)&byte_5D4594[1284];
+    int c_eof = *(_DWORD *)&byte_5D4594[1304];
+    int c_ret = 0;
+    if ( nox_3ds_crypt_read(a4, a1, a2, a3, &c_pos, &c_eof, &c_ret) )
+    {
+      *(_DWORD *)&byte_5D4594[1284] = c_pos;
+      *(_DWORD *)&byte_5D4594[1304] = c_eof;
+      return c_ret;
+    }
+  }
+#endif
   v4 = 0;
   v5 = a3 * a2;
   v6 = 0;
@@ -7769,6 +7822,19 @@ int __cdecl sub_409050(FILE *a1, int a2, int a3)
   int v5; // edi
 
   *(_DWORD *)&byte_5D4594[1304] = 0;
+#ifdef __3DS__
+  if ( !*(_DWORD *)&byte_5D4594[1300] )
+  {
+    int c_pos = *(_DWORD *)&byte_5D4594[1284];
+    int c_eof = 0;
+    if ( nox_3ds_crypt_seek(a1, a2, a3, &c_pos, &c_eof) )
+    {
+      *(_DWORD *)&byte_5D4594[1284] = c_pos;
+      *(_DWORD *)&byte_5D4594[1304] = c_eof;
+      return 0;
+    }
+  }
+#endif
   if ( *(_DWORD *)&byte_5D4594[1300] )
   {
     if ( !a2 )
@@ -7945,6 +8011,9 @@ int sub_4093A0()
 {
   int result; // eax
 
+#ifdef __3DS__
+  nox_3ds_crypt_reset();
+#endif
   result = 0;
   *(_DWORD *)&byte_5D4594[1296] = 0;
   *(_DWORD *)&byte_5D4594[1284] = 0;
@@ -8213,6 +8282,12 @@ int __cdecl sub_4097C0(_BYTE *a1, signed int a2, _BYTE *a3)
     v4 = a1;
   if ( *(_DWORD *)&byte_5D4594[1308] )
   {
+#ifdef __3DS__
+    result = nox_3ds_blowfish_crypt(
+               v4, v3, a2,
+               (const uint32_t *)&byte_5D4594[2659820],
+               (const uint32_t *)&byte_5D4594[2655724]);
+#else
     v5 = a2 / 8;
     if ( a2 / 8 > 0 )
     {
@@ -8231,6 +8306,7 @@ int __cdecl sub_4097C0(_BYTE *a1, signed int a2, _BYTE *a3)
     if ( 8 * v5 < a2 )
       memmove((unsigned int)v4, v3, a2 - v7);
     result = v7;
+#endif
   }
   else
   {
@@ -8312,6 +8388,12 @@ int __cdecl sub_4099C0(_BYTE *a1, signed int a2, _BYTE *a3)
     v4 = a1;
   if ( *(_DWORD *)&byte_5D4594[1308] )
   {
+#ifdef __3DS__
+    result = nox_3ds_blowfish_crypt(
+               v4, v3, a2,
+               (const uint32_t *)&byte_5D4594[2659916],
+               (const uint32_t *)&byte_5D4594[2655724]);
+#else
     v5 = a2 / 8;
     if ( a2 / 8 > 0 )
     {
@@ -8330,6 +8412,7 @@ int __cdecl sub_4099C0(_BYTE *a1, signed int a2, _BYTE *a3)
     if ( 8 * v5 < a2 )
       memmove((unsigned int)v4, v3, a2 - v7);
     result = v7;
+#endif
   }
   else
   {
@@ -46006,8 +46089,10 @@ int sub_435CC0()
 {
   int result; // eax
   int v1; // eax
-
 #ifdef __3DS__
+  uint32_t t0_3ds = nox_3ds_get_ticks_ms();
+  uint32_t t_thing_3ds = 0;
+  uint32_t t_hud_3ds = 0;
   printf("[solo] sub_435CC0 enter\n");
 #endif
   sub_445450();
@@ -46025,6 +46110,9 @@ int sub_435CC0()
       if ( result )
       {
         result = sub_44C840((char *)&byte_587000[86368]);
+#ifdef __3DS__
+        t_thing_3ds = nox_3ds_get_ticks_ms() - t0_3ds;
+#endif
         if ( result )
         {
           result = sub_427070();
@@ -46034,6 +46122,9 @@ int sub_435CC0()
             if ( result )
             {
               result = sub_473680();
+#ifdef __3DS__
+              t_hud_3ds = nox_3ds_get_ticks_ms() - t0_3ds - t_thing_3ds;
+#endif
               if ( result )
               {
                 sub_49A2C0();
@@ -46107,6 +46198,9 @@ LABEL_27:
   }
 #ifdef __3DS__
   printf("[solo] sub_435CC0 exit=%d\n", result);
+  nox_3ds_load_log("client_init sub_435CC0=%ums (thing=%ums hud=%ums)",
+                   (unsigned)(nox_3ds_get_ticks_ms() - t0_3ds),
+                   (unsigned)t_thing_3ds, (unsigned)t_hud_3ds);
 #endif
   return result;
 }

@@ -6,6 +6,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -588,6 +589,7 @@ FILE *nox_3ds_fopen(const char *path, const char *mode)
 
     bool wants_write = mode_requests_write(mode);
     if (wants_write) {
+        nox_3ds_crypt_cache_invalidate(resolved);
         nox_3ds_ensure_parent_dirs(resolved);
 
         /* Route truncate-write ("w"/"wb") and in-place save updates ("r+b")
@@ -689,4 +691,620 @@ void nox_3ds_commit_save(void)
         fsync(dirfd);
         close(dirfd);
     }
+}
+
+/* =========================================================================
+ * Fast -O3 Blowfish & RAM-Cached Read-Only Cryptfile Reader
+ *
+ * Original Nox's sub_408E40 / sub_409050 read encrypted .map and .plr files
+ * directly from FILE* in 1-8 byte chunks, re-decrypting the same 8-byte
+ * Blowfish block up to 8 times per block and executing ftell()+fseek() for
+ * every object during client map load (sub_4AC2B0 -> sub_4AC610). With a
+ * 64 KB stdio buffer on 3DS SDMC, each fseek invalidates the buffer and
+ * forces ARM9 FS IPC + redundant 64 KB reads.
+ *
+ * Here we:
+ *  1. Provide a -O3 unrolled Blowfish block transform matching sub_409860.
+ *  2. Demand-load read-only encrypted files: initial 8 KB static prefix
+ *     (zero malloc for header peeks like sub_4CFE10 / sub_4CF470), promoting
+ *     to a single 128 KB-chunked sequential read + single-pass decrypt on the
+ *     first read past 8 KB (pumping audio between chunks).
+ *  3. Keep a 2-slot LRU decrypted RAM cache for .map and .plr files so
+ *     server load (sub_4CF5F0), client check (sub_4CF470), and client load
+ *     (sub_4AC2B0) share one SDMC read and one Blowfish pass.
+ * ========================================================================= */
+
+#define NOX_3DS_CRYPT_PREFIX_SZ       8192u
+#define NOX_3DS_CRYPT_READ_CHUNK      (128u * 1024u)
+#define NOX_3DS_CRYPT_MAX_FILE        (8u * 1024u * 1024u)
+#define NOX_3DS_CRYPT_CACHE_SLOTS     2
+#define NOX_3DS_CRYPT_CACHE_MAX_TOTAL (6u * 1024u * 1024u)
+
+typedef struct {
+    bool     valid;
+    int      key_id;
+    char     path[512];
+    uint8_t *data;
+    size_t   size;
+    uint32_t last_use;
+} nox_3ds_crypt_cache_slot_t;
+
+typedef struct {
+    bool            active;
+    bool            from_cache;
+    bool            owns_buf;
+    int             cache_slot;
+    int             key_id;
+    FILE           *fp;
+    char            path[512];
+    uint8_t        *data;
+    size_t          size;
+    size_t          loaded;
+    size_t          pos;
+    const uint32_t *P_dec;
+    const uint32_t *S;
+    void          (*pump_cb)(void);
+} nox_3ds_crypt_reader_t;
+
+static nox_3ds_crypt_cache_slot_t g_crypt_cache[NOX_3DS_CRYPT_CACHE_SLOTS];
+static uint32_t                   g_crypt_cache_clock = 0;
+static nox_3ds_crypt_reader_t     g_crypt_reader;
+static uint8_t                    g_crypt_prefix_buf[NOX_3DS_CRYPT_PREFIX_SZ];
+static FILE                      *g_crypt_open_fp = NULL;
+static char                       g_crypt_open_path[512];
+static size_t                     g_crypt_open_size = 0;
+
+int nox_3ds_blowfish_crypt(uint8_t *dst, const uint8_t *src, int len,
+                           const uint32_t *P, const uint32_t *S)
+{
+    if (!src || len <= 0 || !P || !S)
+        return 0;
+    if (!dst)
+        dst = (uint8_t *)src;
+
+    const uint32_t *S0 = S;
+    const uint32_t *S1 = S + 256;
+    const uint32_t *S2 = S + 512;
+    const uint32_t *S3 = S + 768;
+
+    const uint32_t p0  = P[0],  p1  = P[1],  p2  = P[2],  p3  = P[3];
+    const uint32_t p4  = P[4],  p5  = P[5],  p6  = P[6],  p7  = P[7];
+    const uint32_t p8  = P[8],  p9  = P[9],  p10 = P[10], p11 = P[11];
+    const uint32_t p12 = P[12], p13 = P[13], p14 = P[14], p15 = P[15];
+    const uint32_t p16 = P[16], p17 = P[17];
+
+    int nblocks = len / 8;
+    const uint8_t *in = src;
+    uint8_t *out = dst;
+
+#define NOX_BF_F(x) (((S0[(x) >> 24] + S1[((x) >> 16) & 0xFFu]) ^ S2[((x) >> 8) & 0xFFu]) + S3[(x) & 0xFFu])
+#define NOX_BF_PAIR(pa, pb) do { \
+    L ^= (pa); \
+    R ^= (pb) ^ NOX_BF_F(L); \
+    L ^= NOX_BF_F(R); \
+} while (0)
+
+    for (int i = 0; i < nblocks; ++i) {
+        uint32_t rawL, rawR;
+        memcpy(&rawL, in, 4);
+        memcpy(&rawR, in + 4, 4);
+        uint32_t L = __builtin_bswap32(rawL);
+        uint32_t R = __builtin_bswap32(rawR);
+
+        NOX_BF_PAIR(p0,  p1);
+        NOX_BF_PAIR(p2,  p3);
+        NOX_BF_PAIR(p4,  p5);
+        NOX_BF_PAIR(p6,  p7);
+        NOX_BF_PAIR(p8,  p9);
+        NOX_BF_PAIR(p10, p11);
+        NOX_BF_PAIR(p12, p13);
+        NOX_BF_PAIR(p14, p15);
+
+        uint32_t outL = __builtin_bswap32(R ^ p17);
+        uint32_t outR = __builtin_bswap32(L ^ p16);
+        memcpy(out, &outL, 4);
+        memcpy(out + 4, &outR, 4);
+
+        in += 8;
+        out += 8;
+    }
+
+#undef NOX_BF_PAIR
+#undef NOX_BF_F
+
+    int done = nblocks * 8;
+    if (done < len) {
+        memmove(out, in, (size_t)(len - done));
+    }
+    return done;
+}
+
+static bool path_is_cacheable_cryptfile(const char *path)
+{
+    if (!path)
+        return false;
+    size_t n = strlen(path);
+    if (n < 4)
+        return false;
+    const char *ext = path + n - 4;
+    return (strcasecmp(ext, ".map") == 0) || (strcasecmp(ext, ".plr") == 0);
+}
+
+static size_t crypt_cache_total_bytes_locked(void)
+{
+    size_t total = 0;
+    for (int i = 0; i < NOX_3DS_CRYPT_CACHE_SLOTS; ++i) {
+        if (g_crypt_cache[i].valid)
+            total += g_crypt_cache[i].size;
+    }
+    return total;
+}
+
+static void crypt_cache_evict_slot_locked(int idx)
+{
+    if (idx < 0 || idx >= NOX_3DS_CRYPT_CACHE_SLOTS)
+        return;
+    nox_3ds_crypt_cache_slot_t *slot = &g_crypt_cache[idx];
+    if (!slot->valid)
+        return;
+
+    if (g_crypt_reader.active && g_crypt_reader.from_cache && g_crypt_reader.cache_slot == idx) {
+        /* Transfer buffer ownership to the active reader so it never dangles. */
+        g_crypt_reader.from_cache = false;
+        g_crypt_reader.owns_buf = true;
+        g_crypt_reader.cache_slot = -1;
+    } else {
+        free(slot->data);
+    }
+    memset(slot, 0, sizeof(*slot));
+}
+
+static void crypt_cache_store(const char *resolved_path, int key_id, uint8_t *data, size_t size)
+{
+    if (!resolved_path || !data || size == 0 || size > NOX_3DS_CRYPT_CACHE_MAX_TOTAL) {
+        free(data);
+        return;
+    }
+
+    fs_lock();
+
+    /* Replace any existing entry for the same path. */
+    for (int i = 0; i < NOX_3DS_CRYPT_CACHE_SLOTS; ++i) {
+        if (g_crypt_cache[i].valid && strcasecmp(g_crypt_cache[i].path, resolved_path) == 0) {
+            crypt_cache_evict_slot_locked(i);
+        }
+    }
+
+    /* Ensure total cache size stays within budget. */
+    while (crypt_cache_total_bytes_locked() + size > NOX_3DS_CRYPT_CACHE_MAX_TOTAL) {
+        int oldest = -1;
+        uint32_t oldest_clk = UINT32_MAX;
+        for (int i = 0; i < NOX_3DS_CRYPT_CACHE_SLOTS; ++i) {
+            if (g_crypt_cache[i].valid && g_crypt_cache[i].last_use <= oldest_clk) {
+                oldest_clk = g_crypt_cache[i].last_use;
+                oldest = i;
+            }
+        }
+        if (oldest < 0)
+            break;
+        crypt_cache_evict_slot_locked(oldest);
+    }
+
+    /* Pick a free slot, or evict LRU slot. */
+    int target = -1;
+    for (int i = 0; i < NOX_3DS_CRYPT_CACHE_SLOTS; ++i) {
+        if (!g_crypt_cache[i].valid) {
+            target = i;
+            break;
+        }
+    }
+    if (target < 0) {
+        uint32_t oldest_clk = UINT32_MAX;
+        for (int i = 0; i < NOX_3DS_CRYPT_CACHE_SLOTS; ++i) {
+            if (g_crypt_cache[i].last_use <= oldest_clk) {
+                oldest_clk = g_crypt_cache[i].last_use;
+                target = i;
+            }
+        }
+        crypt_cache_evict_slot_locked(target);
+    }
+
+    nox_3ds_crypt_cache_slot_t *slot = &g_crypt_cache[target];
+    slot->valid = true;
+    slot->key_id = key_id;
+    snprintf(slot->path, sizeof(slot->path), "%s", resolved_path);
+    slot->data = data;
+    slot->size = size;
+    slot->last_use = ++g_crypt_cache_clock;
+
+    fs_unlock();
+}
+
+void nox_3ds_crypt_cache_invalidate(const char *path)
+{
+    if (!path || !*path)
+        return;
+
+    char resolved[512];
+    nox_3ds_resolve_path(path, resolved, sizeof(resolved));
+    if (!resolved[0])
+        return;
+
+    fs_lock();
+    for (int i = 0; i < NOX_3DS_CRYPT_CACHE_SLOTS; ++i) {
+        if (g_crypt_cache[i].valid && strcasecmp(g_crypt_cache[i].path, resolved) == 0) {
+            crypt_cache_evict_slot_locked(i);
+        }
+    }
+    fs_unlock();
+}
+
+void nox_3ds_crypt_cache_clear(void)
+{
+    fs_lock();
+    for (int i = 0; i < NOX_3DS_CRYPT_CACHE_SLOTS; ++i) {
+        crypt_cache_evict_slot_locked(i);
+    }
+    fs_unlock();
+}
+
+void nox_3ds_crypt_reset(void)
+{
+    if (g_crypt_reader.active) {
+        if (g_crypt_reader.owns_buf && g_crypt_reader.data &&
+            g_crypt_reader.data != g_crypt_prefix_buf) {
+            free(g_crypt_reader.data);
+        }
+        memset(&g_crypt_reader, 0, sizeof(g_crypt_reader));
+    }
+    g_crypt_open_fp = NULL;
+    g_crypt_open_path[0] = '\0';
+    g_crypt_open_size = 0;
+}
+
+void nox_3ds_crypt_on_open(FILE *fp, const char *path, int mode)
+{
+    nox_3ds_crypt_reset();
+    if (!path || !*path)
+        return;
+
+    char resolved[512];
+    nox_3ds_resolve_path(path, resolved, sizeof(resolved));
+    if (!resolved[0])
+        return;
+
+    if (mode != 0) {
+        nox_3ds_crypt_cache_invalidate(resolved);
+        return;
+    }
+
+    if (fp) {
+        g_crypt_open_fp = fp;
+        snprintf(g_crypt_open_path, sizeof(g_crypt_open_path), "%s", resolved);
+    }
+}
+
+int nox_3ds_crypt_try_cache(FILE *fp, int key_id)
+{
+    if (!fp || fp != g_crypt_open_fp || key_id < 0)
+        return -1;
+
+    int fd = fileno(fp);
+    if (fd < 0)
+        return -1;
+
+    struct stat st;
+    if (fstat(fd, &st) != 0 || st.st_size <= 0 || (size_t)st.st_size > NOX_3DS_CRYPT_MAX_FILE)
+        return -1;
+
+    size_t fsize = (size_t)st.st_size;
+    g_crypt_open_size = fsize;
+
+    fs_lock();
+    for (int i = 0; i < NOX_3DS_CRYPT_CACHE_SLOTS; ++i) {
+        nox_3ds_crypt_cache_slot_t *slot = &g_crypt_cache[i];
+        if (slot->valid &&
+            slot->key_id == key_id &&
+            slot->size == fsize &&
+            strcasecmp(slot->path, g_crypt_open_path) == 0) {
+            slot->last_use = ++g_crypt_cache_clock;
+            memset(&g_crypt_reader, 0, sizeof(g_crypt_reader));
+            g_crypt_reader.active = true;
+            g_crypt_reader.from_cache = true;
+            g_crypt_reader.owns_buf = false;
+            g_crypt_reader.cache_slot = i;
+            g_crypt_reader.key_id = key_id;
+            g_crypt_reader.fp = fp;
+            snprintf(g_crypt_reader.path, sizeof(g_crypt_reader.path), "%s", slot->path);
+            g_crypt_reader.data = slot->data;
+            g_crypt_reader.size = slot->size;
+            g_crypt_reader.loaded = slot->size;
+            g_crypt_reader.pos = 0;
+            fs_unlock();
+            if (fsize >= 64u * 1024u) {
+                nox_3ds_load_log("crypt CACHE HIT '%s' (%u KB)",
+                                 g_crypt_reader.path, (unsigned)(fsize / 1024u));
+            }
+            return 1;
+        }
+    }
+    fs_unlock();
+    return 0;
+}
+
+bool nox_3ds_crypt_arm_reader(FILE *fp, int key_id,
+                              const uint32_t *P_dec, const uint32_t *S,
+                              void (*pump_cb)(void))
+{
+    if (!fp || fp != g_crypt_open_fp || key_id < 0 || !P_dec || !S || g_crypt_open_size == 0)
+        return false;
+
+    int fd = fileno(fp);
+    if (fd < 0)
+        return false;
+
+    size_t want = g_crypt_open_size;
+    if (want > NOX_3DS_CRYPT_PREFIX_SZ)
+        want = NOX_3DS_CRYPT_PREFIX_SZ;
+
+    size_t got = 0;
+    while (got < want) {
+        ssize_t r = read(fd, g_crypt_prefix_buf + got, want - got);
+        if (r <= 0)
+            break;
+        got += (size_t)r;
+    }
+
+    if (got >= 8u) {
+        nox_3ds_blowfish_crypt(g_crypt_prefix_buf, g_crypt_prefix_buf, (int)(got & ~7u), P_dec, S);
+    }
+
+    memset(&g_crypt_reader, 0, sizeof(g_crypt_reader));
+    g_crypt_reader.active = true;
+    g_crypt_reader.from_cache = false;
+    g_crypt_reader.owns_buf = false;
+    g_crypt_reader.cache_slot = -1;
+    g_crypt_reader.key_id = key_id;
+    g_crypt_reader.fp = fp;
+    snprintf(g_crypt_reader.path, sizeof(g_crypt_reader.path), "%s", g_crypt_open_path);
+    g_crypt_reader.data = g_crypt_prefix_buf;
+    g_crypt_reader.size = (got < want) ? got : g_crypt_open_size;
+    g_crypt_reader.loaded = got;
+    g_crypt_reader.pos = 0;
+    g_crypt_reader.P_dec = P_dec;
+    g_crypt_reader.S = S;
+    g_crypt_reader.pump_cb = pump_cb;
+    return true;
+}
+
+static bool crypt_reader_promote_full(void)
+{
+    if (!g_crypt_reader.active)
+        return false;
+    if (g_crypt_reader.loaded >= g_crypt_reader.size)
+        return true;
+
+    int fd = fileno(g_crypt_reader.fp);
+    if (fd < 0)
+        return false;
+
+    uint32_t t0 = nox_3ds_get_ticks_ms();
+    uint8_t *buf = (uint8_t *)malloc(g_crypt_reader.size);
+    if (!buf) {
+        nox_3ds_crypt_cache_clear();
+        buf = (uint8_t *)malloc(g_crypt_reader.size);
+        if (!buf)
+            return false;
+    }
+
+    if (g_crypt_reader.loaded > 0) {
+        memcpy(buf, g_crypt_prefix_buf, g_crypt_reader.loaded);
+    }
+
+    size_t off = g_crypt_reader.loaded;
+    size_t dec_off = g_crypt_reader.loaded & ~7u;
+    if (dec_off < off) {
+        /* Prefix was a non-multiple of 8 only on unexpected short read; decrypt from dec_off */
+        dec_off = off & ~7u;
+    }
+
+    while (off < g_crypt_reader.size) {
+        size_t chunk = g_crypt_reader.size - off;
+        if (chunk > NOX_3DS_CRYPT_READ_CHUNK)
+            chunk = NOX_3DS_CRYPT_READ_CHUNK;
+        ssize_t r = read(fd, buf + off, chunk);
+        if (r <= 0)
+            break;
+        off += (size_t)r;
+
+        size_t avail_blocks = (off - dec_off) & ~7u;
+        if (avail_blocks > 0) {
+            nox_3ds_blowfish_crypt(buf + dec_off, buf + dec_off, (int)avail_blocks,
+                                   g_crypt_reader.P_dec, g_crypt_reader.S);
+            dec_off += avail_blocks;
+        }
+        if (g_crypt_reader.pump_cb) {
+            g_crypt_reader.pump_cb();
+        }
+    }
+
+    g_crypt_reader.data = buf;
+    g_crypt_reader.owns_buf = true;
+    g_crypt_reader.loaded = off;
+    g_crypt_reader.size = off;
+
+    uint32_t dt = nox_3ds_get_ticks_ms() - t0;
+    if (off >= 64u * 1024u) {
+        nox_3ds_load_log("crypt MISS+READ '%s' (%u KB, %u ms)",
+                         g_crypt_reader.path, (unsigned)(off / 1024u), (unsigned)dt);
+    }
+    return true;
+}
+
+bool nox_3ds_crypt_read(FILE *fp, void *dst, int elem_size, int count,
+                        int *out_pos, int *out_eof, int *out_ret)
+{
+    if (!g_crypt_reader.active || g_crypt_reader.fp != fp)
+        return false;
+
+    if (elem_size <= 0 || count <= 0) {
+        if (out_ret) *out_ret = 0;
+        return true;
+    }
+
+    size_t total = (size_t)elem_size * (size_t)count;
+    if (g_crypt_reader.pos + total > g_crypt_reader.loaded &&
+        g_crypt_reader.loaded < g_crypt_reader.size) {
+        if (!crypt_reader_promote_full()) {
+            if (out_eof) *out_eof = 1;
+            if (out_ret) *out_ret = 0;
+            return true;
+        }
+    }
+
+    if (g_crypt_reader.pos >= g_crypt_reader.size) {
+        if (out_pos) *out_pos = (int)g_crypt_reader.pos;
+        if (out_eof) *out_eof = 1;
+        if (out_ret) *out_ret = 0;
+        return true;
+    }
+
+    size_t avail = g_crypt_reader.size - g_crypt_reader.pos;
+    if (avail >= total) {
+        memcpy(dst, g_crypt_reader.data + g_crypt_reader.pos, total);
+        g_crypt_reader.pos += total;
+        if (out_pos) *out_pos = (int)g_crypt_reader.pos;
+        if (out_ret) *out_ret = count;
+        return true;
+    }
+
+    /* Partial read at EOF */
+    memcpy(dst, g_crypt_reader.data + g_crypt_reader.pos, avail);
+    g_crypt_reader.pos += avail;
+    if (out_pos) *out_pos = (int)g_crypt_reader.pos;
+    if (out_eof) *out_eof = 1;
+    if (out_ret) *out_ret = (int)(avail / (size_t)elem_size);
+    return true;
+}
+
+bool nox_3ds_crypt_seek(FILE *fp, int offset, int whence,
+                        int *out_pos, int *out_eof)
+{
+    if (!g_crypt_reader.active || g_crypt_reader.fp != fp)
+        return false;
+
+    if (out_eof) *out_eof = 0;
+
+    int64_t base = 0;
+    switch (whence) {
+    case SEEK_SET: base = 0; break;
+    case SEEK_CUR: base = (int64_t)g_crypt_reader.pos; break;
+    case SEEK_END: base = (int64_t)g_crypt_reader.size; break;
+    default:
+        return true;
+    }
+
+    int64_t next = base + (int64_t)offset;
+    if (next < 0)
+        next = 0;
+    if ((uint64_t)next > (uint64_t)g_crypt_reader.size)
+        next = (int64_t)g_crypt_reader.size;
+
+    g_crypt_reader.pos = (size_t)next;
+    if (out_pos) *out_pos = (int)g_crypt_reader.pos;
+    return true;
+}
+
+bool nox_3ds_crypt_close(FILE *fp)
+{
+    if (!g_crypt_reader.active || g_crypt_reader.fp != fp) {
+        if (g_crypt_open_fp == fp) {
+            g_crypt_open_fp = NULL;
+            g_crypt_open_path[0] = '\0';
+            g_crypt_open_size = 0;
+        }
+        return false;
+    }
+
+    bool should_cache = (!g_crypt_reader.from_cache &&
+                         g_crypt_reader.loaded == g_crypt_reader.size &&
+                         g_crypt_reader.size > 0 &&
+                         g_crypt_reader.size <= NOX_3DS_CRYPT_CACHE_MAX_TOTAL &&
+                         path_is_cacheable_cryptfile(g_crypt_reader.path));
+
+    if (should_cache) {
+        if (g_crypt_reader.owns_buf && g_crypt_reader.data != g_crypt_prefix_buf) {
+            crypt_cache_store(g_crypt_reader.path, g_crypt_reader.key_id,
+                              g_crypt_reader.data, g_crypt_reader.size);
+            g_crypt_reader.data = NULL;
+            g_crypt_reader.owns_buf = false;
+        } else if (g_crypt_reader.data == g_crypt_prefix_buf) {
+            uint8_t *copy = (uint8_t *)malloc(g_crypt_reader.size);
+            if (copy) {
+                memcpy(copy, g_crypt_prefix_buf, g_crypt_reader.size);
+                crypt_cache_store(g_crypt_reader.path, g_crypt_reader.key_id,
+                                  copy, g_crypt_reader.size);
+            }
+        }
+    } else if (g_crypt_reader.owns_buf && g_crypt_reader.data &&
+               g_crypt_reader.data != g_crypt_prefix_buf) {
+        free(g_crypt_reader.data);
+        g_crypt_reader.data = NULL;
+    }
+
+    memset(&g_crypt_reader, 0, sizeof(g_crypt_reader));
+    g_crypt_open_fp = NULL;
+    g_crypt_open_path[0] = '\0';
+    g_crypt_open_size = 0;
+
+    nox_3ds_fclose(fp);
+    return true;
+}
+
+/* =========================================================================
+ * Lightweight Campaign Load-Phase Timing Log (RAM-buffered -> load.log)
+ * ========================================================================= */
+#define NOX_3DS_LOAD_LOG_CAP 4096u
+static char   g_load_log_buf[NOX_3DS_LOAD_LOG_CAP];
+static size_t g_load_log_len = 0;
+static bool   g_load_log_started = false;
+
+void nox_3ds_load_log(const char *fmt, ...)
+{
+    if (!fmt)
+        return;
+
+    char msg[384];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(msg, sizeof(msg), fmt, ap);
+    va_end(ap);
+
+    uint32_t ms = nox_3ds_get_ticks_ms();
+    fprintf(stderr, "[load3ds %ums] %s\n", (unsigned)ms, msg);
+
+    if (g_load_log_len + 1 < NOX_3DS_LOAD_LOG_CAP) {
+        int n = snprintf(g_load_log_buf + g_load_log_len,
+                         NOX_3DS_LOAD_LOG_CAP - g_load_log_len,
+                         "[%ums] %s\n", (unsigned)ms, msg);
+        if (n > 0) {
+            size_t avail = NOX_3DS_LOAD_LOG_CAP - 1u - g_load_log_len;
+            g_load_log_len += ((size_t)n < avail) ? (size_t)n : avail;
+        }
+    }
+}
+
+void nox_3ds_load_log_flush(void)
+{
+    if (g_load_log_len == 0)
+        return;
+
+    const char *mode = g_load_log_started ? "a" : "w";
+    FILE *f = fopen(NOX_3DS_DATA_ROOT "/load.log", mode);
+    if (f) {
+        g_load_log_started = true;
+        fwrite(g_load_log_buf, 1, g_load_log_len, f);
+        fclose(f);
+    }
+    g_load_log_len = 0;
 }

@@ -207,6 +207,9 @@ int compat_open(const char *filename, int oflag, ...)
 #endif
 
     if (oflag & (O_CREAT | O_WRONLY | O_RDWR)) {
+#ifdef __3DS__
+        nox_3ds_crypt_cache_invalidate(use);
+#endif
         ensure_parent_dirs(use);
     }
 
@@ -1627,6 +1630,9 @@ HANDLE WINAPI CreateFileA(LPCSTR lpFileName, DWORD dwDesiredAccess, DWORD dwShar
     }
 
     if ((dwDesiredAccess & GENERIC_WRITE) || (flags & O_CREAT)) {
+#ifdef __3DS__
+        nox_3ds_crypt_cache_invalidate(converted);
+#endif
         ensure_parent_dirs(converted);
     }
 
@@ -1772,6 +1778,10 @@ BOOL WINAPI MoveFileA(LPCSTR lpExistingFileName, LPCSTR lpNewFileName)
 
     ensure_parent_dirs(dst_use);
 
+#ifdef __3DS__
+    nox_3ds_crypt_cache_invalidate(src_use);
+    nox_3ds_crypt_cache_invalidate(dst_use);
+#endif
     int rc = rename(src_use, dst_use);
 #ifdef __3DS__
     if (rc != 0) {
@@ -2107,6 +2117,9 @@ int _unlink(const char *filename)
 {
     int result;
     char *converted = dos_to_unix(filename);
+#ifdef __3DS__
+    nox_3ds_crypt_cache_invalidate(converted);
+#endif
     result = unlink(converted);
     free(converted);
     return result;
@@ -2395,6 +2408,9 @@ int compat_remove(const char *filename)
     if (casepath(converted, r))
         use = r;
 #endif
+#ifdef __3DS__
+    nox_3ds_crypt_cache_invalidate(use);
+#endif
     int rc = remove(use);
     free(converted);
     return rc;
@@ -2426,6 +2442,10 @@ int compat_rename(const char *oldpath, const char *newpath)
 #endif
     ensure_parent_dirs(dst_use);
 
+#ifdef __3DS__
+    nox_3ds_crypt_cache_invalidate(src_use);
+    nox_3ds_crypt_cache_invalidate(dst_use);
+#endif
     int rc = rename(src_use, dst_use);
 #ifdef __3DS__
     if (rc != 0) {

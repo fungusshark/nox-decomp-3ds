@@ -120,6 +120,32 @@ void     nox_3ds_fs_sync_all(void);
 void     nox_3ds_commit_save(void);
 
 /* =========================================================================
+ * 2c. Fast Blowfish & RAM-Cached Read-Only Cryptfile Reader (fs_3ds.c)
+ * ========================================================================= */
+/* Fast -O3 Blowfish block transform matching sub_409860/sub_4097C0/sub_4099C0.
+ * P: 18 uint32_t subkeys (&byte_5D4594[2659820] enc / [2659916] dec)
+ * S: 1024 uint32_t S-box entries (&byte_5D4594[2655724]) */
+int      nox_3ds_blowfish_crypt(uint8_t *dst, const uint8_t *src, int len,
+                                const uint32_t *P, const uint32_t *S);
+void     nox_3ds_crypt_on_open(FILE *fp, const char *path, int mode);
+int      nox_3ds_crypt_try_cache(FILE *fp, int key_id);
+bool     nox_3ds_crypt_arm_reader(FILE *fp, int key_id,
+                                  const uint32_t *P_dec, const uint32_t *S,
+                                  void (*pump_cb)(void));
+bool     nox_3ds_crypt_read(FILE *fp, void *dst, int elem_size, int count,
+                            int *out_pos, int *out_eof, int *out_ret);
+bool     nox_3ds_crypt_seek(FILE *fp, int offset, int whence,
+                            int *out_pos, int *out_eof);
+bool     nox_3ds_crypt_close(FILE *fp);
+void     nox_3ds_crypt_reset(void);
+void     nox_3ds_crypt_cache_invalidate(const char *path);
+void     nox_3ds_crypt_cache_clear(void);
+
+/* Lightweight campaign load-phase timing log (buffered in RAM, flushed on demand). */
+void     nox_3ds_load_log(const char *fmt, ...);
+void     nox_3ds_load_log_flush(void);
+
+/* =========================================================================
  * 3. Dual-Screen Software Framebuffer & PICA200 Video Bridge (video_3ds.c & draw.c)
  * ========================================================================= */
 typedef struct {

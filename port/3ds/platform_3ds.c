@@ -147,6 +147,8 @@ void nox_3ds_shutdown(void)
     g_shutdown_done = true;
 
     nox_3ds_commit_save();
+    nox_3ds_load_log_flush();
+    nox_3ds_crypt_cache_clear();
     if (g_apt_hook_registered) {
         aptUnhook(&g_apt_hook_cookie);
         g_apt_hook_registered = false;

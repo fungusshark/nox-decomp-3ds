@@ -7675,6 +7675,9 @@ char *__cdecl sub_4AC2B0(char *a1)
   char FileName[260]; // [esp+32Ch] [ebp-308h]
   char v15[260]; // [esp+430h] [ebp-204h]
   char v16[256]; // [esp+534h] [ebp-100h]
+#ifdef __3DS__
+  uint32_t t0_3ds = nox_3ds_get_ticks_ms();
+#endif
 
   result = a1;
   v7 = 0;
@@ -7760,6 +7763,11 @@ char *__cdecl sub_4AC2B0(char *a1)
       sub_470AA0(0);
     }
     result = (char *)1;
+#ifdef __3DS__
+    nox_3ds_load_log("client_map sub_4AC2B0('%s')=%ums",
+                     FileName, (unsigned)(nox_3ds_get_ticks_ms() - t0_3ds));
+    nox_3ds_load_log_flush();
+#endif
   }
   return result;
 }
@@ -33498,6 +33506,9 @@ int __cdecl sub_4CF5F0(char *a1, int a2)
   CHAR FileName[1024]; // [esp+68h] [ebp-600h]
   CHAR v15[256]; // [esp+468h] [ebp-200h]
   char v16[256]; // [esp+568h] [ebp-100h]
+#ifdef __3DS__
+  uint32_t t0_3ds = nox_3ds_get_ticks_ms();
+#endif
 
   sub_481410();
   sub_4DAC00();
@@ -33679,6 +33690,10 @@ LABEL_MAGIC_OK:
   }
   result = 1;
   strcpy((char *)&byte_5D4594[1523080], v2);
+#ifdef __3DS__
+  nox_3ds_load_log("server_map sub_4CF5F0('%s')=%ums",
+                   FileName, (unsigned)(nox_3ds_get_ticks_ms() - t0_3ds));
+#endif
   return result;
 }
 // 4CF980: using guessed type void nullsub_21(void);
@@ -35270,8 +35285,8 @@ int sub_4D1660()
 {
   int result; // eax
   int v1; // eax
-
 #ifdef __3DS__
+  uint32_t t0_3ds = nox_3ds_get_ticks_ms();
   printf("[solo] sub_4D1660 enter\n");
 #endif
   sub_4D15C0();
@@ -35374,6 +35389,8 @@ int sub_4D1660()
   }
 #ifdef __3DS__
   printf("[solo] sub_4D1660 exit=%d\n", result);
+  nox_3ds_load_log("server_init sub_4D1660=%ums",
+                   (unsigned)(nox_3ds_get_ticks_ms() - t0_3ds));
 #endif
   return result;
 }
@@ -43579,6 +43596,9 @@ char *__cdecl sub_4DBA30(int a1)
   char *v24; // [esp+Ch] [ebp-8h]
   int v25; // [esp+10h] [ebp-4h]
   int v26; // [esp+18h] [ebp+4h]
+#ifdef __3DS__
+  uint32_t t0_3ds = nox_3ds_get_ticks_ms();
+#endif
 
   result = sub_417090(31);
   v2 = result;
@@ -43766,6 +43786,10 @@ LABEL_67:
       sub_4DB220(v3);
       *(_DWORD *)&byte_5D4594[1563096] = v3;
       result = (char *)sub_416D40();
+#ifdef __3DS__
+      nox_3ds_load_log("save_fixup sub_4DBA30(a1=%d)=%ums",
+                       a1, (unsigned)(nox_3ds_get_ticks_ms() - t0_3ds));
+#endif
     }
   }
   return result;
@@ -43943,8 +43967,14 @@ int __cdecl sub_4DC100(int a1, int a2)
   CHAR v29[1024]; // [esp+D64h] [ebp-24400h]
   char v30[16384]; // [esp+1164h] [ebp-24000h]
   char v31[131072]; // [esp+5164h] [ebp-20000h]
+#ifdef __3DS__
+  uint32_t t0_3ds = nox_3ds_get_ticks_ms();
+#endif
 
   v24 = 1;
+#ifdef __3DS__
+  v21 = 0;
+#endif
   v2 = sub_409E10();
   nox_sprintf(&PathName, (const char *)&byte_587000[199708], v2, a1);
   v3 = sub_409E10();
@@ -44089,6 +44119,11 @@ LABEL_45:
   }
 #ifdef __EMSCRIPTEN__
   EM_ASM(FS.syncfs(false,function (err) {}));
+#endif
+#ifdef __3DS__
+  nox_3ds_load_log("save_copy sub_4DC100('%s'->'%s')=%ums (dirs=%d)",
+                   (const char *)a1, (const char *)a2,
+                   (unsigned)(nox_3ds_get_ticks_ms() - t0_3ds), v21);
 #endif
   return result;
 }
