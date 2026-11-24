@@ -118,6 +118,8 @@ int      nox_3ds_stat(const char *path, struct stat *st);
 void     nox_3ds_fs_sync_all(void);
 /* Batch save committer: flushes all stdio buffers + open descriptors once per save event. */
 void     nox_3ds_commit_save(void);
+/* Direct zero-chdir save-slot copier (replaces sub_4DBE10+sub_4DC100 IPC churn on 3DS). */
+int      nox_3ds_save_copy(const char *src_slot, const char *dst_slot);
 
 /* =========================================================================
  * 2c. Fast Blowfish & RAM-Cached Read-Only Cryptfile Reader (fs_3ds.c)

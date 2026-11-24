@@ -3,6 +3,7 @@
 
 #include <3ds.h>
 #include <ctype.h>
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
@@ -141,10 +142,218 @@ static bool untrack_write_file(FILE *fp)
 #define NOX_3DS_MEMFILE_PRELOAD_MAX (8u * 1024u * 1024u)
 #define NOX_3DS_MEMFILE_WRITE_CHUNK (128u * 1024u)
 
+/* =========================================================================
+ * 2-Slot Written-File Raw RAM Handoff Cache
+ *
+ * During campaign save (sub_4DB370), Nox:
+ *   1. Writes WORKING/<map>/<map>.map via memfile ("wb") -> flushes to SDMC
+ *   2. Writes WORKING/Player.plr via memfile ("wb") -> flushes to SDMC
+ *   3. Immediately re-opens WORKING/Player.plr ("r+b") -> reads back from SDMC
+ *   4. Immediately copies WORKING/* -> Save/<slot>/* -> reads both back again
+ *
+ * Retaining ownership of the last 2 flushed .map/.plr buffers in RAM lets
+ * step 3 ("r+b") and step 4 (save_copy) read directly from RAM with zero
+ * SDMC read IPCs. Invalidated alongside g_crypt_cache on every write/delete.
+ * ========================================================================= */
+#define NOX_3DS_RAW_CACHE_SLOTS     2
+#define NOX_3DS_RAW_CACHE_MAX_FILE  (2u * 1024u * 1024u)
+#define NOX_3DS_RAW_CACHE_MAX_TOTAL (3u * 1024u * 1024u)
+
+typedef struct {
+    bool     valid;
+    char     path[512];
+    uint8_t *data;
+    size_t   size;
+    size_t   cap;
+    uint32_t last_use;
+} nox_3ds_raw_cache_slot_t;
+
+static nox_3ds_raw_cache_slot_t g_raw_write_cache[NOX_3DS_RAW_CACHE_SLOTS];
+static uint32_t                 g_raw_write_clock = 0;
+
+static bool path_is_cacheable_cryptfile(const char *path);
+
+static void raw_write_cache_evict_locked(int idx)
+{
+    if (idx < 0 || idx >= NOX_3DS_RAW_CACHE_SLOTS)
+        return;
+    if (g_raw_write_cache[idx].valid) {
+        free(g_raw_write_cache[idx].data);
+        memset(&g_raw_write_cache[idx], 0, sizeof(g_raw_write_cache[idx]));
+    }
+}
+
+static size_t raw_write_cache_total_locked(void)
+{
+    size_t total = 0;
+    for (int i = 0; i < NOX_3DS_RAW_CACHE_SLOTS; ++i) {
+        if (g_raw_write_cache[i].valid)
+            total += g_raw_write_cache[i].cap;
+    }
+    return total;
+}
+
+static void raw_write_cache_invalidate_resolved(const char *resolved)
+{
+    if (!resolved || !*resolved)
+        return;
+    fs_lock();
+    for (int i = 0; i < NOX_3DS_RAW_CACHE_SLOTS; ++i) {
+        if (g_raw_write_cache[i].valid &&
+            strcasecmp(g_raw_write_cache[i].path, resolved) == 0) {
+            raw_write_cache_evict_locked(i);
+        }
+    }
+    fs_unlock();
+}
+
+static void raw_write_cache_clear(void)
+{
+    fs_lock();
+    for (int i = 0; i < NOX_3DS_RAW_CACHE_SLOTS; ++i) {
+        raw_write_cache_evict_locked(i);
+    }
+    fs_unlock();
+}
+
+static void raw_write_cache_store_take(const char *resolved, uint8_t *data,
+                                       size_t size, size_t cap)
+{
+    if (!resolved || !*resolved || !data || size == 0 ||
+        cap > NOX_3DS_RAW_CACHE_MAX_FILE || !path_is_cacheable_cryptfile(resolved)) {
+        free(data);
+        return;
+    }
+
+    fs_lock();
+    for (int i = 0; i < NOX_3DS_RAW_CACHE_SLOTS; ++i) {
+        if (g_raw_write_cache[i].valid &&
+            strcasecmp(g_raw_write_cache[i].path, resolved) == 0) {
+            raw_write_cache_evict_locked(i);
+        }
+    }
+
+    while (raw_write_cache_total_locked() + cap > NOX_3DS_RAW_CACHE_MAX_TOTAL) {
+        int oldest = -1;
+        uint32_t oldest_clk = UINT32_MAX;
+        for (int i = 0; i < NOX_3DS_RAW_CACHE_SLOTS; ++i) {
+            if (g_raw_write_cache[i].valid && g_raw_write_cache[i].last_use <= oldest_clk) {
+                oldest_clk = g_raw_write_cache[i].last_use;
+                oldest = i;
+            }
+        }
+        if (oldest < 0)
+            break;
+        raw_write_cache_evict_locked(oldest);
+    }
+
+    int target = -1;
+    for (int i = 0; i < NOX_3DS_RAW_CACHE_SLOTS; ++i) {
+        if (!g_raw_write_cache[i].valid) {
+            target = i;
+            break;
+        }
+    }
+    if (target < 0) {
+        uint32_t oldest_clk = UINT32_MAX;
+        for (int i = 0; i < NOX_3DS_RAW_CACHE_SLOTS; ++i) {
+            if (g_raw_write_cache[i].last_use <= oldest_clk) {
+                oldest_clk = g_raw_write_cache[i].last_use;
+                target = i;
+            }
+        }
+        raw_write_cache_evict_locked(target);
+    }
+
+    nox_3ds_raw_cache_slot_t *slot = &g_raw_write_cache[target];
+    slot->valid = true;
+    snprintf(slot->path, sizeof(slot->path), "%s", resolved);
+    slot->data = data;
+    slot->size = size;
+    slot->cap = cap;
+    slot->last_use = ++g_raw_write_clock;
+    fs_unlock();
+}
+
+static bool raw_write_cache_take_for_rw(const char *resolved, uint8_t **out_data,
+                                        size_t *out_size, size_t *out_cap)
+{
+    if (!resolved || !*resolved)
+        return false;
+    fs_lock();
+    for (int i = 0; i < NOX_3DS_RAW_CACHE_SLOTS; ++i) {
+        if (g_raw_write_cache[i].valid &&
+            strcasecmp(g_raw_write_cache[i].path, resolved) == 0) {
+            *out_data = g_raw_write_cache[i].data;
+            *out_size = g_raw_write_cache[i].size;
+            *out_cap  = g_raw_write_cache[i].cap;
+            memset(&g_raw_write_cache[i], 0, sizeof(g_raw_write_cache[i]));
+            fs_unlock();
+            return true;
+        }
+    }
+    fs_unlock();
+    return false;
+}
+
+static int raw_write_cache_copy_to_path(const char *src_resolved,
+                                        const char *dst_resolved,
+                                        size_t chunk_sz)
+{
+    if (!src_resolved || !*src_resolved || !dst_resolved || !*dst_resolved)
+        return 0; /* 0 = cache miss, 1 = written ok, -1 = write error */
+
+    fs_lock();
+    int hit = -1;
+    for (int i = 0; i < NOX_3DS_RAW_CACHE_SLOTS; ++i) {
+        if (g_raw_write_cache[i].valid &&
+            strcasecmp(g_raw_write_cache[i].path, src_resolved) == 0) {
+            hit = i;
+            g_raw_write_cache[i].last_use = ++g_raw_write_clock;
+            break;
+        }
+    }
+    if (hit < 0) {
+        fs_unlock();
+        return 0;
+    }
+
+    int dst_fd = open(dst_resolved, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+    if (dst_fd < 0 && errno == ENOENT) {
+        nox_3ds_ensure_parent_dirs(dst_resolved);
+        dst_fd = open(dst_resolved, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+    }
+    if (dst_fd < 0) {
+        fs_unlock();
+        return -1;
+    }
+
+    const uint8_t *data = g_raw_write_cache[hit].data;
+    size_t size = g_raw_write_cache[hit].size;
+    size_t off = 0;
+    while (off < size) {
+        size_t chunk = size - off;
+        if (chunk > chunk_sz)
+            chunk = chunk_sz;
+        ssize_t w = write(dst_fd, data + off, chunk);
+        if (w <= 0) {
+            close(dst_fd);
+            fs_unlock();
+            return -1;
+        }
+        off += (size_t)w;
+    }
+    close(dst_fd);
+    fs_unlock();
+    return 1;
+}
+
 static int memfile_flush_to_sd(nox_3ds_memfile_t *mf)
 {
     if (!mf)
         return -1;
+
+    raw_write_cache_invalidate_resolved(mf->resolved);
 
     int fd = open(mf->resolved, O_WRONLY | O_CREAT | O_TRUNC, 0666);
     if (fd < 0 && errno == ENOENT) {
@@ -261,6 +470,10 @@ static int memfile_close(void *cookie)
         return 0;
 
     int rc = memfile_flush_to_sd(mf);
+    if (rc == 0 && mf->data && mf->size > 0) {
+        raw_write_cache_store_take(mf->resolved, mf->data, mf->size, mf->cap);
+        mf->data = NULL;
+    }
     free(mf->data);
     free(mf);
     return rc;
@@ -284,42 +497,53 @@ static FILE *memfile_open(const char *resolved, const char *mode, nox_3ds_memfil
     snprintf(mf->resolved, sizeof(mf->resolved), "%s", resolved);
 
     if (is_rw_existing) {
-        struct stat st;
-        if (stat(resolved, &st) != 0) {
-            free(mf);
-            return NULL; /* r+b fails if file does not exist */
-        }
-        if ((size_t)st.st_size > NOX_3DS_MEMFILE_PRELOAD_MAX) {
-            free(mf);
-            return NULL; /* fall back to direct fopen for huge files */
-        }
-        size_t init_cap = (size_t)st.st_size + 4096u;
-        if (init_cap < NOX_3DS_MEMFILE_INIT_CAP)
-            init_cap = NOX_3DS_MEMFILE_INIT_CAP;
-        mf->data = (uint8_t *)malloc(init_cap);
-        if (!mf->data) {
-            free(mf);
-            return NULL;
-        }
-        mf->cap = init_cap;
+        uint8_t *cached_data = NULL;
+        size_t cached_size = 0;
+        size_t cached_cap = 0;
+        if (raw_write_cache_take_for_rw(resolved, &cached_data, &cached_size, &cached_cap)) {
+            mf->data = cached_data;
+            mf->size = cached_size;
+            mf->cap = cached_cap;
+            mf->pos = 0;
+            mf->dirty = false;
+        } else {
+            struct stat st;
+            if (stat(resolved, &st) != 0) {
+                free(mf);
+                return NULL; /* r+b fails if file does not exist */
+            }
+            if ((size_t)st.st_size > NOX_3DS_MEMFILE_PRELOAD_MAX) {
+                free(mf);
+                return NULL; /* fall back to direct fopen for huge files */
+            }
+            size_t init_cap = (size_t)st.st_size + 4096u;
+            if (init_cap < NOX_3DS_MEMFILE_INIT_CAP)
+                init_cap = NOX_3DS_MEMFILE_INIT_CAP;
+            mf->data = (uint8_t *)malloc(init_cap);
+            if (!mf->data) {
+                free(mf);
+                return NULL;
+            }
+            mf->cap = init_cap;
 
-        int fd = open(resolved, O_RDONLY);
-        if (fd < 0) {
-            free(mf->data);
-            free(mf);
-            return NULL;
+            int fd = open(resolved, O_RDONLY);
+            if (fd < 0) {
+                free(mf->data);
+                free(mf);
+                return NULL;
+            }
+            size_t off = 0;
+            while (off < (size_t)st.st_size) {
+                ssize_t r = read(fd, mf->data + off, (size_t)st.st_size - off);
+                if (r <= 0)
+                    break;
+                off += (size_t)r;
+            }
+            close(fd);
+            mf->size = off;
+            mf->pos = 0;
+            mf->dirty = false;
         }
-        size_t off = 0;
-        while (off < (size_t)st.st_size) {
-            ssize_t r = read(fd, mf->data + off, (size_t)st.st_size - off);
-            if (r <= 0)
-                break;
-            off += (size_t)r;
-        }
-        close(fd);
-        mf->size = off;
-        mf->pos = 0;
-        mf->dirty = false;
     } else {
         mf->data = (uint8_t *)malloc(NOX_3DS_MEMFILE_INIT_CAP);
         if (!mf->data) {
@@ -599,14 +823,21 @@ FILE *nox_3ds_fopen(const char *path, const char *mode)
 
     bool wants_write = mode_requests_write(mode);
     if (wants_write) {
-        nox_3ds_crypt_cache_invalidate(resolved);
+        bool is_rw_existing = (mode[0] == 'r' && strchr(mode, '+') != NULL);
+        if (!is_rw_existing) {
+            nox_3ds_crypt_cache_invalidate(resolved);
+        }
 
         /* Route truncate-write ("w"/"wb") and in-place save updates ("r+b")
          * through our RAM-buffered funopen stream so Nox's thousands of
          * per-object fseek()+fwrite() calls run in RAM and flush sequentially
-         * to SDMC once on fclose(). */
+         * to SDMC once on fclose(). For "r+b", memfile_open() consumes any
+         * matching entry from g_raw_write_cache before invalidating caches. */
         nox_3ds_memfile_t *mf = NULL;
         FILE *mfp = memfile_open(resolved, mode, &mf);
+        if (is_rw_existing) {
+            nox_3ds_crypt_cache_invalidate(resolved);
+        }
         if (mfp) {
             track_write_file(mfp, mf);
             return mfp;
@@ -1038,6 +1269,7 @@ void nox_3ds_crypt_cache_invalidate(const char *path)
         }
     }
     fs_unlock();
+    raw_write_cache_invalidate_resolved(resolved);
 }
 
 void nox_3ds_crypt_cache_clear(void)
@@ -1050,6 +1282,7 @@ void nox_3ds_crypt_cache_clear(void)
         g_crypt_prefix_cache[i].valid = false;
     }
     fs_unlock();
+    raw_write_cache_clear();
 }
 
 bool nox_3ds_crypt_is_virtual(FILE *fp)
@@ -1633,6 +1866,247 @@ bool nox_3ds_crypt_close(FILE *fp)
         nox_3ds_fclose(to_close);
     }
     return true;
+}
+
+/* =========================================================================
+ * Direct Zero-chdir Save-Slot Copier (replaces sub_4DBE10 + sub_4DC100)
+ *
+ * Original sub_4DBE10 + sub_4DC100 executes ~10 SetCurrentDirectoryA() IPCs,
+ * deletes+recreates every map subdirectory even when reusing the same slot,
+ * and re-reads freshly saved WORKING files from SDMC.
+ *
+ * This helper operates directly on resolved sdmc:/3ds/nox/Save/<slot> paths,
+ * reuses matching subdirectories, removes only stale subdirectories, and
+ * copies freshly flushed WORKING files directly out of g_raw_write_cache.
+ * ========================================================================= */
+#define NOX_3DS_SAVE_MAX_DIRS    128
+#define NOX_3DS_SAVE_DIR_NAME_SZ 64
+#define NOX_3DS_SAVE_COPY_BUF_SZ (256u * 1024u)
+
+static bool dirent_is_dir_3ds(const char *parent_dir, const struct dirent *e)
+{
+    if (e->d_type == DT_DIR)
+        return true;
+    if (e->d_type == DT_REG)
+        return false;
+    char full[512];
+    snprintf(full, sizeof(full), "%s/%s", parent_dir, e->d_name);
+    struct stat st;
+    return (stat(full, &st) == 0) && S_ISDIR(st.st_mode);
+}
+
+static bool name_in_dir_list(const char names[][NOX_3DS_SAVE_DIR_NAME_SZ],
+                             int count, const char *needle)
+{
+    for (int i = 0; i < count; ++i) {
+        if (strcasecmp(names[i], needle) == 0)
+            return true;
+    }
+    return false;
+}
+
+static void remove_save_subdir_1level(const char *dir_path)
+{
+    DIR *d = opendir(dir_path);
+    if (d) {
+        struct dirent *e;
+        while ((e = readdir(d)) != NULL) {
+            if (strcmp(e->d_name, ".") == 0 || strcmp(e->d_name, "..") == 0)
+                continue;
+            char fpath[512];
+            snprintf(fpath, sizeof(fpath), "%s/%s", dir_path, e->d_name);
+            nox_3ds_crypt_cache_invalidate(fpath);
+            unlink(fpath);
+        }
+        closedir(d);
+    }
+    rmdir(dir_path);
+}
+
+static bool copy_file_resolved_3ds(const char *src_path, const char *dst_path,
+                                   uint8_t *buf, size_t buf_sz, int *out_ram_hits)
+{
+    nox_3ds_crypt_cache_invalidate(dst_path);
+
+    /* Fast path: source was just flushed via memfile -> write straight from RAM. */
+    int rc = raw_write_cache_copy_to_path(src_path, dst_path, buf_sz);
+    if (rc != 0) {
+        if (rc > 0) {
+            if (out_ram_hits) (*out_ram_hits)++;
+            return true;
+        }
+        return false;
+    }
+
+    int rfd = open(src_path, O_RDONLY);
+    if (rfd < 0)
+        return false;
+
+    int wfd = open(dst_path, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+    if (wfd < 0 && errno == ENOENT) {
+        nox_3ds_ensure_parent_dirs(dst_path);
+        wfd = open(dst_path, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+    }
+    if (wfd < 0) {
+        close(rfd);
+        return false;
+    }
+
+    bool ok = true;
+    for (;;) {
+        ssize_t r = read(rfd, buf, buf_sz);
+        if (r < 0) {
+            ok = false;
+            break;
+        }
+        if (r == 0)
+            break;
+        ssize_t off = 0;
+        while (off < r) {
+            ssize_t w = write(wfd, buf + off, (size_t)(r - off));
+            if (w <= 0) {
+                ok = false;
+                break;
+            }
+            off += w;
+        }
+        if (!ok)
+            break;
+    }
+
+    close(rfd);
+    close(wfd);
+    return ok;
+}
+
+int nox_3ds_save_copy(const char *src_slot, const char *dst_slot)
+{
+    if (!src_slot || !*src_slot || !dst_slot || !*dst_slot)
+        return 0;
+
+    uint32_t t0 = nox_3ds_get_ticks_ms();
+
+    char src_rel[256], dst_rel[256];
+    char src_dir[512], dst_dir[512];
+    snprintf(src_rel, sizeof(src_rel), "Save/%s", src_slot);
+    snprintf(dst_rel, sizeof(dst_rel), "Save/%s", dst_slot);
+    nox_3ds_resolve_path(src_rel, src_dir, sizeof(src_dir));
+    nox_3ds_resolve_path(dst_rel, dst_dir, sizeof(dst_dir));
+
+    if (!src_dir[0] || !dst_dir[0])
+        return 0;
+    if (strcasecmp(src_dir, dst_dir) == 0)
+        return 1;
+
+    char src_dirs[NOX_3DS_SAVE_MAX_DIRS][NOX_3DS_SAVE_DIR_NAME_SZ];
+    char dst_dirs[NOX_3DS_SAVE_MAX_DIRS][NOX_3DS_SAVE_DIR_NAME_SZ];
+    int src_dir_count = 0;
+    int dst_dir_count = 0;
+
+    DIR *sd = opendir(src_dir);
+    if (!sd)
+        return 0;
+    struct dirent *e;
+    while ((e = readdir(sd)) != NULL) {
+        if (strcmp(e->d_name, ".") == 0 || strcmp(e->d_name, "..") == 0)
+            continue;
+        if (dirent_is_dir_3ds(src_dir, e) && src_dir_count < NOX_3DS_SAVE_MAX_DIRS) {
+            snprintf(src_dirs[src_dir_count], NOX_3DS_SAVE_DIR_NAME_SZ, "%s", e->d_name);
+            src_dir_count++;
+        }
+    }
+    closedir(sd);
+
+    /* One opendir(dst_dir) checks existence AND enumerates existing map folders. */
+    DIR *dd = opendir(dst_dir);
+    if (!dd) {
+        if (!nox_3ds_ensure_dir(dst_dir))
+            return 0;
+    } else {
+        while ((e = readdir(dd)) != NULL) {
+            if (strcmp(e->d_name, ".") == 0 || strcmp(e->d_name, "..") == 0)
+                continue;
+            if (dirent_is_dir_3ds(dst_dir, e) && dst_dir_count < NOX_3DS_SAVE_MAX_DIRS) {
+                snprintf(dst_dirs[dst_dir_count], NOX_3DS_SAVE_DIR_NAME_SZ, "%s", e->d_name);
+                dst_dir_count++;
+            }
+        }
+        closedir(dd);
+    }
+
+    /* Remove only stale subdirectories not present in src_dir. */
+    for (int i = 0; i < dst_dir_count; ++i) {
+        if (!name_in_dir_list(src_dirs, src_dir_count, dst_dirs[i])) {
+            char stale_path[640];
+            snprintf(stale_path, sizeof(stale_path), "%s/%s", dst_dir, dst_dirs[i]);
+            remove_save_subdir_1level(stale_path);
+        }
+    }
+
+    uint8_t stack_buf[4096];
+    size_t buf_sz = NOX_3DS_SAVE_COPY_BUF_SZ;
+    uint8_t *heap_buf = (uint8_t *)malloc(buf_sz);
+    if (!heap_buf) {
+        buf_sz = 65536u;
+        heap_buf = (uint8_t *)malloc(buf_sz);
+    }
+    uint8_t *buf = heap_buf ? heap_buf : stack_buf;
+    if (!heap_buf)
+        buf_sz = sizeof(stack_buf);
+
+    int files_copied = 0;
+    int ram_hits = 0;
+
+    char src_plr[640], dst_plr[640];
+    snprintf(src_plr, sizeof(src_plr), "%s/Player.plr", src_dir);
+    snprintf(dst_plr, sizeof(dst_plr), "%s/Player.plr", dst_dir);
+    if (!copy_file_resolved_3ds(src_plr, dst_plr, buf, buf_sz, &ram_hits)) {
+        free(heap_buf);
+        return 0;
+    }
+    files_copied++;
+
+    int ok = 1;
+    for (int i = 0; i < src_dir_count; ++i) {
+        char src_sub[640], dst_sub[640];
+        snprintf(src_sub, sizeof(src_sub), "%s/%s", src_dir, src_dirs[i]);
+        snprintf(dst_sub, sizeof(dst_sub), "%s/%s", dst_dir, src_dirs[i]);
+
+        if (!name_in_dir_list(dst_dirs, dst_dir_count, src_dirs[i])) {
+            if (mkdir(dst_sub, 0777) != 0 && errno != EEXIST) {
+                ok = 0;
+                break;
+            }
+        }
+
+        DIR *subd = opendir(src_sub);
+        if (!subd)
+            continue;
+        while ((e = readdir(subd)) != NULL) {
+            if (strcmp(e->d_name, ".") == 0 || strcmp(e->d_name, "..") == 0)
+                continue;
+            if (dirent_is_dir_3ds(src_sub, e))
+                continue;
+
+            char src_file[768], dst_file[768];
+            snprintf(src_file, sizeof(src_file), "%s/%s", src_sub, e->d_name);
+            snprintf(dst_file, sizeof(dst_file), "%s/%s", dst_sub, e->d_name);
+            if (!copy_file_resolved_3ds(src_file, dst_file, buf, buf_sz, &ram_hits)) {
+                ok = 0;
+            } else {
+                files_copied++;
+            }
+        }
+        closedir(subd);
+    }
+
+    free(heap_buf);
+
+    nox_3ds_load_log("save_copy 3ds('%s'->'%s')=%ums (dirs=%d files=%d ram_hits=%d)",
+                     src_slot, dst_slot,
+                     (unsigned)(nox_3ds_get_ticks_ms() - t0),
+                     src_dir_count, files_copied, ram_hits);
+    return ok;
 }
 
 /* =========================================================================

@@ -43415,6 +43415,12 @@ int __cdecl sub_4DB370(const char *a1)
   char *v13; // [esp-4h] [ebp-80Ch]
   char v14[1024]; // [esp+8h] [ebp-800h]
   char v15[1024]; // [esp+408h] [ebp-400h]
+#ifdef __3DS__
+  uint32_t t0_3ds = nox_3ds_get_ticks_ms();
+  uint32_t t_map_3ds = t0_3ds;
+  uint32_t t_plr_3ds = t0_3ds;
+  uint32_t t_copy_3ds = t0_3ds;
+#endif
 
   sub_478000();
   sub_4606B0();
@@ -43445,6 +43451,9 @@ int __cdecl sub_4DB370(const char *a1)
   nox_sprintf(v15, (const char *)&byte_587000[199200], v6, &byte_587000[199192], v12, v13);
   if ( !sub_51E010(v15, 0) )
     return 0;
+#ifdef __3DS__
+  t_map_3ds = nox_3ds_get_ticks_ms();
+#endif
   sub_4DB6A0();
   v7 = sub_409E10();
   nox_sprintf(v14, (const char *)&byte_587000[199232], v7, &byte_587000[199224]);
@@ -43461,17 +43470,35 @@ int __cdecl sub_4DB370(const char *a1)
     return 0;
   if ( !sub_41A230(v14) )
     return 0;
+#ifdef __3DS__
+  t_plr_3ds = nox_3ds_get_ticks_ms();
+  t_copy_3ds = t_plr_3ds;
+#endif
   if ( strcmp(a1, (const char *)&byte_587000[199256]) )
   {
     v10 = sub_40F1D0((char *)&byte_587000[199312], 0, (const char *)&byte_587000[199264], 661);
     sub_4D9FD0(0, v10);
     if ( !sub_4DC100((int)&byte_587000[199332], (int)a1) )
       return 0;
+#ifdef __3DS__
+    t_copy_3ds = nox_3ds_get_ticks_ms();
+#endif
   }
   *(_DWORD *)&byte_5D4594[1563092] = 0;
   *(_DWORD *)&byte_5D4594[1563088] = 0;
 #ifdef __3DS__
   nox_3ds_commit_save();
+  {
+    uint32_t t_end_3ds = nox_3ds_get_ticks_ms();
+    nox_3ds_load_log("save_game sub_4DB370('%s')=%ums (map=%ums plr=%ums copy=%ums sync=%ums)",
+                     a1,
+                     (unsigned)(t_end_3ds - t0_3ds),
+                     (unsigned)(t_map_3ds - t0_3ds),
+                     (unsigned)(t_plr_3ds - t_map_3ds),
+                     (unsigned)(t_copy_3ds - t_plr_3ds),
+                     (unsigned)(t_end_3ds - t_copy_3ds));
+    nox_3ds_load_log_flush();
+  }
 #endif
   return 1;
 }
@@ -44189,6 +44216,9 @@ int __cdecl sub_4DBE10(int a1, int a2)
 //----- (004DC100) --------------------------------------------------------
 int __cdecl sub_4DC100(int a1, int a2)
 {
+#ifdef __3DS__
+  return nox_3ds_save_copy((const char *)a1, (const char *)a2);
+#else
   char *v2; // eax
   char *v3; // eax
   int result; // eax
@@ -44219,14 +44249,8 @@ int __cdecl sub_4DC100(int a1, int a2)
   CHAR v29[1024]; // [esp+D64h] [ebp-24400h]
   char v30[16384]; // [esp+1164h] [ebp-24000h]
   char v31[131072]; // [esp+5164h] [ebp-20000h]
-#ifdef __3DS__
-  uint32_t t0_3ds = nox_3ds_get_ticks_ms();
-#endif
 
   v24 = 1;
-#ifdef __3DS__
-  v21 = 0;
-#endif
   v2 = sub_409E10();
   nox_sprintf(&PathName, (const char *)&byte_587000[199708], v2, a1);
   v3 = sub_409E10();
@@ -44372,12 +44396,8 @@ LABEL_45:
 #ifdef __EMSCRIPTEN__
   EM_ASM(FS.syncfs(false,function (err) {}));
 #endif
-#ifdef __3DS__
-  nox_3ds_load_log("save_copy sub_4DC100('%s'->'%s')=%ums (dirs=%d)",
-                   (const char *)a1, (const char *)a2,
-                   (unsigned)(nox_3ds_get_ticks_ms() - t0_3ds), v21);
-#endif
   return result;
+#endif
 }
 // 4DC100: using guessed type CHAR var_20000[131072];
 // 4DC100: using guessed type char var_24000[16384];
