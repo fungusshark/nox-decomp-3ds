@@ -6319,6 +6319,14 @@ int sub_4AA270()
   sub_44A400();
   sub_43BDD0(400);
   sub_4A1A40(1);
+#ifdef __3DS__
+  /* Activate Wi-Fi (soc:u) strictly when player enters Multiplayer menus;
+   * keep Solo Quest (sub_4D6F30 / sub_4D6FA0) strictly on loopback. */
+  if ( !sub_4D6F30() && sub_4D6FA0() == 0 )
+    nox_3ds_net_set_mode(NOX_3DS_NET_MODE_WIFI);
+  else
+    nox_3ds_net_set_mode(NOX_3DS_NET_MODE_LOOPBACK);
+#endif
   if ( sub_40E0C0() && sub_43AF70() == 1 )
     sub_41D4C0();
   sub_43AF50(2);
@@ -35510,11 +35518,21 @@ int sub_4D1660()
                                   sub_416920();
                                   if ( !sub_40A5C0(2048) )
                                   {
+#ifdef __3DS__
+                                    if ( sub_4D6F30() || sub_4D6FA0() != 0 )
+                                      nox_3ds_net_set_mode(NOX_3DS_NET_MODE_LOOPBACK);
+#endif
                                     v1 = sub_40A430();
                                     *(_DWORD *)&byte_5D4594[1548516] = sub_4DEBC0(v1);
                                     if ( !sub_40A5C0(0x2000000) )
                                       sub_413CC0();
                                   }
+#ifdef __3DS__
+                                  else
+                                  {
+                                    nox_3ds_net_set_mode(NOX_3DS_NET_MODE_LOOPBACK);
+                                  }
+#endif
                                   sub_4FB990();
                                   result = sub_516EE0();
                                   if ( result )
@@ -36744,6 +36762,9 @@ BOOL sub_4D3200()
     if ( !sub_40A5C0(0x2000000) )
       sub_413D00();
   }
+#ifdef __3DS__
+  nox_3ds_net_set_mode(NOX_3DS_NET_MODE_LOOPBACK);
+#endif
   sub_56F3B0();
   nullsub_23();
   sub_40EE60();
@@ -46146,8 +46167,8 @@ _DWORD *__cdecl sub_4DEE00(const char *a1, int a2)
   v7[0] = 43;
   v2 = *(_DWORD *)&byte_5D4594[2598000];
   strcpy(&v7[1], a1);
-  *(_DWORD *)&v7[37] = v2;
-  *(_DWORD *)&v7[33] = a2;
+  nox_write_u32(&v7[37], (uint32_t)v2);
+  nox_write_u32(&v7[33], (uint32_t)a2);
   result = (_DWORD *)sub_4DA7C0();
   for ( i = result; result; i = result )
   {

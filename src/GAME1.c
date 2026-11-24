@@ -47071,6 +47071,9 @@ int sub_437190()
   sub_44DF70();
   if ( !sub_40A5C0(1) )
     sub_43CC80();
+#ifdef __3DS__
+  nox_3ds_net_set_mode(NOX_3DS_NET_MODE_LOOPBACK);
+#endif
   *(_DWORD *)&byte_5D4594[811372] = 0;
   if ( !sub_40A5C0(1) )
     sub_4E4DE0();
@@ -47283,45 +47286,45 @@ int __cdecl sub_4375F0(const char *a1, __int16 a2, char *a3, int a4)
           memset(v13, 0, 0xA8u);
           v13[168] = 0;
           v4 = timeGetTime();
-          v5 = *(_DWORD *)(a4 + 44);
-          v6 = *(_WORD *)(a4 + 36);
+          v5 = (int)nox_read_u32((const void *)(a4 + 44));
+          v6 = (int16_t)nox_read_u16((const void *)(a4 + 36));
           v13[101] = *(_BYTE *)(a4 + 5) | (16 * *(_BYTE *)(a4 + 6));
-          v7 = *(_WORD *)(a4 + 38);
-          *(_WORD *)&v13[105] = v6;
+          v7 = (int16_t)nox_read_u16((const void *)(a4 + 38));
+          nox_write_u16(&v13[105], (uint16_t)v6);
           LOBYTE(v6) = *(_BYTE *)(a4 + 21);
-          *(_WORD *)&v13[107] = v7;
+          nox_write_u16(&v13[107], (uint16_t)v7);
           LOBYTE(v7) = *(_BYTE *)(a4 + 4);
           v13[100] = *(_BYTE *)(a4 + 20) | v6;
           LOBYTE(v6) = *(_BYTE *)(a4 + 3);
           v13[104] = v7;
           LOBYTE(v7) = *(_BYTE *)(a4 + 19);
           v13[103] = v6;
-          v8 = *(_DWORD *)(a4 + 32);
+          v8 = (int)nox_read_u32((const void *)(a4 + 32));
           v13[102] = v7;
-          v9 = *(_WORD *)(a4 + 28);
-          *(_DWORD *)&v13[159] = v8;
-          v10 = *(_DWORD *)(a4 + 24);
-          *(_WORD *)&v13[163] = v9;
-          v11 = *(_DWORD *)(a4 + 40);
-          *(_DWORD *)&v13[48] = v10;
-          *(_DWORD *)&v13[44] = v11;
+          v9 = (int16_t)nox_read_u16((const void *)(a4 + 28));
+          nox_write_u32(&v13[159], (uint32_t)v8);
+          v10 = (int)nox_read_u32((const void *)(a4 + 24));
+          nox_write_u16(&v13[163], (uint16_t)v9);
+          v11 = (int)nox_read_u32((const void *)(a4 + 40));
+          nox_write_u32(&v13[48], (uint32_t)v10);
+          nox_write_u32(&v13[44], (uint32_t)v11);
           qmemcpy(&v13[135], (const void *)(a4 + 48), 0x14u);
-          *(_DWORD *)&v13[155] = *(_DWORD *)(a4 + 7);
+          nox_write_u32(&v13[155], nox_read_u32((const void *)(a4 + 7)));
           strcpy(&v13[111], (const char *)(a4 + 10));
-          LOWORD(v10) = *(_WORD *)(a4 + 68);
-          *(_DWORD *)&v13[96] = v4 - v5;
-          *(_WORD *)&v13[165] = v10;
+          LOWORD(v10) = nox_read_u16((const void *)(a4 + 68));
+          nox_write_u32(&v13[96], (uint32_t)(v4 - v5));
+          nox_write_u16(&v13[165], (uint16_t)v10);
           if ( *(int *)&byte_587000[87412] == -1
-            || sub_437860(*(__int16 *)&v13[44], *(__int16 *)&v13[46]) == *(_DWORD *)&byte_587000[87412] )
+            || sub_437860(nox_read_s16(&v13[44]), nox_read_s16(&v13[46])) == *(_DWORD *)&byte_587000[87412] )
           {
             if ( sub_4899C0((int)v13) )
             {
-              *(_DWORD *)&v13[36] = *(_DWORD *)&byte_5D4594[815088];
-              *(_DWORD *)&v13[28] = 0;
+              nox_write_u32(&v13[36], *(_DWORD *)&byte_5D4594[815088]);
+              nox_write_u32(&v13[28], 0);
               strcpy(&v13[12], a1);
-              *(_WORD *)&v13[109] = a2;
+              nox_write_u16(&v13[109], (uint16_t)a2);
               strncpy(&v13[120], a3, 0xFu);
-              *(_WORD *)&v13[163] = *(_WORD *)(a4 + 28);
+              nox_write_u16(&v13[163], nox_read_u16((const void *)(a4 + 28)));
               sub_4A0030(v13);
               v14[0] = 0;
               if ( a3 )
@@ -47391,6 +47394,49 @@ int sub_4378B0()
       *(_DWORD *)&byte_5D4594[814964] = v4;
       v1 = sub_40A430();
       sub_554AA0(v1, 0, 0, v4);
+#ifdef __3DS__
+      /* Phase 1 Direct IPv4 unicast discovery: if sdmc:/3ds/nox/direct_ip.txt exists,
+       * also send the standard 12-byte 0x0C discovery ping directly to each listed
+       * IPv4[:port] PC host so it appears in the native LAN browser even across WAN
+       * or broadcast-isolated Wi-Fi networks. */
+      if ( nox_3ds_net_get_mode() == NOX_3DS_NET_MODE_WIFI )
+      {
+        FILE *dipf = fopen(NOX_3DS_DATA_ROOT "/direct_ip.txt", "r");
+        if ( dipf )
+        {
+          char line[128];
+          char ping_pkt[12];
+          memset(ping_pkt, 0, sizeof(ping_pkt));
+          ping_pkt[2] = 12;
+          nox_write_u32(&ping_pkt[8], (uint32_t)v4);
+          while ( fgets(line, sizeof(line), dipf) )
+          {
+            char *p = line;
+            while ( *p == ' ' || *p == '\t' ) ++p;
+            if ( *p == '\0' || *p == '#' || *p == '\r' || *p == '\n' )
+              continue;
+            char *nl = strpbrk(p, "\r\n \t");
+            if ( nl ) *nl = '\0';
+            u_short target_port = v1;
+            char *colon = strchr(p, ':');
+            if ( colon )
+            {
+              *colon = '\0';
+              int parsed_p = atoi(colon + 1);
+              if ( parsed_p >= 1024 && parsed_p <= 65535 )
+                target_port = (u_short)parsed_p;
+            }
+            unsigned int target_ip = inet_addr(p);
+            if ( target_ip != (unsigned int)-1 )
+            {
+              printf("[net3ds] Direct IPv4 ping -> %s:%u\n", p, (unsigned)target_port);
+              sub_555010((int)target_ip, target_port, ping_pkt, 12);
+            }
+          }
+          fclose(dipf);
+        }
+      }
+#endif
       v2 = sub_40F1D0((char *)&byte_587000[88032], 0, (const char *)&byte_587000[87992], 1097);
       sub_449A10(*(int *)&byte_5D4594[814980], 0, (int)v2, 0, 0, 0);
     }
@@ -47590,7 +47636,15 @@ int sub_4379F0()
         if ( *(_DWORD *)&byte_587000[87408] == 1 )
           sub_4383A0();
         if ( !*(_DWORD *)&byte_587000[87404] )
+        {
+#ifdef __3DS__
+          if ( !sub_4D6F30() && sub_4D6FA0() == 0 )
+            nox_3ds_net_set_mode(NOX_3DS_NET_MODE_WIFI);
+          else
+            nox_3ds_net_set_mode(NOX_3DS_NET_MODE_LOOPBACK);
+#endif
           sub_554B40(0);
+        }
         *(_DWORD *)&byte_5D4594[815088] = 0;
         sub_4158C0();
         sub_415D50();
@@ -49399,7 +49453,15 @@ int sub_43B360()
 int sub_43B440()
 {
   if ( *(_DWORD *)&byte_587000[87404] == 1 )
+  {
+#ifdef __3DS__
+    if ( !sub_4D6F30() && sub_4D6FA0() == 0 )
+      nox_3ds_net_set_mode(NOX_3DS_NET_MODE_WIFI);
+    else
+      nox_3ds_net_set_mode(NOX_3DS_NET_MODE_LOOPBACK);
+#endif
     sub_554B40(0);
+  }
   sub_438A90();
   return 1;
 }
@@ -50547,6 +50609,10 @@ int __cdecl sub_43C7B0(char *cp, int hostshort, int a3, signed int *a4)
   *(_DWORD *)&v7[20] = 2048;
   *(_DWORD *)&v7[8] = hostshort;
   sub_5520B0(200, 1024);
+#ifdef __3DS__
+  if ( !sub_40A5C0(1) )
+    nox_3ds_net_set_mode(NOX_3DS_NET_MODE_WIFI);
+#endif
   *(_DWORD *)&v7[36] = sub_43C860;
   v4 = sub_5546F0((size_t *)v7);
   *(_DWORD *)&byte_5D4594[815700] = v4;
@@ -50582,7 +50648,7 @@ int __cdecl sub_43C860(int a1, unsigned __int8 *a2, int a3)
     }
     else if ( v4 == 36 )
     {
-      *(_DWORD *)&byte_5D4594[2614264] = *(_DWORD *)(a2 + 1);
+      *(_DWORD *)&byte_5D4594[2614264] = nox_read_u32(a2 + 1);
     }
   }
   else
@@ -50631,10 +50697,10 @@ int __cdecl sub_43C8F0(int a1, int a2, int a3)
         if ( a2 == *(unsigned __int16 *)&byte_5D4594[815768] && v6 == *(unsigned __int16 *)&byte_5D4594[815770] )
           return 1;
         *(_WORD *)&byte_5D4594[815770] = v6;
-        *(_WORD *)&v9[3] = v6;
+        nox_write_u16(&v9[3], (uint16_t)v6);
         *(_WORD *)&byte_5D4594[815768] = a2;
         v9[0] = -84;
-        *(_WORD *)&v9[1] = a2;
+        nox_write_u16(&v9[1], (uint16_t)a2);
         result = sub_40EBC0(a1, 0, v9, 5);
         if ( result )
           return 1;
@@ -50790,7 +50856,7 @@ int sub_43CCA0()
       if ( sub_416BB0() >= v2 )
       {
         v7[0] = 40;
-        *(_DWORD *)&v7[1] = *(_DWORD *)&byte_5D4594[2598000] + 1;
+        nox_write_u32(&v7[1], (uint32_t)(*(_DWORD *)&byte_5D4594[2598000] + 1));
         sub_48EA70(31, (unsigned int)v7, 5);
       }
     }
@@ -50938,6 +51004,10 @@ int sub_43CFF0()
     return 1;
   while ( (unsigned __int64)(sub_416BB0() - v0) < 0x2710 )
   {
+#ifdef __3DS__
+    sub_4453A0();
+    nox_3ds_sleep_ms(1);
+#endif
     sub_552A80(*(unsigned int *)&byte_5D4594[815700], 1);
     sub_40EE10(*(unsigned int *)&byte_5D4594[815700], 31, 0);
     sub_40ED10(31, 0);

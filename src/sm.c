@@ -245,6 +245,10 @@ void NET_CONNECT (sm_args_t *args)
     GOTO_NET_CONNECT_THEN(-4);
   if ( hostshort < 1024 || hostshort > 0x10000 )
     GOTO_NET_CONNECT_THEN(-15);
+#ifdef __3DS__
+  if ( !sub_40A5C0(1) )
+    nox_3ds_net_set_mode(NOX_3DS_NET_MODE_WIFI);
+#endif
   if ( WSAStartup(0x101u, &WSAData) != 0 )
     GOTO_NET_CONNECT_THEN(-21);
   v7 = socket(2, 2, 0);
@@ -310,11 +314,13 @@ void NET_CONNECT_WAIT_LOOP (sm_args_t *args)
     GOTO_NET_CONNECT_WAIT_THEN(args->net_connect_wait_loop.data, a1, -3);
   if ( !v4 )
     GOTO_NET_CONNECT_WAIT_THEN(args->net_connect_wait_loop.data, a1, -3);
-  v6 = 0;
   if ( 20 * a3 < ++v6 )
     GOTO_NET_CONNECT_WAIT_THEN(args->net_connect_wait_loop.data, a1, -23);
   sub_552A80(a1, a4 | 1);
   sub_552460();
+#ifdef __3DS__
+  sub_4453A0();
+#endif
   if ( *(char *)(v4 + 113) >= a2 )
     GOTO_NET_CONNECT_WAIT_THEN(args->net_connect_wait_loop.data, a1, 0);
 

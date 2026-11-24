@@ -59,7 +59,9 @@ add_executable(nox
     "${CMAKE_CURRENT_SOURCE_DIR}/font_3ds.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/input_3ds.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/swkbd_3ds.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/net_3ds.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/net_loopback_3ds.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/net_sockets_3ds.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/stubs.c"
 )
 
@@ -73,7 +75,9 @@ set_source_files_properties(
     "${CMAKE_CURRENT_SOURCE_DIR}/font_3ds.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/input_3ds.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/swkbd_3ds.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/net_3ds.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/net_loopback_3ds.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/net_sockets_3ds.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/stubs.c"
     PROPERTIES COMPILE_OPTIONS "-O3;-faggressive-loop-optimizations"
 )

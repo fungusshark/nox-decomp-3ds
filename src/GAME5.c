@@ -10446,7 +10446,7 @@ int __cdecl sub_552E70(unsigned int a1)
           v8 = *(_DWORD *)&byte_5D4594[2495920];
           v7[22] = *(_DWORD *)&byte_5D4594[2495920];
           v7[23] = *(_DWORD *)&byte_5D4594[2495920];
-          *(_DWORD *)&v9[1] = v8;
+          nox_write_u32(&v9[1], (uint32_t)v8);
           sub_552640(v3, v9, 5, 2);
         }
       }
@@ -10501,7 +10501,7 @@ int __cdecl sub_552F20(unsigned int a1)
           v8 = v7[25] + 1;
           v7[25] = v8;
           v7[26] = *(_DWORD *)&byte_5D4594[2495920];
-          *(_DWORD *)&v9[1] = v8;
+          nox_write_u32(&v9[1], (uint32_t)v8);
           sub_552640(v3, v9, 256, 2);
         }
       }
@@ -10730,12 +10730,11 @@ int __cdecl sub_553210(unsigned int a1, unsigned __int8 *a2, int a3, int a4)
   v7 = *(_DWORD *)&byte_5D4594[4 * a1 + 3843788];
   v73 = (unsigned int)v5;
   v8 = *(_DWORD *)&byte_5D4594[4 * v6 + 3843788];
-  *(_DWORD *)v74 = *(_DWORD *)a4;
+  memcpy(v74, (const void *)a4, 8);
   v9 = a2 + 2;
   v72 = v8;
-  *(_DWORD *)&v74[4] = *(_DWORD *)(a4 + 4);
-  v75 = *(_DWORD *)(a4 + 8);
-  v76 = *(_DWORD *)(a4 + 12);
+  v75 = (int)nox_read_u32((const void *)(a4 + 8));
+  v76 = (int)nox_read_u32((const void *)(a4 + 12));
   if ( (unsigned int)(a2 + 2) < v73 )
   {
     while ( 2 )
@@ -10809,7 +10808,7 @@ LABEL_108:
               *(_BYTE *)v4 = 31;
               *(_BYTE *)(v4 + 1) = v66;
               *(_BYTE *)(v4 + 2) = 1;
-              *(_DWORD *)(v4 + 3) = v6;
+              nox_write_u32((void *)(v4 + 3), (uint32_t)v6);
               *(_BYTE *)(v4 + 7) = v64;
               v67 = sub_552640(v6, (const void *)v4, 8, 3);
               *(_BYTE *)(*(_DWORD *)&byte_5D4594[4 * v6 + 3843788] + 148) = v65;
@@ -10827,7 +10826,7 @@ LABEL_113:
           }
           return result;
         case 1:
-          v11 = *(_DWORD *)v9;
+          v11 = (int)nox_read_u32(v9);
           v12 = *(_BYTE **)(v7 + 48);
           v13 = v9 + 4;
           *(_DWORD *)(v7 + 20) = v11;
@@ -10854,7 +10853,7 @@ LABEL_113:
           v30 = **(_BYTE **)(v7 + 48);
           *(_BYTE *)(v4 + 2) = 7;
           *(_BYTE *)v4 = v30;
-          *(_DWORD *)(v4 + 3) = *(_DWORD *)v9;
+          nox_write_u32((void *)(v4 + 3), nox_read_u32(v9));
           return result;
         case 6:
           v17 = *(_DWORD *)&byte_5D4594[4 * v6 + 3843788];
@@ -10876,9 +10875,9 @@ LABEL_113:
           }
           *(_BYTE *)(v4 + 1) = *(_BYTE *)(v18 + 1);
           result = 7;
-          *(_DWORD *)&byte_5D4594[32 * v6 + 2508792] = *(_DWORD *)v9;
+          *(_DWORD *)&byte_5D4594[32 * v6 + 2508792] = nox_read_u32(v9);
           *(_BYTE *)(v4 + 2) = 8;
-          *(_DWORD *)(v4 + 3) = *(_DWORD *)v9;
+          nox_write_u32((void *)(v4 + 3), nox_read_u32(v9));
           return result;
         case 7:
           if ( !*(_DWORD *)(v8 + 100) )
@@ -10889,18 +10888,18 @@ LABEL_113:
           else
             v32 = -1;
           *(_BYTE *)v4 = 35;
-          *(_DWORD *)(v4 + 1) = v32;
+          nox_write_u32((void *)(v4 + 1), (uint32_t)v32);
           if ( *(int *)(v7 + 20) == -1 )
             (*(void (__cdecl **)(unsigned int, int, int, _DWORD))(v7 + 144))(v6, v4, 5, *(_DWORD *)(v8 + 120));
           else
             (*(void (__cdecl **)(unsigned int, int, int, _DWORD))(v7 + 144))(v6, v4, 5, *(_DWORD *)(v7 + 120));
           return 0;
         case 8:
-          if ( *(_DWORD *)v9 != *(_DWORD *)(v8 + 88) )
+          if ( nox_read_u32(v9) != *(_DWORD *)(v8 + 88) )
             return 0;
           *(_DWORD *)(v8 + 96) = *(_DWORD *)&byte_5D4594[2495920] - *(_DWORD *)(v8 + 92);
           *(_BYTE *)v4 = 36;
-          *(_DWORD *)(v4 + 1) = *(_DWORD *)(v8 + 96);
+          nox_write_u32((void *)(v4 + 1), *(_DWORD *)(v8 + 96));
           if ( *(int *)(v7 + 20) == -1 )
             v19 = *(_DWORD *)(v8 + 120);
           else
@@ -10910,11 +10909,11 @@ LABEL_113:
           v20 = *(_BYTE *)(*(_DWORD *)(v72 + 48) + 1);
           *(_BYTE *)(v4 + 2) = 9;
           *(_BYTE *)(v4 + 1) = v20;
-          *(_DWORD *)(v4 + 3) = *(_DWORD *)&byte_5D4594[2495920];
+          nox_write_u32((void *)(v4 + 3), *(_DWORD *)&byte_5D4594[2495920]);
           return 7;
         case 9:
           v21 = 32 * v6;
-          v22 = *(_DWORD *)v9 - *(_DWORD *)&byte_5D4594[32 * v6 + 2508792];
+          v22 = (int)nox_read_u32(v9) - *(_DWORD *)&byte_5D4594[32 * v6 + 2508792];
           if ( v22 <= 0 || v22 >= 1000 )
             return 0;
           v23 = *(_DWORD *)&byte_5D4594[32 * v6 + 2508788];
@@ -10998,7 +10997,7 @@ LABEL_113:
             *(_BYTE *)(v4 + 3) = 6;
             return 4;
           }
-          if ( *(short *)(v35 + 105) != -1 )
+          if ( nox_read_s16(v35 + 105) != -1 )
             goto LABEL_97;
           goto LABEL_96;
         case 18:
@@ -11166,10 +11165,10 @@ LABEL_92:
         *(_BYTE *)(v4 + 2) = 15;
         return 3;
       }
-      if ( *(short *)(v78 + 105) == -1 )
+      if ( nox_read_s16(v78 + 105) == -1 )
       {
 LABEL_96:
-        if ( *(short *)(v35 + 107) == -1 )
+        if ( nox_read_s16(v35 + 107) == -1 )
         {
 LABEL_99:
           *(_BYTE *)(v4 + 2) = 20;
@@ -11464,23 +11463,23 @@ unsigned int __cdecl sub_554040(int a1, int a2, char *a3)
   }
   v8 = v3[101];
   v9 = v3[101];
-  *(_WORD *)&v17[36] = *(_WORD *)(v3 + 105);
+  nox_write_u16(&v17[36], nox_read_u16(v3 + 105));
   v17[5] = v9 & 0xF;
   v10 = *((_DWORD *)v3 + 11);
   v17[6] = v8 >> 4;
-  *(_WORD *)&v17[38] = *(_WORD *)(v3 + 107);
-  *(_DWORD *)&v17[40] = v10;
+  nox_write_u16(&v17[38], nox_read_u16(v3 + 107));
+  nox_write_u32(&v17[40], (uint32_t)v10);
   v11 = sub_43BE50();
   v12 = *((_DWORD *)v4 + 12);
   v17[19] = v3[102] | v11;
   v17[20] = v3[100];
   v17[21] = v17[20] & 0x10;
   v13 = *((_DWORD *)v3 + 12);
-  *(_DWORD *)&v17[44] = *(_DWORD *)(a1 + 8);
+  nox_write_u32(&v17[44], nox_read_u32((const void *)(a1 + 8)));
   v14 = *((_DWORD *)v4 + 11);
-  *(_DWORD *)&v17[32] = v12;
-  *(_DWORD *)&v17[24] = v13;
-  *(_DWORD *)&v17[7] = v14;
+  nox_write_u32(&v17[32], (uint32_t)v12);
+  nox_write_u32(&v17[24], (uint32_t)v13);
+  nox_write_u32(&v17[7], (uint32_t)v14);
   qmemcpy(&v17[48], v4 + 24, 0x14u);
   strcpy(&v17[10], sub_409B40());
   qmemcpy(a3, v17, 0x48u);

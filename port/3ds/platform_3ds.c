@@ -30,9 +30,14 @@ static void nox_3ds_apt_hook_cb(APT_HookType hook, void *param)
     case APTHOOK_ONSUSPEND:
     case APTHOOK_ONSLEEP:
     case APTHOOK_ONEXIT:
-        /* Force a full fflush() and fsync() on open file descriptors when
-         * the user presses HOME, closes the lid, or exits. */
+        /* Mark Wi-Fi sockets suspended (lid close / HOME disconnects 3DS Wi-Fi)
+         * and force a full fflush()/fsync() on open file descriptors. */
+        nox_3ds_net_on_apt_suspend(true);
         nox_3ds_commit_save();
+        break;
+    case APTHOOK_ONRESTORE:
+    case APTHOOK_ONWAKEUP:
+        nox_3ds_net_on_apt_suspend(false);
         break;
     default:
         break;

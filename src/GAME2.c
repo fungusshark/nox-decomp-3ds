@@ -49337,7 +49337,7 @@ int __cdecl sub_48EA70__abi_raw(int a1, unsigned int a2, int a3)
         v9 = 1;
         if ( v7 == 40 )
         {
-          *(_DWORD *)&byte_5D4594[2598000] = *(_DWORD *)(v3 + 1);
+          *(_DWORD *)&byte_5D4594[2598000] = nox_read_u32((const void *)(v3 + 1));
           *(_DWORD *)&byte_5D4594[1200800] = *(_DWORD *)&byte_5D4594[2598000];
           v364 = *(_DWORD *)&byte_5D4594[2598000];
           *(_DWORD *)&byte_5D4594[1200808] = *(unsigned __int16 *)&byte_5D4594[2598000] >> 14;
@@ -49349,7 +49349,7 @@ int __cdecl sub_48EA70__abi_raw(int a1, unsigned int a2, int a3)
         }
         if ( v7 != 39 )
         {
-          v14 = *(unsigned __int16 *)(v373 + 1);
+          v14 = nox_read_u16((const void *)(v373 + 1));
           if ( (unsigned __int16)v14 < (unsigned int)(*(_DWORD *)&byte_5D4594[1200800] + sub_43C790()) )
             *(_DWORD *)&byte_5D4594[2598000] = v14;
           v3 += 5;
@@ -49359,7 +49359,7 @@ int __cdecl sub_48EA70__abi_raw(int a1, unsigned int a2, int a3)
         if ( *(_DWORD *)&byte_5D4594[2618908] && *(_BYTE *)(*(_DWORD *)&byte_5D4594[2618908] + 3680) & 0x40 )
           return 1;
         v10 = *(_DWORD *)&byte_5D4594[2598000];
-        v11 = *(_WORD *)(v3 + 1);
+        v11 = nox_read_u16((const void *)(v3 + 1));
         v12 = v11 + (*(_DWORD *)&byte_5D4594[2598000] & 0xFFFF0000);
         v13 = v11 >> 14;
         if ( v13 != *(_DWORD *)&byte_5D4594[1200808] )
@@ -49395,12 +49395,12 @@ int __cdecl sub_48EA70__abi_raw(int a1, unsigned int a2, int a3)
         goto LABEL_1183;
       case 0x2Bu:
         k = *(_DWORD *)&byte_5D4594[1200804];
-        if ( *(_DWORD *)(v3 + 37) > *(int *)&byte_5D4594[1200804] )
+        if ( nox_read_s32((const void *)(v3 + 37)) > *(int *)&byte_5D4594[1200804] )
         {
-          sub_40A360(*(_DWORD *)(v3 + 37));
+          sub_40A360(nox_read_s32((const void *)(v3 + 37)));
           sub_467DF0(1);
           sub_409D70((char *)(v3 + 1));
-          sub_409B10(*(_DWORD *)(v3 + 33));
+          sub_409B10(nox_read_s32((const void *)(v3 + 33)));
           if ( !sub_40A5C0(1) )
           {
             sub_40A540(8);
@@ -49418,12 +49418,12 @@ int __cdecl sub_48EA70__abi_raw(int a1, unsigned int a2, int a3)
         v3 += 41;
         goto LABEL_1184;
       case 0x2Cu:
-        v42 = sub_578B30(*(_WORD *)(v3 + 1));
+        v42 = sub_578B30(nox_read_u16((const void *)(v3 + 1)));
         *(_DWORD *)&byte_5D4594[2616328] = v42;
         v43 = sub_416F60(v42);
         if ( v43 )
         {
-          *((_DWORD *)v43 + 517) = *(_DWORD *)(v3 + 3);
+          *((_DWORD *)v43 + 517) = nox_read_u32((const void *)(v3 + 3));
           *(_DWORD *)&byte_5D4594[2618908] = v43;
         }
         if ( !sub_40A5C0(1) )
@@ -49437,7 +49437,7 @@ int __cdecl sub_48EA70__abi_raw(int a1, unsigned int a2, int a3)
         sub_4169D0(0);
         goto LABEL_1184;
       case 0x2Du:
-        v209 = sub_578B30(*(_WORD *)(v3 + 1));
+        v209 = sub_578B30(nox_read_u16((const void *)(v3 + 1)));
         v210 = v209;
         v360 = v209;
         v211 = sub_416F60(v209);
@@ -49446,14 +49446,14 @@ int __cdecl sub_48EA70__abi_raw(int a1, unsigned int a2, int a3)
           if ( !sub_40A5C0(1) )
           {
             *((_DWORD *)v211 + 515) = v210;
-            *((_DWORD *)v211 + 534) = *(__int16 *)(v3 + 100);
-            *((_DWORD *)v211 + 535) = *(unsigned __int16 *)(v3 + 102);
-            *(_DWORD *)v211 = *(_DWORD *)(v3 + 104);
-            *((_DWORD *)v211 + 1) = *(_DWORD *)(v3 + 108);
+            *((_DWORD *)v211 + 534) = nox_read_s16((const void *)(v3 + 100));
+            *((_DWORD *)v211 + 535) = nox_read_u16((const void *)(v3 + 102));
+            *(_DWORD *)v211 = nox_read_u32((const void *)(v3 + 104));
+            *((_DWORD *)v211 + 1) = nox_read_u32((const void *)(v3 + 108));
             *((_DWORD *)v211 + 538) = *(unsigned __int8 *)(v3 + 116);
             *((_DWORD *)v211 + 539) = *(unsigned __int8 *)(v3 + 117);
             strcpy(v211 + 2096, (const char *)(v3 + 119));
-            *((_DWORD *)v211 + 920) |= *(_DWORD *)(v3 + 112);
+            *((_DWORD *)v211 + 920) |= nox_read_u32((const void *)(v3 + 112));
             qmemcpy(v211 + 2185, (const void *)(v3 + 3), 0x61u);
             nox_swprintf((wchar_t *)v211 + 2352, (const wchar_t *)&byte_587000[159020], v211 + 2185, v211 + 2274);
             if ( *(_DWORD *)&byte_5D4594[2650652] )

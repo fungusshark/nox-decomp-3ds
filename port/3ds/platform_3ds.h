@@ -76,6 +76,7 @@ typedef struct {
     bool     romfs_mounted;
     bool     sdmc_root_ready;
     bool     dsp_audio_ready;     /* true if sdmc:/3ds/dspfirm.cdc present and ndspInit() OK */
+    bool     soc_ready;           /* true once lazy socInit() succeeded on Multiplayer entry */
     bool     wide_stretch;        /* unused in dual-screen 1:1 mode, kept for compat */
     bool     bottom_console_mode; /* true during boot before citro2d takes GFX_BOTTOM */
     bool     touch_to_aim;        /* false in dual-screen mode (touch is strict bottom UI) */
@@ -355,20 +356,60 @@ bool     nox_3ds_movie_audio_is_active(void);
 void     nox_3ds_movie_log(const char *fmt, ...);
 
 /* =========================================================================
- * 6. In-Memory UDP Loopback Transport (net_loopback_3ds.c, NO socInit)
+ * 6. Dual-Transport Networking (net_3ds.c -> net_loopback_3ds.c / net_sockets_3ds.c)
  * ========================================================================= */
-void nox_3ds_net_init(void);
-void nox_3ds_net_shutdown(void);
-int  nox_3ds_net_socket(int domain, int type, int protocol);
-int  nox_3ds_net_closesocket(int fd);
-int  nox_3ds_net_bind(int fd, const void *addr, unsigned int addrlen);
-int  nox_3ds_net_setsockopt(int fd, int level, int opt, const void *val, unsigned int len);
-int  nox_3ds_net_ioctlsocket(int fd, long cmd, unsigned long *argp);
-int  nox_3ds_net_sendto(int fd, const void *buf, unsigned int len, int flags,
-                        const void *to, unsigned int tolen);
-int  nox_3ds_net_recvfrom(int fd, void *buf, unsigned int len, int flags,
-                          void *from, unsigned int *fromlen);
-int  nox_3ds_net_last_error(void);
+#define NOX_3DS_LOOPBACK_FD_BASE 1024
+#define NOX_3DS_LOOPBACK_FD_MAX  16
+#define NOX_3DS_SOCKETS_FD_BASE  2048
+#define NOX_3DS_SOCKETS_FD_MAX   32
+
+typedef enum {
+    NOX_3DS_NET_MODE_LOOPBACK = 0, /* Solo Campaign & Solo Quest (zero socInit, Airplane Mode OK) */
+    NOX_3DS_NET_MODE_WIFI     = 1  /* Multiplayer menus / Direct IPv4 / Wi-Fi host via soc:u */
+} nox_3ds_net_mode_t;
+
+struct hostent;
+
+typedef struct {
+    void (*init)(void);
+    void (*shutdown)(void);
+    int  (*socket)(int domain, int type, int protocol);
+    int  (*closesocket)(int fd);
+    int  (*bind)(int fd, const void *addr, unsigned int addrlen);
+    int  (*setsockopt)(int fd, int level, int opt, const void *val, unsigned int len);
+    int  (*ioctlsocket)(int fd, long cmd, unsigned long *argp);
+    int  (*sendto)(int fd, const void *buf, unsigned int len, int flags,
+                   const void *to, unsigned int tolen);
+    int  (*recvfrom)(int fd, void *buf, unsigned int len, int flags,
+                     void *from, unsigned int *fromlen);
+    int  (*listen)(int fd, int backlog);
+    int  (*accept)(int fd, void *addr, unsigned int *addrlen);
+    int  (*shutdown_sock)(int fd, int how);
+    int  (*send)(int fd, const void *buf, unsigned int len, int flags);
+    int  (*recv)(int fd, void *buf, unsigned int len, int flags);
+    int  (*gethostname)(char *name, size_t len);
+    struct hostent *(*gethostbyname)(const char *name);
+} nox_3ds_net_ops_t;
+
+extern const nox_3ds_net_ops_t g_nox_3ds_loopback_ops;
+extern const nox_3ds_net_ops_t g_nox_3ds_sockets_ops;
+
+void               nox_3ds_net_init(void);
+void               nox_3ds_net_shutdown(void);
+void               nox_3ds_net_set_mode(nox_3ds_net_mode_t mode);
+nox_3ds_net_mode_t nox_3ds_net_get_mode(void);
+bool               nox_3ds_soc_is_ready(void);
+void               nox_3ds_net_on_apt_suspend(bool suspended);
+int                nox_3ds_net_socket(int domain, int type, int protocol);
+int                nox_3ds_net_closesocket(int fd);
+int                nox_3ds_net_bind(int fd, const void *addr, unsigned int addrlen);
+int                nox_3ds_net_setsockopt(int fd, int level, int opt, const void *val, unsigned int len);
+int                nox_3ds_net_ioctlsocket(int fd, long cmd, unsigned long *argp);
+int                nox_3ds_net_sendto(int fd, const void *buf, unsigned int len, int flags,
+                                      const void *to, unsigned int tolen);
+int                nox_3ds_net_recvfrom(int fd, void *buf, unsigned int len, int flags,
+                                        void *from, unsigned int *fromlen);
+int                nox_3ds_net_last_error(void);
 
 /* =========================================================================
  * 6. Synchronization & ARM11 Alignment-Safe Helpers
