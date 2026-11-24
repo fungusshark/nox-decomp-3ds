@@ -52340,6 +52340,8 @@ LABEL_24:
             nox_3ds_input_get_world_aim(&aim_x, &aim_y);
             aim_cid = nox_3ds_get_world_cursor_id();
           }
+          if ( nox_3ds_input_is_ranged_aim_held() )
+            aim_cid = 5; /* CursorTarget (targeting reticle) */
           gm->field_0 = aim_x;
           gm->field_4 = aim_y;
           *(_DWORD *)&byte_5D4594[1097200] = aim_cid;
