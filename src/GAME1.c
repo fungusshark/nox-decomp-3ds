@@ -52346,10 +52346,12 @@ LABEL_24:
             aim_cid = nox_3ds_get_world_cursor_id();
           }
           if ( nox_3ds_input_is_ranged_aim_held() && (aim_cid == 0 || aim_cid == 14) )
-            aim_cid = 5; /* CursorTarget (targeting reticle) */
+            aim_cid = 5; /* CursorTarget unless hovering an item or interactable object */
           gm->field_0 = aim_x;
           gm->field_4 = aim_y;
           *(_DWORD *)&byte_5D4594[1097200] = aim_cid;
+          *(_DWORD *)&byte_5D4594[1097204] = 0;
+          *(_DWORD *)&byte_5D4594[1097208] = sub_43F320(0) + 4;
 
           sub_437260(); /* clip cursor text & world tooltip cleanly to top viewport */
           sub_477A30(*(int *)&byte_5D4594[2523948], aim_x, aim_y);
