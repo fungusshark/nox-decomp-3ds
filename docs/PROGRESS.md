@@ -46,3 +46,14 @@
 - **2026-11-22–23 (M4 Backports & Controls Polish):** Backported OpenNox campaign (`#600`, `#401`, `#286`, `12a82122`), NoxScript (`e476e7b5`, `670ac1b4`), and spell (`#656`, `#417`, `#368`) fixes. Added `L` trackpad aim mode, Conjurer drag-and-release touch menu, auto-hidden bottom cursor, gradual Circle Pad targeting, and spell bar hotkey labels (`A/B/X/Y/D`).
 - **2026-11-23–24 (M6 Perf, GPU Fonts & M7 SDMC/RAM Caching):** Completed M7 (`fa35d18`), added 16 MB New 3DS `video.bag` cache (`23a89ac`), 32-bit `RGB555→RGBA5551` conversion + cropped Top flush + `-O3` 3DS glue (`b357ed0`), 15 Hz idle Bottom Screen throttling (`98f01fd`), optional GPU `.fnt` renderer with Smart Auto-Fit (`cbf5440`, `2bcbad5`), `L+Start` chat `swkbd` (`1089ffd`), RAM-cached `-O3` Blowfish cryptfile reader (`db6efb4`), New 3DS `thing.bin` retention (`a447bb9`), zero-IPC virtual `FILE *` crypt cache + 8 KB header-peek cache + `d_type` directory scan (`997741a`), zero-chdir `save_copy` with RAM handoff cache (`5142d41`), near-black bottom backdrop (`e235580`), and `L` aim targeting reticle (`a9ca390`).
 - **2026-11-24 (Wi-Fi Multiplayer Phase 1 & 2):** Implemented dual-transport `net_3ds.c` + lazy `soc:u` Wi-Fi sockets (`net_sockets_3ds.c`) with ARM11 wire-buffer hardening (`21ceefb`), Phase 2 OpenNox `httpc` + `cJSON` lobby integration (`lobby_3ds.c`, `17ac32a`), socket flag / worker teardown / 30 Hz hot-path hardening (`72388a0`), and merged `port-3ds` into `feat/3ds-multiplayer` (`644b2cd`).
+
+---
+
+## Remaining Gaps & Edge-Case Issues
+
+1. **Custom `.smdh` icon/metadata (`port/3ds/CMakeLists.txt`):** `ctr_create_3dsx(nox)` still generates `nox_3dsx.default.smdh` instead of using `logos/nox-decomp.png` and custom title/author metadata.
+2. **Corrupted autosave EOF infinite loop (`src/GAME1.c:sub_41A000`, M4 P0 `661f63e2`):** `sub_426AC0(&v10, 4u)` return value is not checked for EOF/short read.
+3. **Thread-unsafe `gethostbyname()` in lobby worker (`port/3ds/lobby_3ds.c`):** Background HTTP worker calls `gethostbyname()` without a lock against main-thread `compatgethostbyname()`.
+4. **`swkbd` numeric mode (`port/3ds/swkbd_3ds.c`):** `digits_only` fields use `SWKBD_TYPE_NORMAL` instead of `SWKBD_TYPE_NUMPAD`.
+5. **Remaining M4 P0/P1 backports (`src/GAME1.c`–`GAME5.c`):** `#400` (listbox OOB), `#490` (path buffer bounds), `ff500adf` (bow/arrow null guard), `#403` (projectile map bounds), `0b5e6a8c`/`cedf94ca` (monster health/direction bounds), `7232f915`/`57e73307` (GUI null-parent/image guards), and P2 hardening.
+6. **Release polish / OS caveats:** `nox_3ds_shutdown()` pauses for `START` even on clean quit (`port/3ds/platform_3ds.c`), `wide_stretch` / `nox_3ds_video_toggle_wide()` is unused (`port/3ds/video_3ds.c`), and blocking `swkbdInputText()` pauses multiplayer UDP pumping while open (`port/3ds/swkbd_3ds.c`).
