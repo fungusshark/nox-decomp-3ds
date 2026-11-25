@@ -29620,7 +29620,6 @@ void sub_4C97F0()
   int result; // eax
   int v1; // ecx
   _WORD *v2; // edi
-  unsigned int v3; // eax
   unsigned int v4; // ebx
   int v5; // edx
   unsigned __int8 v6; // [esp+8h] [ebp-10h]
@@ -29637,9 +29636,8 @@ void sub_4C97F0()
     v7 = *(_DWORD *)&byte_5D4594[3799456];
     while ( 1 )
     {
-      HIWORD(v3) = *(_WORD *)&byte_5D4594[3799446];
+      unsigned __int16 v3 = **(_WORD **)&byte_5D4594[3799444];
       v4 = (unsigned __int16)*v2;
-      LOWORD(v3) = **(_WORD **)&byte_5D4594[3799444];
       v5 = v1 * 16 * (**(_WORD **)&byte_5D4594[3799444] & 0xF);
       *v2 = *(_WORD *)(*(_DWORD *)&byte_5D4594[3804664]
                      + 2
