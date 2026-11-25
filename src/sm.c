@@ -316,6 +316,12 @@ void NET_CONNECT_WAIT_LOOP (sm_args_t *args)
     GOTO_NET_CONNECT_WAIT_THEN(args->net_connect_wait_loop.data, a1, -3);
   if ( 20 * a3 < ++v6 )
     GOTO_NET_CONNECT_WAIT_THEN(args->net_connect_wait_loop.data, a1, -23);
+#ifndef __EMSCRIPTEN__
+  /* Match original sub_5525B0 (GAME5.c) 50 ms polling cadence; mainloop()
+   * returns immediately while mainloop_enter is active, so without Sleep(50)
+   * 1200 iterations expire in ~15 ms and spuriously fail with -23 timeout. */
+  Sleep(0x32u);
+#endif
   sub_552A80(a1, a4 | 1);
   sub_552460();
 #ifdef __3DS__
@@ -375,6 +381,10 @@ void CONNECT_WAIT_LOOP (sm_args_t *args)
   sub_40EE10(*(unsigned int *)&byte_5D4594[815700], 31, 0);
   sub_40ED10(31, 0);
   sub_552460();
+#ifdef __3DS__
+  sub_4453A0();
+  nox_3ds_sleep_ms(1);
+#endif
   if ( sub_40A370() )
     GOTO_CONNECT_WAIT_THEN(1);
 }

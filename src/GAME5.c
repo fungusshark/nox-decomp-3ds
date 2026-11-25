@@ -12339,7 +12339,7 @@ int __cdecl sub_554D70(char a1)
   char v3; // al
   char *v4; // eax
   char *v5; // esi
-  int v6; // eax
+  int v6 = 0; // eax (clear upper 16 bits before LOWORD(v6) = ntohs(...))
   u_short v7; // ax
   int v8; // [esp+0h] [ebp-230h]
   u_long argp; // [esp+10h] [ebp-220h]

@@ -144,18 +144,16 @@ static bool soc_ensure_init_locked(void)
     if (g_soc_inited)
         return true;
 
-    /* Check Wi-Fi hardware/association status before touching soc:u so
-     * Airplane Mode / wireless-off fails cleanly with WSAENETDOWN. */
+    /* Probe Wi-Fi status for diagnostics, but do not hard-abort on wifi_status==0:
+     * emulators (Citra/Azahar/Lime3DS) and some CFW states report 0 even when
+     * socInit() and sockets succeed. True Airplane Mode still fails in socInit(). */
     u32 wifi_status = 0;
     if (R_SUCCEEDED(acInit())) {
         Result wrc = ACU_GetWifiStatus(&wifi_status);
         acExit();
         if (R_FAILED(wrc) || wifi_status == 0u) {
-            printf("[net3ds:soc] Wi-Fi offline (rc=0x%08X status=%u); socInit skipped\n",
+            printf("[net3ds:soc] WARN: ACU_GetWifiStatus rc=0x%08X status=%u; attempting socInit anyway\n",
                    (unsigned)wrc, (unsigned)wifi_status);
-            last_socket_error = NOX_WSAENETDOWN;
-            errno = ENETDOWN;
-            return false;
         }
     }
 
@@ -203,6 +201,16 @@ static bool soc_ensure_init_locked(void)
 bool nox_3ds_soc_is_ready(void)
 {
     return g_soc_inited;
+}
+
+bool nox_3ds_soc_ensure_ready(void)
+{
+    if (nox_3ds_net_get_mode() != NOX_3DS_NET_MODE_WIFI)
+        return false;
+    soc_lock();
+    bool ok = soc_ensure_init_locked();
+    soc_unlock();
+    return ok;
 }
 
 bool nox_3ds_soc_resolve_ipv4(const char *hostname, uint32_t *out_ip_be)
