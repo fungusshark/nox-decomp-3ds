@@ -16060,7 +16060,7 @@ int __cdecl sub_509E20(int a1, int2 *a2)
 //----- (00509E90) --------------------------------------------------------
 int __cdecl sub_509E90(int a1)
 {
-  return *(_DWORD *)&byte_587000[4 * a1 + 230056];
+  return *(_DWORD *)&byte_587000[4 * ((unsigned int)a1 % 9u) + 230056];
 }
 
 //----- (00509EA0) --------------------------------------------------------
@@ -16557,11 +16557,13 @@ LABEL_13:
 //          && (unsigned int)(*(_DWORD *)&byte_5D4594[2598000] - *(_DWORD *)(LODWORD(a1) + 536)) > *(int *)&byte_5D4594[2649704] )
 //        {
 //          v11 = v9[2];
-//          if ( *v9 < v11
-//            && v11
-//            && !(*(_DWORD *)&byte_5D4594[2598000] % (180 * *(_DWORD *)&byte_5D4594[2649704] / (unsigned int)v9[2])) )
+//          if ( v9[2] != 0 )
 //          {
-//            sub_4EE460(SLODWORD(a1), 1);
+//            unsigned int dt = (unsigned int)(180 * *(_DWORD *)&byte_5D4594[2649704]) / (unsigned int)v9[2];
+//            if ( !dt )
+//              dt = 1u;
+//            if ( *v9 < v9[2] && *(_DWORD *)&byte_5D4594[2598000] % dt == 0 )
+//              sub_4EE460(SLODWORD(a1), 1);
 //          }
 //        }
 //      }
