@@ -102,8 +102,18 @@ target_link_libraries(nox PRIVATE
     m
 )
 
+# Generate custom 3DS metadata & icon (nox.smdh)
+ctr_generate_smdh("${CMAKE_CURRENT_BINARY_DIR}/nox.smdh"
+    NAME "Nox"
+    DESCRIPTION "Westwood Studios Action RPG (3DS Port)"
+    AUTHOR "Westwood Studios / nox-decomp"
+    ICON "${CMAKE_CURRENT_SOURCE_DIR}/icon.png"
+)
+
 # Package nox.elf -> nox.3dsx (target name created: nox_3dsx)
-ctr_create_3dsx(nox)
+ctr_create_3dsx(nox
+    SMDH "${CMAKE_CURRENT_BINARY_DIR}/nox.smdh"
+)
 
 # Post-build copy to /mnt/c/3ds-dev/nox.3dsx for emulator / SD staging
 add_custom_target(copy-nox-3dsx ALL
