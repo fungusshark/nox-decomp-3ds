@@ -400,6 +400,7 @@ void               nox_3ds_net_shutdown(void);
 void               nox_3ds_net_set_mode(nox_3ds_net_mode_t mode);
 nox_3ds_net_mode_t nox_3ds_net_get_mode(void);
 bool               nox_3ds_soc_is_ready(void);
+bool               nox_3ds_soc_resolve_ipv4(const char *hostname, uint32_t *out_ip_be);
 void               nox_3ds_net_on_apt_suspend(bool suspended);
 void               nox_3ds_lobby_init(void);
 void               nox_3ds_lobby_on_mode_change(nox_3ds_net_mode_t mode);

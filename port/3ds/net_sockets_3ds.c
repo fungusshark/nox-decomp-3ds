@@ -80,6 +80,7 @@ extern unsigned int last_socket_error;
 
 static soc_slot_t        g_soc_slots[MAX_SOC_SOCKS];
 static nox_3ds_mutex_t  *g_soc_mutex     = NULL;
+static RecursiveLock     g_dns_lock;
 static u32              *g_soc_buffer    = NULL;
 static bool              g_soc_inited    = false;
 static volatile bool     g_soc_suspended = false;
@@ -177,6 +178,8 @@ static bool soc_ensure_init_locked(void)
         return false;
     }
 
+    RecursiveLock_Init(&g_dns_lock);
+
     for (int i = 0; i < MAX_SOC_SOCKS; ++i) {
         g_soc_slots[i].in_use = false;
         g_soc_slots[i].real_fd = -1;
@@ -200,6 +203,22 @@ static bool soc_ensure_init_locked(void)
 bool nox_3ds_soc_is_ready(void)
 {
     return g_soc_inited;
+}
+
+bool nox_3ds_soc_resolve_ipv4(const char *hostname, uint32_t *out_ip_be)
+{
+    if (!hostname || !*hostname || !out_ip_be || !g_soc_inited)
+        return false;
+
+    RecursiveLock_Lock(&g_dns_lock);
+    struct hostent *res = gethostbyname(hostname);
+    bool ok = false;
+    if (res && res->h_addr_list && res->h_addr_list[0] && res->h_length == 4) {
+        memcpy(out_ip_be, res->h_addr_list[0], 4);
+        ok = true;
+    }
+    RecursiveLock_Unlock(&g_dns_lock);
+    return ok;
 }
 
 void nox_3ds_net_on_apt_suspend(bool suspended)
@@ -860,7 +879,23 @@ static struct hostent *sockets_gethostbyname(const char *name)
         return &he;
     }
 
-    return gethostbyname(name);
+    RecursiveLock_Lock(&g_dns_lock);
+    struct hostent *res = gethostbyname(name);
+    bool found = false;
+    if (res && res->h_addr_list && res->h_addr_list[0] && res->h_length == 4) {
+        memcpy(&addr, res->h_addr_list[0], 4);
+        addr_list[0] = (char *)&addr;
+        addr_list[1] = NULL;
+        snprintf(hname, sizeof(hname), "%s", res->h_name ? res->h_name : name);
+        he.h_name = hname;
+        he.h_aliases = NULL;
+        he.h_addrtype = AF_INET;
+        he.h_length = 4;
+        he.h_addr_list = addr_list;
+        found = true;
+    }
+    RecursiveLock_Unlock(&g_dns_lock);
+    return found ? &he : NULL;
 }
 
 const nox_3ds_net_ops_t g_nox_3ds_sockets_ops = {

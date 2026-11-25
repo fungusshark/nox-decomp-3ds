@@ -399,15 +399,12 @@ static bool resolve_ipv4_addr(const char *host_or_ip, struct in_addr *out_addr)
         return true;
     }
 
-    /* Fallback: DNS lookup via libctru soc:u if socInit() is active */
-    if (!nox_3ds_soc_is_ready())
+    /* Fallback: DNS lookup via libctru soc:u if socInit() is active (serialized) */
+    uint32_t ip_be = 0;
+    if (!nox_3ds_soc_resolve_ipv4(host_or_ip, &ip_be))
         return false;
 
-    struct hostent *he = gethostbyname(host_or_ip);
-    if (!he || !he->h_addr_list || !he->h_addr_list[0])
-        return false;
-
-    memcpy(&out_addr->s_addr, he->h_addr_list[0], sizeof(out_addr->s_addr));
+    out_addr->s_addr = (in_addr_t)ip_be;
     return true;
 }
 
