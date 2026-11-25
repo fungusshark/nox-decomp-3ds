@@ -76,7 +76,7 @@ typedef struct {
     bool     romfs_mounted;
     bool     sdmc_root_ready;
     bool     dsp_audio_ready;     /* true if sdmc:/3ds/dspfirm.cdc present and ndspInit() OK */
-    bool     wide_stretch;        /* unused in dual-screen 1:1 mode, kept for compat */
+    bool     wide_stretch;        /* top screen: true = fill 400x240, false = preserve aspect (4:3 320x240) */
     bool     bottom_console_mode; /* true during boot before citro2d takes GFX_BOTTOM */
     bool     touch_to_aim;        /* false in dual-screen mode (touch is strict bottom UI) */
     nox_3ds_aim_mode_t    aim_mode;
