@@ -49771,21 +49771,24 @@ unsigned __int16 *__cdecl sub_43BC10(wchar_t *a1, unsigned __int8 a2)
   size_t v3; // edi
   int v4; // ebx
   unsigned __int16 *v5; // edi
+  int width = 0;
 
+  if ( !a1 )
+    return 0;
   v2 = a1;
   v3 = nox_wcslen(a1);
-  sub_43F840(0, v2, (int *)&a1, 0, 0);
+  sub_43F840(0, v2, &width, 0, 0);
   v4 = a2;
-  if ( (int)(a1 + 5) > a2 )
+  if ( width + 5 > a2 )
   {
     v5 = &v2[v3];
     do
     {
       *v5 = 0;
       --v5;
-      sub_43F840(0, v2, (int *)&a1, 0, 0);
+      sub_43F840(0, v2, &width, 0, 0);
     }
-    while ( (int)(a1 + 5) > v4 );
+    while ( width + 5 > v4 && v5 >= v2 );
   }
   return v2;
 }
