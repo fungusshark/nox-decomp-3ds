@@ -28632,6 +28632,11 @@ int __cdecl sub_517780(int a1, int a2, int a3, int a4)
   unsigned __int8 v5; // cl
   int v6; // esi
   int v7; // esi
+  int grid_max; // edx
+
+  grid_max = *(int *)&byte_5D4594[2386944];
+  if ( a2 < 0 || a3 < 0 || a2 >= grid_max || a3 >= grid_max )
+    return 0;
 
   if ( a1 )
   {
@@ -57096,6 +57101,8 @@ int __cdecl sub_53A420(_DWORD *a1, int a2, int a3, int a4)
   int v11; // edx
   int v12; // eax
 
+  if ( !a1 || !a2 )
+    return 0;
   v4 = sub_415820(a2);
   if ( !(*(_DWORD *)(a2 + 8) & 0x1001000) )
     return 0;
@@ -57108,6 +57115,8 @@ int __cdecl sub_53A420(_DWORD *a1, int a2, int a3, int a4)
   if ( !(v6 & 4) )
     return 0;
   v8 = a1[187];
+  if ( !v8 || !*(_DWORD *)(v8 + 276) )
+    return 0;
   if ( sub_4FC3E0((int)a1, 2) || sub_4FC3E0((int)a1, 1) )
     return 0;
   if ( !sub_57B3D0(a2, *(_BYTE *)(*(_DWORD *)(v8 + 276) + 2251)) )

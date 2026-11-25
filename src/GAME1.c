@@ -23775,8 +23775,8 @@ int __cdecl sub_41A000(char *a1, _BYTE *a2)
   {
     while ( 1 )
     {
-      sub_426AC0(&v10, 4u);
-      if ( !v10 )
+      v10 = 0;
+      if ( !sub_426AC0(&v10, 4u) || !v10 )
         break;
       sub_426C20(&v11, 4u);
       if ( v10 == 1 )

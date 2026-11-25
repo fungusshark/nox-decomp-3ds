@@ -204,7 +204,7 @@ bool nox_3ds_swkbd_pump(void)
     nox_utf16_to_utf8(data_bytes + NOX_EF_OFF_TEXT, max_chars, initial_utf8, sizeof(initial_utf8));
 
     SwkbdState swkbd;
-    swkbdInit(&swkbd, SWKBD_TYPE_NORMAL, 2, max_chars);
+    swkbdInit(&swkbd, digits_only ? SWKBD_TYPE_NUMPAD : SWKBD_TYPE_NORMAL, 2, max_chars);
     swkbdSetButton(&swkbd, SWKBD_BUTTON_LEFT,  "Cancel", false);
     swkbdSetButton(&swkbd, SWKBD_BUTTON_RIGHT, "OK",     true);
     swkbdSetFeatures(&swkbd, SWKBD_DEFAULT_QWERTY | SWKBD_PREDICTIVE_INPUT | SWKBD_DARKEN_TOP_SCREEN);
