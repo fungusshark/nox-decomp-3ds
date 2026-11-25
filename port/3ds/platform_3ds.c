@@ -162,22 +162,26 @@ void nox_3ds_shutdown(void)
     nox_3ds_video_shutdown();
     nox_3ds_net_shutdown();
 
-    /* Restore bottom console so shutdown diagnostics are visible before exit. */
-    consoleInit(GFX_BOTTOM, NULL);
-    consoleDebugInit(debugDevice_CONSOLE);
+    /* Only restore the bottom console and pause on exit when requested for diagnostics. */
     g_console_detached = false;
     g_3ds_state.bottom_console_mode = true;
 
-    printf("\n[3ds] Engine exited. Press START to exit.\n");
-    gfxFlushBuffers();
-    gfxSwapBuffers();
-    gspWaitForVBlank();
+    const char *w = getenv("NOX_3DS_WAIT_ON_EXIT");
+    if (w && w[0] == '1') {
+        consoleInit(GFX_BOTTOM, NULL);
+        consoleDebugInit(debugDevice_CONSOLE);
 
-    while (aptMainLoop()) {
-        hidScanInput();
-        if (hidKeysDown() & KEY_START)
-            break;
+        printf("\n[3ds] Engine exited. Press START to exit.\n");
+        gfxFlushBuffers();
+        gfxSwapBuffers();
         gspWaitForVBlank();
+
+        while (aptMainLoop()) {
+            hidScanInput();
+            if (hidKeysDown() & KEY_START)
+                break;
+            gspWaitForVBlank();
+        }
     }
 
     if (g_3ds_state.romfs_mounted) {

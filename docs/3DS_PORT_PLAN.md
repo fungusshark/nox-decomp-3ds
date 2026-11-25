@@ -450,12 +450,19 @@ static inline void     nox_write_f32(void *p, float v)    { __builtin_memcpy(p, 
 
 ## 6. Remaining Gaps & Edge-Case Issues (Post-M8 Audit)
 
-| Priority / Effort | Area | File(s) | Issue / Remaining Work |
-| :---: | :--- | :--- | :--- |
-| **Easy / Quick Win** | **Release Packaging (`.smdh`)** | `port/3ds/CMakeLists.txt` | `ctr_create_3dsx(nox)` uses default `.smdh` metadata (`nox_3dsx.default.smdh`). Wire `logos/nox-decomp.png` (or `dist-scripts/io.github.sookyboo.nox-decomp.png`) + title/author metadata into `ctr_create_3dsx`. |
-| **Easy / Quick Win** | **Corrupted Autosave EOF Loop (M4 P0 `661f63e2`)** | `src/GAME1.c` (`sub_41A000`) | `while (1) { sub_426AC0(&v10, 4u); if (!v10) break; ... }` does not check `sub_426AC0` for EOF/short read, risking an infinite loop on truncated/corrupted save files. |
-| **Easy / Quick Win** | **Lobby `gethostbyname()` Thread Safety** | `port/3ds/lobby_3ds.c` (`resolve_ipv4_addr`) | `lobby_worker_main` calls `libctru`'s `gethostbyname()`, which uses a static `hostent` buffer and can race with `compatgethostbyname()` on the main thread. Guard with a shared mutex or `getaddrinfo`. |
-| **Easy / Quick Win** | **`swkbd` Numeric Mode** | `port/3ds/swkbd_3ds.c` | When `digits_only != 0`, `swkbdInit` uses `SWKBD_TYPE_NORMAL` and filters afterward instead of `SWKBD_TYPE_NUMPAD`. |
-| **Medium** | **Remaining M4 P0/P1 Backports** | `src/GAME1.c`–`GAME5.c` | Unapplied items from Section 1.2: GUI listbox OOB (`#400`), startup/map path buffer bounds (`#490`), bow/arrow pickup null guard (`ff500adf`), out-of-bounds projectile grid check (`#403`), monster max-health/direction bounds (`0b5e6a8c`/`cedf94ca`), GUI null-parent/image guards (`7232f915`, `57e73307`), and P2 hardening. |
-| **Low / Optional** | **Exit Prompt & Viewport Toggle** | `port/3ds/platform_3ds.c`, `port/3ds/video_3ds.c` | `nox_3ds_shutdown()` blocks waiting for `START` on clean quit (useful for dev logs, optional for release); `wide_stretch` / `nox_3ds_video_toggle_wide()` is currently unused in dual-screen mode. |
-| **Inherent (OS)** | **Blocking `swkbd` in Multiplayer** | `port/3ds/swkbd_3ds.c` | `swkbdInputText()` is a blocking Horizon OS applet; lingering in chat/text entry during an active Wi-Fi match pauses UDP pumping and may trigger peer timeout. |
+### Already Fixed / Verified in C (Before Follow-Up PRs)
+- **Previously verified in C decomp:** `#424` (pit crash), `#422` (post-jump hazard damage), `#328` (monster deafness), `737194f4` (key doors), `#686` (waypoint groups), `0a7c5a96`/`dd5f1c46` (map group lookup), `#490` core paths (`sub_4CF470`, `sub_51E010`, `sub_57A950`), `#655` (`nox_wcscat`), `#511` (`sub_424880`/`sub_424960`), `#521` (Warcry during Berserk), `#428` (spawned creatures stuck when damaged), `#307` (line intersection), `7232f915` (GUI dialogs with null parent), and `2de5b3fa` (empty player save list in `sub_4A5150`).
+- **Backported / hardened in `feat/3ds-multiplayer`:** Audio (`#376`, `#502`), Campaign (`#600`, `#401`, `#286`, `12a82122`, `661f63e2` autosave EOF loop, `ff500adf` bow/arrow null check, `#403` projectile bounds), NoxScript (`e476e7b5`, `670ac1b4`), Spells (`#656`, `#417`, `#368`), `swkbd` `SWKBD_TYPE_NUMPAD` for `digits_only`, and serialized `gethostbyname()` via `nox_3ds_soc_resolve_ipv4()`.
+
+### Follow-Up PRs & Inherent Platform Limitations
+
+| Status / Track | Area | File(s) | Scope / Remaining Notes |
+| :--- | :--- | :--- | :--- |
+| **This PR (`fix/3ds-clean-exit-and-video-cleanup`)** | **Clean Exit & Top-Screen `wide_stretch`** | `port/3ds/platform_3ds.c`, `port/3ds/video_3ds.c`, `port/3ds/platform_3ds.h` | Remove blocking `"Press START to exit"` wait on normal exit (gated on `NOX_3DS_WAIT_ON_EXIT=1`); wire `wide_stretch` on Top Screen (`400.0f` full width when true, `320.0f` centered 4:3 pillarboxed when false). |
+| **Sibling PR (`fix/3ds-custom-smdh-packaging`)** | **Release Packaging (`.smdh`)** | `port/3ds/CMakeLists.txt` | Wire custom icon and title/author `.smdh` metadata into `ctr_create_3dsx(nox)` instead of `nox_3dsx.default.smdh`. |
+| **Sibling PR (`fix/3ds-opennox-discovery-and-mp`)** | **OpenNox Discovery & Multiplayer** | `port/3ds/` | OpenNox server discovery and Wi-Fi multiplayer polish/fixes. |
+| **Sibling PR (`fix/m4-monster-health-and-direction`)** | **M4 Monster Health & Direction Bounds** | `src/GAME4.c` | Backport `0b5e6a8c`/`cedf94ca` monster max-health overflow and direction index clamping. |
+| **Sibling PR (`fix/m4-gui-string-and-image-safety`)** | **M4 GUI Listbox, String & Image Safety** | `src/GAME2.c`, `src/GAME3.c` | Backport `#400` (listbox OOB), `57e73307` (invalid image memory access in `sub_4C97F0`), and `cdcb39b4` (`#333` wide-string helper). |
+| **Sibling PR (`fix/m4-rule-buffers-and-map-paths`)** | **M4 Rule Buffers & Map Path Bounds** | `src/GAME5.c` | Backport `e0384026` (`sub_57AAA0` map rule buffer layout) and remaining map-path bounds (`#490` follow-ups). |
+| **Sibling PR (`fix/m4-config-and-wnd-strtok-safety`)** | **M4 Config & `.wnd` `strtok` Safety** | `src/` | Harden config and `.wnd` `strtok` parsing safety. |
+| **Inherent (Horizon OS)** | **Blocking `swkbdInputText()` in Multiplayer** | `port/3ds/swkbd_3ds.c` | `swkbdInputText()` is a blocking Horizon OS applet; lingering in chat/text entry during an active Wi-Fi match pauses UDP pumping and may trigger peer timeout. |
