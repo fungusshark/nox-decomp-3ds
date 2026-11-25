@@ -32646,6 +32646,8 @@ int __cdecl sub_424960(wchar_t *a1)
   int v1; // edi
   unsigned __int8 *v2; // esi
 
+  if ( !a1 )
+    return 0;
   v1 = 1;
   v2 = &byte_5D4594[588204];
   while ( !*((_DWORD *)v2 + 6) || nox_wcscmp(*(const wchar_t **)v2, a1) )

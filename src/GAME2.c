@@ -135,6 +135,8 @@ LABEL_2:
     sub_40ACC0(v3, 1u, v10, a1);
     v3[v10] = 0;
     v5 = strtok(v3, (const char *)&byte_587000[122836]);
+    if ( !v5 )
+      goto LABEL_2;
     v6 = &byte_587000[122104];
     if ( *(_DWORD *)&byte_587000[122108] )
     {
@@ -63706,9 +63708,9 @@ int __cdecl sub_4A10A0(_DWORD *a1, const char *a2, char *a3)
     *(_DWORD *)&byte_5D4594[1305828] = 0;
     *(_DWORD *)&byte_5D4594[1305832] = 0;
     v20 = strtok(a3, (const char *)&byte_587000[168056]);
-    *(_DWORD *)&byte_5D4594[1305820] = atoi(v20);
-    v21 = strtok(0, (const char *)&byte_587000[168064]);
-    *(_DWORD *)&byte_5D4594[1305824] = atoi(v21);
+    *(_DWORD *)&byte_5D4594[1305820] = v20 ? atoi(v20) : 0;
+    v21 = v20 ? strtok(0, (const char *)&byte_587000[168064]) : 0;
+    *(_DWORD *)&byte_5D4594[1305824] = v21 ? atoi(v21) : 0;
     result = 1;
     *a1 = &byte_5D4594[1305820];
   }
@@ -63716,19 +63718,26 @@ int __cdecl sub_4A10A0(_DWORD *a1, const char *a2, char *a3)
   {
     memset(&byte_5D4594[1306892], 0, 0x38u);
     v3 = strtok(a3, (const char *)&byte_587000[168088]);
-    *(_WORD *)&byte_5D4594[1306892] = atoi(v3);
-    v4 = strtok(0, (const char *)&byte_587000[168096]);
-    *(_WORD *)&byte_5D4594[1306894] = atoi(v4);
-    v5 = strtok(0, (const char *)&byte_587000[168104]);
-    *(_DWORD *)&byte_5D4594[1306896] = atoi(v5);
-    v6 = strtok(0, (const char *)&byte_587000[168112]);
-    *(_DWORD *)&byte_5D4594[1306900] = atoi(v6);
-    v7 = strtok(0, (const char *)&byte_587000[168120]);
-    *(_DWORD *)&byte_5D4594[1306904] = atoi(v7);
-    v8 = strtok(0, (const char *)&byte_587000[168128]);
-    *(_DWORD *)&byte_5D4594[1306908] = atoi(v8);
-    v9 = strtok(0, (const char *)&byte_587000[168136]);
-    *(_DWORD *)&byte_5D4594[1306912] = atoi(v9);
+    if ( v3 )
+      *(_WORD *)&byte_5D4594[1306892] = atoi(v3);
+    v4 = v3 ? strtok(0, (const char *)&byte_587000[168096]) : 0;
+    if ( v4 )
+      *(_WORD *)&byte_5D4594[1306894] = atoi(v4);
+    v5 = v4 ? strtok(0, (const char *)&byte_587000[168104]) : 0;
+    if ( v5 )
+      *(_DWORD *)&byte_5D4594[1306896] = atoi(v5);
+    v6 = v5 ? strtok(0, (const char *)&byte_587000[168112]) : 0;
+    if ( v6 )
+      *(_DWORD *)&byte_5D4594[1306900] = atoi(v6);
+    v7 = v6 ? strtok(0, (const char *)&byte_587000[168120]) : 0;
+    if ( v7 )
+      *(_DWORD *)&byte_5D4594[1306904] = atoi(v7);
+    v8 = v7 ? strtok(0, (const char *)&byte_587000[168128]) : 0;
+    if ( v8 )
+      *(_DWORD *)&byte_5D4594[1306908] = atoi(v8);
+    v9 = v8 ? strtok(0, (const char *)&byte_587000[168136]) : 0;
+    if ( v9 )
+      *(_DWORD *)&byte_5D4594[1306912] = atoi(v9);
     result = 1;
     *a1 = &byte_5D4594[1306892];
   }
@@ -63736,13 +63745,13 @@ int __cdecl sub_4A10A0(_DWORD *a1, const char *a2, char *a3)
   {
     memset(&byte_5D4594[1305836], 0, 0x420u);
     v11 = strtok(a3, (const char *)&byte_587000[168156]);
-    *(_WORD *)&byte_5D4594[1306876] = atoi(v11);
-    v12 = strtok(0, (const char *)&byte_587000[168164]);
+    *(_WORD *)&byte_5D4594[1306876] = v11 ? atoi(v11) : 0;
+    v12 = v11 ? strtok(0, (const char *)&byte_587000[168164]) : 0;
     if ( v12 )
       *(_WORD *)&byte_5D4594[1306878] = atoi(v12);
     else
       *(_WORD *)&byte_5D4594[1306878] = -1;
-    v13 = strtok(0, (const char *)&byte_587000[168172]);
+    v13 = v12 ? strtok(0, (const char *)&byte_587000[168172]) : 0;
     if ( v13 )
     {
       *(_DWORD *)&byte_5D4594[1306860] = atoi(v13);
@@ -63752,7 +63761,7 @@ int __cdecl sub_4A10A0(_DWORD *a1, const char *a2, char *a3)
     {
       *(_DWORD *)&byte_5D4594[1306860] = 0;
     }
-    v14 = strtok(0, (const char *)&byte_587000[168180]);
+    v14 = v13 ? strtok(0, (const char *)&byte_587000[168180]) : 0;
     v15 = v14;
     if ( v14 )
     {
@@ -63772,20 +63781,18 @@ int __cdecl sub_4A10A0(_DWORD *a1, const char *a2, char *a3)
   else if ( !strcmp(a2, (const char *)&byte_587000[168188]) )
   {
     v16 = strtok(a3, (const char *)&byte_587000[168200]);
-    *(_DWORD *)&byte_5D4594[1307256] = atoi(v16);
-    *(_DWORD *)&byte_5D4594[1307256] = *(_DWORD *)&byte_5D4594[1307256] != 0;
-    v17 = strtok(0, (const char *)&byte_587000[168208]);
-    *(_DWORD *)&byte_5D4594[1307260] = atoi(v17);
-    *(_DWORD *)&byte_5D4594[1307260] = *(_DWORD *)&byte_5D4594[1307260] != 0;
-    v18 = strtok(0, (const char *)&byte_587000[168216]);
-    *(_DWORD *)&byte_5D4594[1307252] = sub_40F1D0(v18, 0, (const char *)&byte_587000[168224], 542);
+    *(_DWORD *)&byte_5D4594[1307256] = v16 ? (atoi(v16) != 0) : 0;
+    v17 = v16 ? strtok(0, (const char *)&byte_587000[168208]) : 0;
+    *(_DWORD *)&byte_5D4594[1307260] = v17 ? (atoi(v17) != 0) : 0;
+    v18 = v17 ? strtok(0, (const char *)&byte_587000[168216]) : 0;
+    *(_DWORD *)&byte_5D4594[1307252] = v18 ? sub_40F1D0(v18, 0, (const char *)&byte_587000[168224], 542) : 0;
     result = 1;
     *a1 = &byte_5D4594[1307252];
   }
   else if ( !strcmp(a2, (const char *)&byte_587000[168272]) )
   {
     v19 = strtok(a3, (const char *)&byte_587000[168284]);
-    *(_DWORD *)&byte_5D4594[1305812] = atoi(v19);
+    *(_DWORD *)&byte_5D4594[1305812] = v19 ? atoi(v19) : 0;
     *(_DWORD *)&byte_5D4594[1307256] = *(_DWORD *)&byte_5D4594[1307256] != 0;
     result = 1;
     *a1 = &byte_5D4594[1305812];
