@@ -445,3 +445,12 @@ static inline void     nox_write_f32(void *p, float v)    { __builtin_memcpy(p, 
 | **Missing `dspfirm.cdc`** on user's 3DS SD card | High (user setup) | Low | Detect `ndspInit()` failure gracefully in `audio_3ds.c`, log clear message (`"dspfirm.cdc missing — running muted"`), and continue running without audio rather than crashing. |
 | **FCRAM fragmentation** across many chapter loads | Medium | High | Cap `video.bag` slab cache, avoid unnecessary per-frame heap allocations, and monitor `mallinfo()` + `linearSpaceFree()` across 5+ consecutive level loads in M3/M4/M6. |
 | **`abi_wrappers.c` linkage quirk (`static void sub_549860__abi_raw`)** | High | Low | Verify/fix `extern` linkage of `sub_549860__abi_raw` in M1 so monster area-damage calls link cleanly under devkitARM. |
+
+---
+
+## 6. Post-M7 Hardening & Release Polish Summary
+
+- **M4 Backports Applied (`src/GAME1.c`–`src/GAME5.c`, `src/GAME_ABI.c`):** Monster direction lookup bounds and health regen period clamp (`0b5e6a8c`/`cedf94ca`), GUI listbox/string/image read safety (`#400`, `57e73307`, `cdcb39b4`), unified `sub_57AAA0` rule buffers and bounded map paths (`e0384026`, `#490`), and config/rule/`.wnd` `strtok` NULL safety.
+- **Custom Release Packaging (`port/3ds/CMakeLists.txt`, `port/3ds/icon.png`):** Custom `nox.smdh` icon/metadata generation with embedded `NOX_3DS_VERSION` in the SMDH banner, boot console, and menu UI.
+- **Clean Exit & Top-Screen `wide_stretch` (`port/3ds/platform_3ds.c`, `port/3ds/video_3ds.c`, `port/3ds/platform_3ds.h`):** Normal exit skips the blocking `"Press START to exit"` prompt unless `NOX_3DS_WAIT_ON_EXIT=1` is set; `wide_stretch` controls top-screen 400×240 full stretch vs. 320×240 4:3 pillarboxed aspect preservation.
+- **L-Target Cursor & Native GPU Font Polish (`port/3ds/font_3ds.c`, `src/GAME1.c`–`src/GAME3.c`, `src/draw.c`):** Preserves interact/pickup cursors and tooltips during L-target mode and refines native GPU typography (bottom-screen metrics, dialog re-wrapping, software Spellbook fallback, whole-pass GUI coherence).
