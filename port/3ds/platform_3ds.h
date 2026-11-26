@@ -208,6 +208,9 @@ void nox_3ds_swbuf_end_bottom(void);
 void nox_3ds_swbuf_invalidate_bottom(void);
 bool nox_3ds_swbuf_reuse_bottom(void);
 bool nox_3ds_is_bottom_swbuf_active(void);
+void nox_3ds_set_top_render_active(bool active);
+bool nox_3ds_is_top_render_active(void);
+bool nox_3ds_font_metrics_use_bottom(void);
 void nox_3ds_set_top_crop(int x, int y, int w, int h, bool fill_screen);
 void nox_3ds_blit_cursor_to_top(void);
 void nox_3ds_blit_cursor_to_bottom(void);
@@ -231,6 +234,9 @@ void nox_3ds_font_finish_slot(int font_slot);
 bool nox_3ds_font_is_enabled(void);
 void nox_3ds_font_set_enabled(bool enabled);
 void nox_3ds_font_toggle(void);
+uint32_t nox_3ds_font_generation(void);
+void nox_3ds_font_push_shadow(bool shadow);
+void nox_3ds_font_pop_shadow(bool shadow);
 void nox_3ds_font_push_fallback(bool force_software);
 void nox_3ds_font_pop_fallback(bool force_software);
 bool nox_3ds_font_fits_single(int font_slot, const uint16_t *wstr, int max_w, int tab_w);
@@ -241,7 +247,7 @@ void nox_3ds_font_clear_all(void);
 int  nox_3ds_font_glyph_width_logical(int font_slot, uint16_t ch, bool is_bottom);
 int  nox_3ds_font_line_height_logical(int font_slot, bool is_bottom);
 bool nox_3ds_font_enqueue_glyph(int screen, int font_slot, uint16_t ch,
-                                int x, int y, uint16_t rgb555,
+                                int x, int y, uint16_t rgb555, bool want_shadow,
                                 bool clip_enabled, int clip_l, int clip_t, int clip_r, int clip_b,
                                 uint16_t **sw_rows, int sw_w, int sw_h,
                                 int *out_logical_advance);
