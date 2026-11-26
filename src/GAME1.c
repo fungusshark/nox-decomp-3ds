@@ -13379,7 +13379,6 @@ unsigned __int8 *__cdecl sub_40ED60(int a1, unsigned int a2, _DWORD *a3)
 
   v3 = *(int ****)&byte_5D4594[4 * (a1 + 32 * a2) + 210036];
   v4 = 0;
-  memset(&byte_5D4594[207988], 0, 0x800u);
   v5 = sub_420A90(v3, &a2);
   if ( v5 )
   {
@@ -13396,15 +13395,20 @@ unsigned __int8 *__cdecl sub_40ED60(int a1, unsigned int a2, _DWORD *a3)
       v6 = a2;
       if ( a2 + v4 > 0x800 )
       {
+        if ( v4 < 0x800 )
+          byte_5D4594[207988 + v4] = 0;
         *a3 = v4;
         return &byte_5D4594[207988];
       }
     }
+    if ( v4 < 0x800 )
+      byte_5D4594[207988 + v4] = 0;
     *a3 = v4;
     result = &byte_5D4594[207988];
   }
   else
   {
+    byte_5D4594[207988] = 0;
     *a3 = 0;
     result = &byte_5D4594[207988];
   }
