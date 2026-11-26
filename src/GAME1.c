@@ -46092,7 +46092,7 @@ int __cdecl sub_435A10(signed int *a1)
       *a1 = -19;
       return result;
     }
-    if ( sub_409AD0() != 66458 )
+    if ( !NOX_IS_COMPAT_PROTO_VER((uint32_t)sub_409AD0()) )
     {
       *a1 = -20;
       return 0;
@@ -47266,6 +47266,105 @@ void __cdecl sub_4375C0(int a1)
     sub_46AD20(*(_DWORD **)&byte_5D4594[814980], 10070, *(_DWORD *)&byte_5D4594[815088] + 10069, a1);
 }
 
+#ifdef __3DS__
+static uint64_t g_3ds_dip_reping_at_ms = 0;
+static u_short  g_3ds_dip_port         = 18590u;
+static uint32_t g_3ds_dip_cookie       = 0;
+
+static int nox_is_private_ipv4_str(const char *s)
+{
+  unsigned a = 0, b = 0, c = 0, d = 0;
+  if ( !s || sscanf(s, "%u.%u.%u.%u", &a, &b, &c, &d) != 4 )
+    return 0;
+  if ( a == 10u || a == 127u )
+    return 1;
+  if ( a == 192u && b == 168u )
+    return 1;
+  if ( a == 172u && b >= 16u && b <= 31u )
+    return 1;
+  return 0;
+}
+
+static void nox_3ds_refresh_server_browser_node(int *node)
+{
+  if ( !*(_DWORD *)&byte_5D4594[814980] )
+    return;
+  if ( *(int *)&byte_5D4594[814624] == (int)node )
+    sub_4394D0((int)node);
+  if ( *(_DWORD *)&byte_587000[87408] )
+  {
+    sub_4379C0();
+    sub_4A0360();
+  }
+  else if ( node )
+  {
+    if ( *(int *)((char *)node + 28) )
+      sub_437320((int)node);
+    else
+      sub_43B7C0((int)node);
+  }
+}
+
+static void nox_3ds_update_srv_entry(int *ex, const char *ip_str, int a4)
+{
+  uint32_t ver = nox_read_u32((const void *)(a4 + 24));
+  DWORD ping_ms = timeGetTime() - nox_read_u32((const void *)(a4 + 44));
+  if ( ip_str )
+  {
+    strncpy((char *)ex + 12, ip_str, 15);
+    ((char *)ex)[27] = 0;
+  }
+  nox_write_u32((char *)ex + 48, ver);
+  nox_write_u32((char *)ex + 96, (uint32_t)ping_ms);
+  ((unsigned char *)ex)[103] = *(unsigned char *)(a4 + 3);
+  ((unsigned char *)ex)[104] = *(unsigned char *)(a4 + 4);
+  strncpy((char *)ex + 111, (const char *)(a4 + 10), 8);
+  ((char *)ex)[119] = 0;
+  nox_write_u16((char *)ex + 163, nox_read_u16((const void *)(a4 + 28)));
+  nox_3ds_refresh_server_browser_node(ex);
+}
+
+static void nox_3ds_ping_direct_ip_list(u_short default_port, uint32_t cookie, int count)
+{
+  if ( nox_3ds_net_get_mode() != NOX_3DS_NET_MODE_WIFI || count <= 0 )
+    return;
+  FILE *dipf = fopen(NOX_3DS_DATA_ROOT "/direct_ip.txt", "r");
+  if ( !dipf )
+    return;
+  char line[128];
+  char ping_pkt[12];
+  memset(ping_pkt, 0, sizeof(ping_pkt));
+  ping_pkt[2] = 12;
+  nox_write_u32(&ping_pkt[8], cookie);
+  while ( fgets(line, sizeof(line), dipf) )
+  {
+    char *p = line;
+    while ( *p == ' ' || *p == '\t' ) ++p;
+    if ( *p == '\0' || *p == '#' || *p == '\r' || *p == '\n' )
+      continue;
+    char *nl = strpbrk(p, "\r\n \t");
+    if ( nl ) *nl = '\0';
+    u_short target_port = default_port;
+    char *colon = strchr(p, ':');
+    if ( colon )
+    {
+      *colon = '\0';
+      int parsed_p = atoi(colon + 1);
+      if ( parsed_p >= 1024 && parsed_p <= 65535 )
+        target_port = (u_short)parsed_p;
+    }
+    unsigned int target_ip = inet_addr(p);
+    if ( target_ip != (unsigned int)-1 )
+    {
+      nox_3ds_net_log("[net3ds] Direct IPv4 ping (%dx) -> %s:%u", count, p, (unsigned)target_port);
+      for ( int i = 0; i < count; ++i )
+        sub_555010((int)target_ip, target_port, ping_pkt, 12);
+    }
+  }
+  fclose(dipf);
+}
+#endif
+
 //----- (004375F0) --------------------------------------------------------
 int __cdecl sub_4375F0(const char *a1, __int16 a2, char *a3, int a4)
 {
@@ -47296,6 +47395,34 @@ int __cdecl sub_4375F0(const char *a1, __int16 a2, char *a3, int a4)
     {
       if ( nox_read_u32((const void *)(a4 + 44)) == *(_DWORD *)&byte_5D4594[814964] )
       {
+#ifdef __3DS__
+        if ( a3 && *a3 )
+        {
+          char clamped_name[15];
+          strncpy(clamped_name, a3, 0xEu);
+          clamped_name[14] = 0;
+          int new_priv = nox_is_private_ipv4_str(a1);
+          for ( int *ex = sub_425890((int *)&byte_5D4594[1305796]); ex; ex = sub_4258A0(ex) )
+          {
+            if ( (uint16_t)a2 == nox_read_u16((const char *)ex + 109)
+              && !_strcmpi(clamped_name, (const char *)ex + 120)
+              && strcmp(a1, (const char *)ex + 12) != 0 )
+            {
+              int old_priv = nox_is_private_ipv4_str((const char *)ex + 12);
+              if ( !new_priv && old_priv )
+                return 0;
+              if ( new_priv && !old_priv )
+              {
+                uint32_t ver = nox_read_u32((const void *)(a4 + 24));
+                nox_3ds_net_log("[net3ds] Upgraded '%s' WAN->LAN %s:%u (ver=0x%X)",
+                                clamped_name, a1, (unsigned)(uint16_t)a2, (unsigned)ver);
+                nox_3ds_update_srv_entry(ex, a1, a4);
+                return 0;
+              }
+            }
+          }
+        }
+#endif
         if ( sub_4A0410(a1, a2) )
         {
           memset(v13, 0, 0xA8u);
@@ -47370,6 +47497,20 @@ int __cdecl sub_4375F0(const char *a1, __int16 a2, char *a3, int a4)
             }
           }
         }
+#ifdef __3DS__
+        else
+        {
+          for ( int *ex = sub_425890((int *)&byte_5D4594[1305796]); ex; ex = sub_4258A0(ex) )
+          {
+            if ( !strcmp(a1, (const char *)ex + 12)
+              && (uint16_t)a2 == nox_read_u16((const char *)ex + 109) )
+            {
+              nox_3ds_update_srv_entry(ex, NULL, a4);
+              break;
+            }
+          }
+        }
+#endif
       }
     }
   }
@@ -47430,47 +47571,10 @@ int sub_4378B0()
       v1 = sub_40A430();
       sub_554AA0(v1, 0, 0, v4);
 #ifdef __3DS__
-      /* Phase 1 Direct IPv4 unicast discovery: if sdmc:/3ds/nox/direct_ip.txt exists,
-       * also send the standard 12-byte 0x0C discovery ping directly to each listed
-       * IPv4[:port] PC host so it appears in the native LAN browser even across WAN
-       * or broadcast-isolated Wi-Fi networks. */
-      if ( nox_3ds_net_get_mode() == NOX_3DS_NET_MODE_WIFI )
-      {
-        FILE *dipf = fopen(NOX_3DS_DATA_ROOT "/direct_ip.txt", "r");
-        if ( dipf )
-        {
-          char line[128];
-          char ping_pkt[12];
-          memset(ping_pkt, 0, sizeof(ping_pkt));
-          ping_pkt[2] = 12;
-          nox_write_u32(&ping_pkt[8], (uint32_t)v4);
-          while ( fgets(line, sizeof(line), dipf) )
-          {
-            char *p = line;
-            while ( *p == ' ' || *p == '\t' ) ++p;
-            if ( *p == '\0' || *p == '#' || *p == '\r' || *p == '\n' )
-              continue;
-            char *nl = strpbrk(p, "\r\n \t");
-            if ( nl ) *nl = '\0';
-            u_short target_port = v1;
-            char *colon = strchr(p, ':');
-            if ( colon )
-            {
-              *colon = '\0';
-              int parsed_p = atoi(colon + 1);
-              if ( parsed_p >= 1024 && parsed_p <= 65535 )
-                target_port = (u_short)parsed_p;
-            }
-            unsigned int target_ip = inet_addr(p);
-            if ( target_ip != (unsigned int)-1 )
-            {
-              printf("[net3ds] Direct IPv4 ping -> %s:%u\n", p, (unsigned)target_port);
-              sub_555010((int)target_ip, target_port, ping_pkt, 12);
-            }
-          }
-          fclose(dipf);
-        }
-      }
+      nox_3ds_ping_direct_ip_list(v1, (uint32_t)v4, 2);
+      g_3ds_dip_port = v1;
+      g_3ds_dip_cookie = (uint32_t)v4;
+      g_3ds_dip_reping_at_ms = sub_416BB0() + 350ULL;
 #endif
       v2 = sub_40F1D0((char *)&byte_587000[88032], 0, (const char *)&byte_587000[87992], 1097);
       sub_449A10(*(int *)&byte_5D4594[814980], 0, (int)v2, 0, 0, 0);
@@ -47978,6 +48082,22 @@ int sub_438770()
   }
   else
   {
+#ifdef __3DS__
+    if ( nox_3ds_consume_direct_ip_request() && !sub_44A4A0() )
+    {
+      char dip_entry[64];
+      if ( nox_3ds_swkbd_prompt_direct_ip(dip_entry, sizeof(dip_entry)) )
+      {
+        sub_4378B0();
+        return 1;
+      }
+    }
+    if ( g_3ds_dip_reping_at_ms && (unsigned __int64)sub_416BB0() >= g_3ds_dip_reping_at_ms )
+    {
+      g_3ds_dip_reping_at_ms = 0;
+      nox_3ds_ping_direct_ip_list(g_3ds_dip_port, g_3ds_dip_cookie, 1);
+    }
+#endif
     if ( (!sub_46ACC0(*(int *)&byte_5D4594[814984])
        || !sub_46ACC0(*(int *)&byte_5D4594[814988])
        || !sub_46ACC0(*(int *)&byte_5D4594[815012]))
@@ -48045,17 +48165,29 @@ int sub_438A90()
     buf[55] = byte_5D4594[2661960];
     buf[54] = byte_5D4594[2661958];
     buf[98] = !v3;
-    nox_write_u32(&buf[80], 0x1039Au);
-    nox_write_u32(&buf[84], nox_read_u32(&byte_5D4594[2660032]));
-    strcpy(&buf[88], (const char *)&byte_5D4594[2660048]);
-    nox_wcscpy((wchar_t *)&buf[4], (const wchar_t *)&byte_5D4594[2661908]);
-    sub_43AF90(3);
-    *(_QWORD *)&byte_5D4594[814956] = sub_416BB0() + 20000;
-    v5 = sub_43B320();
-    v4 = sub_43B300();
-//    fprintf(stderr, "[join] sub_438A90: calling sub_5550A0 (join/handshake)\n");
-    result = sub_5550A0(v4, v5, buf);
-//    fprintf(stderr, "[join] sub_438A90: sub_5550A0 returned %d\n", result);
+    {
+      uint32_t join_ver = NOX_PROTO_VER_LEGACY;
+      int sel_srv = *(int *)&byte_5D4594[814624];
+      if ( *(_DWORD *)&byte_5D4594[815056] && sel_srv )
+      {
+        uint32_t adv_ver = nox_read_u32((const void *)(sel_srv + 48));
+        if ( NOX_IS_COMPAT_PROTO_VER(adv_ver) )
+          join_ver = adv_ver;
+      }
+      nox_write_u32(&buf[80], join_ver);
+      nox_write_u32(&buf[84], nox_read_u32(&byte_5D4594[2660032]));
+      strcpy(&buf[88], (const char *)&byte_5D4594[2660048]);
+      nox_wcscpy((wchar_t *)&buf[4], (const wchar_t *)&byte_5D4594[2661908]);
+      sub_43AF90(3);
+      *(_QWORD *)&byte_5D4594[814956] = sub_416BB0() + 20000;
+      v5 = sub_43B320();
+      v4 = sub_43B300();
+      nox_3ds_net_log("[join3ds] sub_438A90 -> %u.%u.%u.%u:%u ver=0x%X",
+                      (unsigned)(v4 & 0xFFu), (unsigned)((v4 >> 8) & 0xFFu),
+                      (unsigned)((v4 >> 16) & 0xFFu), (unsigned)((v4 >> 24) & 0xFFu),
+                      (unsigned)(uint16_t)v5, (unsigned)join_ver);
+      result = sub_5550A0(v4, v5, buf);
+    }
   }
   else
   {
@@ -48317,7 +48449,7 @@ int __cdecl sub_439370(int2 *a1, int a2)
     sub_46A9B0(*(_DWORD **)&byte_5D4594[815000], a1->field_0, a1->field_4);
     sub_4394D0(a2);
     *(_DWORD *)&byte_5D4594[815056] = 1;
-    *(_WORD *)&byte_5D4594[814604] = *(_WORD *)(a2 + 109);
+    *(_DWORD *)&byte_5D4594[814604] = (uint32_t)nox_read_u16((const void *)(a2 + 109));
     result = *(_DWORD *)&byte_5D4594[2650636];
     if ( *(_DWORD *)&byte_5D4594[2650636] & 0x40000 )
       result = sub_46ABB0(*(int *)&byte_5D4594[815008], 0);
@@ -48423,6 +48555,22 @@ int __cdecl sub_4394D0(int a1)
   }
   nox_swprintf(v38, (const wchar_t *)&byte_587000[89324], v37);
   sub_46B490(*(int *)&byte_5D4594[815004], 16397, (int)v38, -1);
+#ifdef __3DS__
+  {
+    const char *ip_str = (const char *)(a1 + 12);
+    uint16_t port_num = nox_read_u16((const void *)(a1 + 109));
+    char addr_a[48];
+    wchar_t addr_w[48];
+    snprintf(addr_a, sizeof(addr_a), "\n[%s] %s:%u",
+             nox_is_private_ipv4_str(ip_str) ? "LAN" : "WAN",
+             ip_str, (unsigned)port_num);
+    size_t k = 0;
+    for ( ; addr_a[k] && k + 1 < sizeof(addr_w) / sizeof(addr_w[0]); ++k )
+      addr_w[k] = (wchar_t)(unsigned char)addr_a[k];
+    addr_w[k] = 0;
+    sub_46B490(*(int *)&byte_5D4594[815004], 16397, (int)addr_w, 14);
+  }
+#endif
   if ( *(_DWORD *)&byte_587000[87404] == 1 )
   {
     sub_46B490(*(int *)&byte_5D4594[815004], 16397, (int)&byte_587000[89332], -1);
