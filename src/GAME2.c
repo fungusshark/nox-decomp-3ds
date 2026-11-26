@@ -25039,20 +25039,25 @@ unsigned __int16 *__cdecl sub_46E170(wchar_t *a1)
   unsigned __int16 *v1; // esi
   size_t v2; // edi
   unsigned __int16 *v3; // edi
+  int width = 0;
 
+  if ( !a1 || *(int *)&byte_5D4594[1084036] <= 0 )
+    return 0;
   v1 = a1;
   v2 = nox_wcslen(a1);
-  sub_43F840(0, v1, (int *)&a1, 0, 0);
-  if ( (int)(a1 + 5) > *(int *)&byte_5D4594[1084036] )
+  sub_43F840(0, v1, &width, 0, 0);
+  if ( !width )
+    return 0;
+  if ( width + 5 > *(int *)&byte_5D4594[1084036] )
   {
     v3 = &v1[v2];
     do
     {
       *v3 = 0;
       --v3;
-      sub_43F840(0, v1, (int *)&a1, 0, 0);
+      sub_43F840(0, v1, &width, 0, 0);
     }
-    while ( (int)(a1 + 5) > *(int *)&byte_5D4594[1084036] );
+    while ( width + 5 > *(int *)&byte_5D4594[1084036] && v3 >= v1 );
   }
   return v1;
 }
