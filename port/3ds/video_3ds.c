@@ -13,7 +13,8 @@
 
 typedef struct {
     C3D_Tex                  tex;
-    uint16_t                *staging;
+    uint16_t                *staging_ring[2];
+    int                      staging_idx;
     bool                     inited;
     bool                     in_vram;
     bool                     has_content;
@@ -112,22 +113,25 @@ static bool prepare_frame_slot(nox_3ds_tex_slot_t *slot,
         }
         xfer_src = frame->pixels;
     } else {
-        if (!slot->staging) {
-            slot->staging = (uint16_t *)linearAlloc((size_t)NOX_3DS_TEX_W * (size_t)NOX_3DS_TEX_H * 2u);
-            if (!slot->staging)
+        int sidx = slot->staging_idx & 1;
+        slot->staging_idx ^= 1;
+        if (!slot->staging_ring[sidx]) {
+            slot->staging_ring[sidx] = (uint16_t *)linearAlloc((size_t)NOX_3DS_TEX_W * (size_t)NOX_3DS_TEX_H * 2u);
+            if (!slot->staging_ring[sidx])
                 return false;
-            memset(slot->staging, 0, (size_t)NOX_3DS_TEX_W * (size_t)NOX_3DS_TEX_H * 2u);
+            memset(slot->staging_ring[sidx], 0, (size_t)NOX_3DS_TEX_W * (size_t)NOX_3DS_TEX_H * 2u);
         }
+        uint16_t *stg = slot->staging_ring[sidx];
         const uint8_t *src_row = (const uint8_t *)frame->pixels;
-        uint8_t *dst_row = (uint8_t *)slot->staging;
+        uint8_t *dst_row = (uint8_t *)stg;
         const size_t copy_bytes = (size_t)w * 2u;
         for (int y = 0; y < h; ++y) {
             memcpy(dst_row, src_row, copy_bytes);
             src_row += frame->pitch;
             dst_row += NOX_3DS_TEX_W * 2;
         }
-        GSPGPU_FlushDataCache(slot->staging, (u32)(NOX_3DS_TEX_W * h * 2));
-        xfer_src = slot->staging;
+        GSPGPU_FlushDataCache(stg, (u32)(NOX_3DS_TEX_W * h * 2));
+        xfer_src = stg;
     }
 
     *out_xfer_src = xfer_src;
@@ -273,6 +277,7 @@ bool nox_3ds_video_init(int logical_w, int logical_h)
         fprintf(stderr, "[video3ds] ERROR: C3D_Init failed\n");
         return false;
     }
+    C3D_FrameRate(30.0f);
     if (!C2D_Init(C2D_DEFAULT_MAX_OBJECTS)) {
         fprintf(stderr, "[video3ds] ERROR: C2D_Init failed\n");
         C3D_Fini();
@@ -318,13 +323,15 @@ void nox_3ds_video_shutdown(void)
 
     nox_3ds_font_shutdown();
 
-    if (s_top_slot.staging) {
-        linearFree(s_top_slot.staging);
-        s_top_slot.staging = NULL;
-    }
-    if (s_bot_slot.staging) {
-        linearFree(s_bot_slot.staging);
-        s_bot_slot.staging = NULL;
+    for (int i = 0; i < 2; ++i) {
+        if (s_top_slot.staging_ring[i]) {
+            linearFree(s_top_slot.staging_ring[i]);
+            s_top_slot.staging_ring[i] = NULL;
+        }
+        if (s_bot_slot.staging_ring[i]) {
+            linearFree(s_bot_slot.staging_ring[i]);
+            s_bot_slot.staging_ring[i] = NULL;
+        }
     }
     if (s_top_slot.inited) {
         C3D_TexDelete(&s_top_slot.tex);
@@ -493,7 +500,7 @@ void nox_3ds_video_present_movie(const void *pixels, int w, int h, int pitch,
     float prev_gamma = s_gamma;
     s_gamma = 1.0f;
 
-    if (C3D_FrameBegin(C3D_FRAME_SYNCDRAW)) {
+    if (C3D_FrameBegin(0)) {
         nox_3ds_font_upload_pending();
         if (top_ready)
             enqueue_frame_upload(&s_top_slot, top_src, top_gx_fmt);
