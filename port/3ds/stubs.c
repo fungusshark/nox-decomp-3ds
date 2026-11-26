@@ -388,44 +388,10 @@ void glViewport(GLint x, GLint y, GLsizei width, GLsizei height) { (void)x; (voi
  * ========================================================================= */
 
 /* =========================================================================
- * 4. Control Server & Netextras Stubs (Loopback sockets live in net_loopback_3ds.c)
+ * 4. Control Server Stubs (Networking in net_*_3ds.c; Lobby in lobby_3ds.c)
  * ========================================================================= */
 void nox_control_server_init(void) { LOG_STUB(); }
 void nox_control_server_pump(void) { LOG_STUB(); }
-
-void nox_netextras_on_discovery_ping_send(int sockfd, const void *buf, size_t len, unsigned dest_port)
-{
-    (void)sockfd; (void)buf; (void)len; (void)dest_port;
-    LOG_STUB();
-}
-
-int nox_netextras_try_fake_recvfrom(int sockfd, void *buf, size_t buf_cap, struct sockaddr *from, socklen_t *fromlen)
-{
-    (void)sockfd; (void)buf; (void)buf_cap; (void)from; (void)fromlen;
-    LOG_STUB();
-    return -1;
-}
-
-void nox_netextras_on_host_bind_success(int sockfd, unsigned bound_port)
-{
-    (void)sockfd; (void)bound_port;
-    LOG_STUB();
-}
-
-void nox_netextras_on_host_serverinfo(const void *packet, size_t len)
-{
-    (void)packet; (void)len;
-    LOG_STUB();
-}
-
-void nox_netextras_host_tick(void) { LOG_STUB(); }
-
-int nox_netextras_fake_pending(int sockfd)
-{
-    (void)sockfd;
-    LOG_STUB();
-    return 0;
-}
 
 /* =========================================================================
  * 5. VQA Movie Stubs Removed (Pure Port native VQA decoder active in src/movie.c)
