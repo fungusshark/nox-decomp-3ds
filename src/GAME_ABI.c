@@ -625,11 +625,13 @@ int __cdecl sub_50A5C0__abi_raw(nox_abi_ptrslot_t a1)
           && (unsigned int)(*(_DWORD *)&byte_5D4594[2598000] - *(_DWORD *)(self + 536)) > *(int *)&byte_5D4594[2649704] )
         {
           v11 = v9[2];
-          if ( *v9 < v11
-            && v11
-            && !(*(_DWORD *)&byte_5D4594[2598000] % (180 * *(_DWORD *)&byte_5D4594[2649704] / (unsigned int)v9[2])) )
+          if ( v9[2] != 0 )
           {
-            sub_4EE460(self, 1);
+            unsigned int dt = (unsigned int)(180 * *(_DWORD *)&byte_5D4594[2649704]) / (unsigned int)v9[2];
+            if ( !dt )
+              dt = 1u;
+            if ( *v9 < v9[2] && *(_DWORD *)&byte_5D4594[2598000] % dt == 0 )
+              sub_4EE460(self, 1);
           }
         }
       }
