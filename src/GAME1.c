@@ -52220,6 +52220,7 @@ LABEL_24:
       int do_present = (!(*(_DWORD *)&byte_5D4594[2650636] & 0x40000)
                         || (byte_5D4594[2650637] & 1)
                         || *(_DWORD *)&byte_5D4594[815132]);
+      nox_3ds_font_set_show_version(*(_DWORD *)&byte_5D4594[815132] != 0);
       if ( *(_DWORD *)&byte_5D4594[815132] )
       {
         s_bot_was_gameplay = 0;

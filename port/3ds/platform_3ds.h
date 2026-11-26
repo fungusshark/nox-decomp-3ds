@@ -254,6 +254,7 @@ void nox_3ds_font_render_screen(int screen,
                                 int crop_x, int crop_y, int crop_w, int crop_h,
                                 float draw_x, float draw_y, float dst_w, float dst_h,
                                 float gamma);
+void nox_3ds_font_set_show_version(bool show);
 
 /* =========================================================================
  * 4. Hybrid Dual-Screen Touch, C-Stick & Button Input Bridge (input_3ds.c)
