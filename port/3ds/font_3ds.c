@@ -17,6 +17,7 @@
 
 #include "platform_3ds.h"
 #include "nox_3ds_version.h"
+#include "../../src/fov_scaler.h"
 
 #ifndef NOX_3DS_VERSION_STR
 #define NOX_3DS_VERSION_STR "3ds-dev"
@@ -438,6 +439,7 @@ void nox_3ds_font_show_toast(const char *msg, bool green)
     s_toast_custom_active = true;
     s_toast_custom_green = green;
     s_toast_until_ms = nox_3ds_get_ticks_ms() + TOAST_MS;
+    nox_3ds_swbuf_invalidate_bottom();
 }
 
 uint32_t nox_3ds_font_generation(void)
@@ -481,6 +483,21 @@ void nox_3ds_font_clear_all(void)
     s_counts[1] = 0;
 }
 
+static void get_top_font_scale_num_den(int *out_num_w, int *out_den_w,
+                                       int *out_num_h, int *out_den_h)
+{
+    int vp_w = NOX_3DS_LOGICAL_W, vp_h = NOX_3DS_LOGICAL_H;
+    int dst_w = NOX_3DS_TOP_W, dst_h = NOX_3DS_TOP_H;
+    if (nox_3ds_input_is_world_mode()) {
+        nox_fov_scaler_get_world_viewport(NULL, NULL, NULL, NULL, &vp_w, &vp_h);
+        dst_w = nox_fov_scaler_get_wide_aspect() ? NOX_3DS_TOP_W : NOX_3DS_BOT_W;
+    }
+    *out_num_w = (vp_w > 0) ? vp_w : NOX_3DS_TOP_W;
+    *out_den_w = (dst_w > 0) ? dst_w : NOX_3DS_TOP_W;
+    *out_num_h = (vp_h > 0) ? vp_h : NOX_3DS_TOP_H;
+    *out_den_h = (dst_h > 0) ? dst_h : NOX_3DS_TOP_H;
+}
+
 static int crisp_glyph_width_logical(uint16_t ch, bool is_bottom)
 {
     if (ch < 0x20)
@@ -488,7 +505,14 @@ static int crisp_glyph_width_logical(uint16_t ch, bool is_bottom)
     ch = normalize_crisp_char(ch);
     int pw = (int)s_crisp_font[ch - 0x20].w;
     int adv_phys = pw + 1;
-    int adv_logical = is_bottom ? (adv_phys * 2) : ((adv_phys * 8 + 2) / 5);
+    int adv_logical;
+    if (is_bottom) {
+        adv_logical = adv_phys * 2;
+    } else {
+        int nw, dw, nh, dh;
+        get_top_font_scale_num_den(&nw, &dw, &nh, &dh);
+        adv_logical = (adv_phys * nw + (dw / 2)) / dw;
+    }
     return (adv_logical > 1) ? (adv_logical - 1) : 1;
 }
 
@@ -509,7 +533,12 @@ int nox_3ds_font_line_height_logical(int font_slot, bool is_bottom)
         return 0;
     if (font_slot < 0 || font_slot >= FONT_SLOTS || font_slot == 1)
         return 0;
-    return is_bottom ? 12 : 8;
+    if (is_bottom)
+        return 12;
+    int nw, dw, nh, dh;
+    get_top_font_scale_num_den(&nw, &dw, &nh, &dh);
+    int lh = (6 * nh + (dh / 2)) / dh;
+    return (lh < 6) ? 6 : lh;
 }
 
 /* Measure wrapped string dimensions using either crisp 3x5 or stock .fnt metrics */
@@ -517,9 +546,19 @@ static void measure_string_wrapped(int font_slot, const uint16_t *wstr, int wrap
                                    bool use_crisp, bool is_bottom,
                                    int *out_max_w, int *out_lines, int *out_line_h)
 {
-    int line_h = use_crisp
-        ? (is_bottom ? 12 : 8)
-        : ((font_slot >= 0 && font_slot < FONT_SLOTS && s_stock_h[font_slot] > 0) ? s_stock_h[font_slot] : 10);
+    int line_h;
+    if (use_crisp) {
+        if (is_bottom) {
+            line_h = 12;
+        } else {
+            int nw, dw, nh, dh;
+            get_top_font_scale_num_den(&nw, &dw, &nh, &dh);
+            line_h = (6 * nh + (dh / 2)) / dh;
+            if (line_h < 6) line_h = 6;
+        }
+    } else {
+        line_h = (font_slot >= 0 && font_slot < FONT_SLOTS && s_stock_h[font_slot] > 0) ? s_stock_h[font_slot] : 10;
+    }
     if (tab_w <= 0)
         tab_w = 64;
 
@@ -607,11 +646,11 @@ bool nox_3ds_font_fits_multiline(int font_slot, const uint16_t *wstr, int max_w,
     int cw = 0, clines = 1, clh = 12;
     measure_string_wrapped(font_slot, wstr, max_w, tab_w, true, true, &cw, &clines, &clh);
     if (max_h > 0)
-        return (clines * 12) <= max_h;
+        return (clines * 12) <= (max_h + 4);
 
     int sw = 0, slines = 1, slh = 10;
     measure_string_wrapped(font_slot, wstr, max_w, tab_w, false, true, &sw, &slines, &slh);
-    return clines <= slines + 1;
+    return clines <= (slines + 2);
 }
 
 bool nox_3ds_font_enqueue_glyph(int screen, int font_slot, uint16_t ch,
@@ -955,6 +994,7 @@ void nox_3ds_font_render_screen(int screen,
     if (screen == NOX_3DS_SWBUF_BOTTOM) {
         draw_toast_overlay(target_w, target_h);
     } else if (screen == NOX_3DS_SWBUF_TOP) {
+        draw_toast_overlay(target_w, target_h);
         draw_version_overlay(target_w, target_h);
     }
 }

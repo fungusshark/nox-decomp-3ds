@@ -363,29 +363,34 @@ void nox_3ds_input_poll(nox_3ds_input_t *out)
     g_in.keys_up   = hidKeysUp();
 
     /* Live A/B toggles while holding L + R:
-     *   L + R + SELECT : Native GPU Font
-     *   L + R + X      : Cycle FOV Viewport Preset (AUTO / CRISP / BAL / WIDE)
-     *   L + R + Y      : Toggle Top Screen Aspect Ratio (5:3 <-> 4:3) */
+     *   L + R + SELECT         : Native GPU Font
+     *   L + R + X / Up / Down  : Cycle FOV Viewport Preset (skips no-op sizes)
+     *   L + R + Y / Left/Right : Toggle Top Screen Aspect Ratio (5:3 <-> 4:3) */
     {
         static bool s_swallow_select = false;
         static bool s_swallow_x = false;
         static bool s_swallow_y = false;
+        static uint32_t s_swallow_dpad = 0;
+        const uint32_t dpad_v = NOX_3DS_KEY_DUP | NOX_3DS_KEY_DDOWN;
+        const uint32_t dpad_h = NOX_3DS_KEY_DLEFT | NOX_3DS_KEY_DRIGHT;
         bool lr_held = (g_in.keys_held & (NOX_3DS_KEY_L | NOX_3DS_KEY_R)) == (NOX_3DS_KEY_L | NOX_3DS_KEY_R);
         if (lr_held && (g_in.keys_down & NOX_3DS_KEY_SELECT)) {
             nox_3ds_font_toggle();
             s_swallow_select = true;
         }
-        if (lr_held && (g_in.keys_down & NOX_3DS_KEY_X)) {
+        if (lr_held && (g_in.keys_down & (NOX_3DS_KEY_X | dpad_v))) {
             char msg[64];
             nox_fov_scaler_cycle_preset();
             nox_3ds_font_show_toast(nox_fov_scaler_status_label(msg, sizeof(msg)), true);
-            s_swallow_x = true;
+            if (g_in.keys_down & NOX_3DS_KEY_X) s_swallow_x = true;
+            s_swallow_dpad |= (g_in.keys_down & dpad_v);
         }
-        if (lr_held && (g_in.keys_down & NOX_3DS_KEY_Y)) {
+        if (lr_held && (g_in.keys_down & (NOX_3DS_KEY_Y | dpad_h))) {
             char msg[64];
             nox_3ds_video_toggle_wide();
             nox_3ds_font_show_toast(nox_fov_scaler_status_label(msg, sizeof(msg)), true);
-            s_swallow_y = true;
+            if (g_in.keys_down & NOX_3DS_KEY_Y) s_swallow_y = true;
+            s_swallow_dpad |= (g_in.keys_down & dpad_h);
         }
         if (s_swallow_select) {
             bool raw_sel = (g_in.keys_held & NOX_3DS_KEY_SELECT) != 0;
@@ -413,6 +418,13 @@ void nox_3ds_input_poll(nox_3ds_input_t *out)
             if (!raw_y) {
                 s_swallow_y = false;
             }
+        }
+        if (s_swallow_dpad) {
+            uint32_t still_held = g_in.keys_held & s_swallow_dpad;
+            g_in.keys_held &= ~s_swallow_dpad;
+            g_in.keys_down &= ~s_swallow_dpad;
+            g_in.keys_up   &= ~s_swallow_dpad;
+            s_swallow_dpad = still_held;
         }
     }
 

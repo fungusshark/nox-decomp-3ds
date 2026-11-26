@@ -317,8 +317,14 @@ void nox_fov_scaler_get_world_viewport(int *out_l, int *out_t,
 
 nox_fov_preset_t nox_fov_scaler_cycle_preset(void)
 {
-    s_fov.preset = (nox_fov_preset_t)(((int)s_fov.preset + 1) % (int)NOX_FOV_PRESET_COUNT);
-    recompute_viewport();
+    int prev_w = s_fov.vp_w;
+    int prev_h = s_fov.vp_h;
+    for (int i = 0; i < (int)NOX_FOV_PRESET_COUNT; ++i) {
+        s_fov.preset = (nox_fov_preset_t)(((int)s_fov.preset + 1) % (int)NOX_FOV_PRESET_COUNT);
+        recompute_viewport();
+        if (s_fov.vp_w != prev_w || s_fov.vp_h != prev_h)
+            break;
+    }
     return s_fov.preset;
 }
 
