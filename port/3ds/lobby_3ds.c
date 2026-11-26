@@ -11,7 +11,12 @@
  * worker thread spawned).
  */
 #include "platform_3ds.h"
+#include "nox_3ds_version.h"
 #include "third_party/cJSON.h"
+
+#ifndef NOX_3DS_VERSION_STR
+#define NOX_3DS_VERSION_STR "3ds-dev"
+#endif
 #include "../../src/netextras.h"
 #include "../../src/netextras_types.h"
 
@@ -404,6 +409,19 @@ static size_t lobby_parse_games_json(const char *json_text, lobby_cached_row_t *
                 if (cJSON_IsTrue(jhires) ||
                     (cJSON_IsNumber(jw) && jw->valueint > 1024) ||
                     (cJSON_IsNumber(jh) && jh->valueint > 768)) {
+                    item.proto_ver = NOX_PROTO_VER_HIGHRES;
+                }
+            }
+
+            char vers_str[64] = {0};
+            copy_json_str(elem, "vers", vers_str, sizeof(vers_str));
+            if (vers_str[0] != '\0' && item.proto_ver != NOX_PROTO_VER_HIGHRES) {
+                /* OpenNox v1.8/v1.9 servers (even at 1024x768) speak 0x000F039A unless lowres/1.02. */
+                if ((strncmp(vers_str, "v1.", 3) == 0 ||
+                     strncmp(vers_str, "1.8", 3) == 0 ||
+                     strncmp(vers_str, "1.9", 3) == 0) &&
+                    strstr(vers_str, "lowres") == NULL &&
+                    strstr(vers_str, "1.02") == NULL) {
                     item.proto_ver = NOX_PROTO_VER_HIGHRES;
                 }
             }
@@ -1637,6 +1655,7 @@ void nox_3ds_lobby_init(void)
     g_active_ping_sockfd = -1;
     g_host_active = false;
     g_lobby_inited = true;
+    nox_3ds_net_log("[boot] version=%s", NOX_3DS_VERSION_STR);
     /* NOTE: httpcInit() and worker thread are intentionally NOT started here. */
 }
 

@@ -424,6 +424,8 @@ void               nox_3ds_lobby_on_mode_change(nox_3ds_net_mode_t mode);
 void               nox_3ds_lobby_prefetch(void);
 bool               nox_3ds_lobby_has_pending_work(void);
 void               nox_3ds_lobby_shutdown(void);
+void               nox_3ds_reset_join_ver_retry(void);
+int                nox_3ds_try_flip_join_proto_ver(void);
 int                nox_3ds_net_socket(int domain, int type, int protocol);
 int                nox_3ds_net_closesocket(int fd);
 int                nox_3ds_net_bind(int fd, const void *addr, unsigned int addrlen);
