@@ -11068,6 +11068,9 @@ LABEL_50:
         *(_BYTE *)(v4 + 3) = 13;
         return 4;
       }
+#ifdef __3DS__
+      nox_3ds_set_host_client_proto_ver(cli_ver);
+#endif
     }
     if ( *(_DWORD *)(v7 + 84) >= (unsigned int)(sub_409FA0() - 1) )
       a4 = 1;
@@ -11907,7 +11910,13 @@ int __cdecl sub_5546A0(unsigned int a1)
   v2 = *(SOCKET **)&byte_5D4594[4 * a1 + 3843788];
   if ( v2 )
   {
+    int closed_fd = (int)*v2;
+    int is_listener = (((int *)v2)[5] == -1);
     closesocket(*v2);
+#ifdef __3DS__
+    if ( is_listener )
+      nox_3ds_lobby_on_host_close(closed_fd);
+#endif
     sub_5531C0(*(LPVOID *)&byte_5D4594[4 * a1 + 3843788]);
     *(_DWORD *)&byte_5D4594[4 * a1 + 3843788] = 0;
     WSACleanup();
@@ -12108,6 +12117,20 @@ int __cdecl sub_554B40(u_short hostshort)
   char optval[4]; // [esp+14h] [ebp-194h]
   struct WSAData WSAData; // [esp+18h] [ebp-190h]
 
+#ifdef __3DS__
+  if ( *(_DWORD *)&byte_5D4594[2513916] == 1 )
+  {
+    int cur_fd = *(int *)&byte_5D4594[2513920];
+    nox_3ds_net_mode_t mode = nox_3ds_net_get_mode();
+    if ( (mode == NOX_3DS_NET_MODE_WIFI && cur_fd < NOX_3DS_SOCKETS_FD_BASE) ||
+         (mode == NOX_3DS_NET_MODE_LOOPBACK && cur_fd >= NOX_3DS_SOCKETS_FD_BASE) )
+    {
+      nox_3ds_net_log("[net3ds] Reopening discovery socket across mode switch (old_fd=%d mode=%d)",
+                      cur_fd, (int)mode);
+      sub_554D10();
+    }
+  }
+#endif
   if ( *(_DWORD *)&byte_5D4594[2513916] == 1 )
     return -14;
   result = WSAStartup(0x101u, &WSAData);

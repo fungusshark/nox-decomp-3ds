@@ -47330,6 +47330,8 @@ static void nox_3ds_start_lan_unicast_sweep(u_short port, uint32_t cookie)
   if ( num_blocks == 0u ) num_blocks = 1u;
   if ( num_blocks > 4u )  num_blocks = 4u;
 
+  /* Probe self IPv4 first so same-host PC servers upgrade WAN->LAN immediately. */
+  g_3ds_lan_sweep_ips[g_3ds_lan_sweep_count++] = ip_be;
   for ( uint32_t h = 1u; h <= 254u && g_3ds_lan_sweep_count < NOX_3DS_LAN_SWEEP_MAX_HOSTS; ++h )
   {
     uint32_t cand = own_24 | h;
