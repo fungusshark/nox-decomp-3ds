@@ -1,14 +1,12 @@
 /*
- * In-memory UDP loopback transport for New 3DS.
+ * In-memory UDP loopback transport for New 3DS (Milestone 3).
  *
  * Does NOT call socInit() or touch Wi-Fi/SOC hardware, so Solo Campaign,
  * Solo Quest, and local client/server communication work cleanly even in
  * airplane mode with zero 1 MB SOC shared-buffer overhead.
- *
- * Exports only g_nox_3ds_loopback_ops (dispatched by port/3ds/net_3ds.c)
- * so zero POSIX socket symbols are shadowed in libctru.
  */
 #include "platform_3ds.h"
+#include "../../src/windows.h"
 
 #include <arpa/inet.h>
 #include <errno.h>
@@ -18,8 +16,8 @@
 #include <string.h>
 #include <sys/socket.h>
 
-#define MAX_LOOPBACK_SOCKS  NOX_3DS_LOOPBACK_FD_MAX
-#define LOOPBACK_FD_BASE    NOX_3DS_LOOPBACK_FD_BASE
+#define MAX_LOOPBACK_SOCKS  16
+#define LOOPBACK_FD_BASE    1024
 #define LOOPBACK_RING_CAP   32
 #define LOOPBACK_MAX_DGRAM  2048
 
@@ -32,6 +30,7 @@
 #define NOX_WSAEWOULDBLOCK  10035u
 #define NOX_WSAENOTSOCK     10038u
 #define NOX_WSAEADDRINUSE   10048u
+#define NOX_WSAEOPNOTSUPP   10045u
 
 typedef struct {
     uint32_t src_ip;   /* network byte order */
@@ -56,14 +55,12 @@ typedef struct {
     loopback_pkt_t *rx_ring;    /* allocated on socket(), freed on closesocket() */
 } loopback_sock_t;
 
-extern unsigned int last_socket_error;
+extern DWORD last_socket_error;
 
 static loopback_sock_t  g_socks[MAX_LOOPBACK_SOCKS];
 static nox_3ds_mutex_t *g_net_mutex = NULL;
 static bool             g_net_inited = false;
 static uint16_t         g_next_ephemeral = 49152u;
-
-static void loopback_init(void);
 
 static inline uint32_t loopback_ip_nbo(void)
 {
@@ -80,15 +77,18 @@ static bool is_loopback_or_local_ip(uint32_t ip_nbo)
     return false;
 }
 
-/* Loopback sockets execute solely on the main thread; skip RecursiveLock/dmb overhead. */
-static inline void net_lock(void)
+static void net_lock(void)
 {
     if (!g_net_inited)
-        loopback_init();
+        nox_3ds_net_init();
+    if (g_net_mutex)
+        nox_3ds_mutex_lock(g_net_mutex);
 }
 
-static inline void net_unlock(void)
+static void net_unlock(void)
 {
+    if (g_net_mutex)
+        nox_3ds_mutex_unlock(g_net_mutex);
 }
 
 static loopback_sock_t *lookup_sock(int fd)
@@ -129,7 +129,7 @@ static uint16_t alloc_ephemeral_port(int sock_type)
     return 49152u;
 }
 
-static void loopback_init(void)
+void nox_3ds_net_init(void)
 {
     if (g_net_inited)
         return;
@@ -143,7 +143,7 @@ static void loopback_init(void)
            (unsigned)((LOOPBACK_RING_CAP * sizeof(loopback_pkt_t)) / 1024u));
 }
 
-static void loopback_shutdown(void)
+void nox_3ds_net_shutdown(void)
 {
     if (!g_net_inited)
         return;
@@ -164,17 +164,7 @@ static void loopback_shutdown(void)
     g_net_inited = false;
 }
 
-static bool ensure_rx_ring(loopback_sock_t *s)
-{
-    if (!s)
-        return false;
-    if (s->rx_ring)
-        return true;
-    s->rx_ring = (loopback_pkt_t *)calloc(LOOPBACK_RING_CAP, sizeof(loopback_pkt_t));
-    return s->rx_ring != NULL;
-}
-
-static int loopback_socket(int domain, int type, int protocol)
+int nox_3ds_net_socket(int domain, int type, int protocol)
 {
     net_lock();
     int slot = -1;
@@ -191,22 +181,30 @@ static int loopback_socket(int domain, int type, int protocol)
         return -1;
     }
 
+    loopback_pkt_t *ring = (loopback_pkt_t *)calloc(LOOPBACK_RING_CAP, sizeof(loopback_pkt_t));
+    if (!ring) {
+        last_socket_error = NOX_WSAEMFILE;
+        errno = ENOMEM;
+        net_unlock();
+        return -1;
+    }
+
     loopback_sock_t *s = &g_socks[slot];
     memset(s, 0, sizeof(*s));
     s->in_use = true;
     s->domain = domain;
     s->type = type;
     s->protocol = protocol;
-    s->rx_ring = NULL;
+    s->rx_ring = ring;
 
     last_socket_error = 0;
     net_unlock();
-    printf("[net3ds:lo] socket(dom=%d, type=%d, proto=%d) -> vfd=%d\n",
+    printf("[net3ds] socket(dom=%d, type=%d, proto=%d) -> fd=%d\n",
            domain, type, protocol, LOOPBACK_FD_BASE + slot);
     return LOOPBACK_FD_BASE + slot;
 }
 
-static int loopback_closesocket(int fd)
+int nox_3ds_net_closesocket(int fd)
 {
     net_lock();
     loopback_sock_t *s = lookup_sock(fd);
@@ -227,7 +225,7 @@ static int loopback_closesocket(int fd)
     return 0;
 }
 
-static int loopback_bind(int fd, const void *addr, unsigned int addrlen)
+int nox_3ds_net_bind(int fd, const void *addr, unsigned int addrlen)
 {
     if (!addr || addrlen < sizeof(struct sockaddr_in)) {
         last_socket_error = NOX_WSAEINVAL;
@@ -258,24 +256,17 @@ static int loopback_bind(int fd, const void *addr, unsigned int addrlen)
         return -1;
     }
 
-    if (!ensure_rx_ring(s)) {
-        last_socket_error = NOX_WSAEMFILE;
-        errno = ENOMEM;
-        net_unlock();
-        return -1;
-    }
-
     s->bound = true;
     s->bound_ip = ip_nbo;
     s->bound_port = port_hbo;
     last_socket_error = 0;
     net_unlock();
-    printf("[net3ds:lo] bind(vfd=%d, ip=0x%08x, port=%u) -> ok\n",
+    printf("[net3ds] bind(fd=%d, ip=0x%08x, port=%u) -> ok\n",
            fd, (unsigned)ntohl(ip_nbo), (unsigned)port_hbo);
     return 0;
 }
 
-static int loopback_setsockopt(int fd, int level, int opt, const void *val, unsigned int len)
+int nox_3ds_net_setsockopt(int fd, int level, int opt, const void *val, unsigned int len)
 {
     net_lock();
     loopback_sock_t *s = lookup_sock(fd);
@@ -298,7 +289,7 @@ static int loopback_setsockopt(int fd, int level, int opt, const void *val, unsi
     return 0;
 }
 
-static int loopback_ioctlsocket(int fd, long cmd, unsigned long *argp)
+int nox_3ds_net_ioctlsocket(int fd, long cmd, unsigned long *argp)
 {
     uint32_t ucmd = (uint32_t)cmd;
 
@@ -346,7 +337,7 @@ static void enqueue_datagram(loopback_sock_t *dst,
                              uint32_t src_ip_nbo, uint16_t src_port_nbo,
                              const void *buf, uint16_t copy_len)
 {
-    if (!ensure_rx_ring(dst))
+    if (!dst || !dst->rx_ring)
         return;
 
     /* Drop oldest datagram if ring is saturated so latest game state always delivers. */
@@ -366,8 +357,8 @@ static void enqueue_datagram(loopback_sock_t *dst,
     dst->count++;
 }
 
-static int loopback_sendto(int fd, const void *buf, unsigned int len, int flags,
-                           const void *to, unsigned int tolen)
+int nox_3ds_net_sendto(int fd, const void *buf, unsigned int len, int flags,
+                       const void *to, unsigned int tolen)
 {
     (void)flags;
     if (!buf || !to || tolen < sizeof(struct sockaddr_in)) {
@@ -434,8 +425,8 @@ static int loopback_sendto(int fd, const void *buf, unsigned int len, int flags,
     return (int)len;
 }
 
-static int loopback_recvfrom(int fd, void *buf, unsigned int len, int flags,
-                             void *from, unsigned int *fromlen)
+int nox_3ds_net_recvfrom(int fd, void *buf, unsigned int len, int flags,
+                         void *from, unsigned int *fromlen)
 {
     if (!buf) {
         last_socket_error = NOX_WSAEINVAL;
@@ -488,52 +479,99 @@ static int loopback_recvfrom(int fd, void *buf, unsigned int len, int flags,
     return (int)copy_len;
 }
 
-static int loopback_listen(int fd, int backlog)
+int nox_3ds_net_last_error(void)
 {
-    (void)backlog;
-    net_lock();
-    loopback_sock_t *s = lookup_sock(fd);
-    net_unlock();
-    if (!s) {
-        last_socket_error = NOX_WSAENOTSOCK;
-        errno = EBADF;
-        return -1;
+    return (int)last_socket_error;
+}
+
+/* =========================================================================
+ * Winsock / Compat Entry Points (mapped from src/windows.h macros)
+ * ========================================================================= */
+int WINAPI WSAStartup(WORD wVersionRequested, struct WSAData *lpWSAData)
+{
+    if (!g_net_inited)
+        nox_3ds_net_init();
+    if (lpWSAData) {
+        memset(lpWSAData, 0, sizeof(*lpWSAData));
+        lpWSAData->wVersion = wVersionRequested;
+        lpWSAData->wHighVersion = 0x0202u;
+        snprintf(lpWSAData->szDescription, sizeof(lpWSAData->szDescription), "Nox 3DS Loopback");
+        snprintf(lpWSAData->szSystemStatus, sizeof(lpWSAData->szSystemStatus), "Running");
+        lpWSAData->iMaxSockets = MAX_LOOPBACK_SOCKS;
+        lpWSAData->iMaxUdpDg = LOOPBACK_MAX_DGRAM;
     }
     last_socket_error = 0;
     return 0;
 }
 
-static int loopback_accept(int fd, void *addr, unsigned int *addrlen)
+int WINAPI WSACleanup(void)
 {
-    (void)fd; (void)addr; (void)addrlen;
-    last_socket_error = NOX_WSAEWOULDBLOCK;
-    errno = EWOULDBLOCK;
-    return -1;
-}
-
-static int loopback_shutdown_sock(int fd, int how)
-{
-    (void)fd; (void)how;
     last_socket_error = 0;
     return 0;
 }
 
-static int loopback_send(int fd, const void *buf, unsigned int len, int flags)
+SOCKET WINAPI socket(int domain, int type, int protocol)
+#undef socket
 {
-    (void)fd; (void)buf; (void)flags;
-    last_socket_error = 0;
-    return (int)len;
+    return (SOCKET)nox_3ds_net_socket(domain, type, protocol);
 }
 
-static int loopback_recv(int fd, void *buf, unsigned int len, int flags)
+int WINAPI closesocket(SOCKET s)
 {
-    (void)fd; (void)buf; (void)len; (void)flags;
-    last_socket_error = NOX_WSAEWOULDBLOCK;
-    errno = EWOULDBLOCK;
-    return -1;
+    return nox_3ds_net_closesocket((int)s);
 }
 
-static int loopback_gethostname(char *name, size_t len)
+int WINAPI bind(int sockfd, const struct sockaddr *addr, unsigned int addrlen)
+#undef bind
+{
+    return nox_3ds_net_bind(sockfd, addr, addrlen);
+}
+
+int WINAPI setsockopt(SOCKET s, int level, int opt, const void *value, unsigned int len)
+#undef setsockopt
+{
+    return nox_3ds_net_setsockopt((int)s, level, opt, value, len);
+}
+
+int WINAPI ioctlsocket(SOCKET s, long cmd, unsigned long *argp)
+{
+    return nox_3ds_net_ioctlsocket((int)s, cmd, argp);
+}
+
+int WINAPI sendto(int sockfd, void *buffer, unsigned int length, int flags,
+                  const struct sockaddr *addr, unsigned int addrlen)
+#undef sendto
+{
+    return nox_3ds_net_sendto(sockfd, buffer, length, flags, addr, addrlen);
+}
+
+int WINAPI recvfrom(int sockfd, void *buffer, unsigned int length, int flags,
+                    struct sockaddr *addr, unsigned int *addrlen)
+#undef recvfrom
+{
+    return nox_3ds_net_recvfrom(sockfd, buffer, length, flags, addr, addrlen);
+}
+
+int WINAPI WSAGetLastError(void)
+{
+    return nox_3ds_net_last_error();
+}
+
+char *WINAPI inet_ntoa(struct in_addr in)
+#undef in_addr
+#undef inet_ntoa
+{
+    static char buf[16];
+    uint32_t ip = in.S_un.S_addr;
+    snprintf(buf, sizeof(buf), "%u.%u.%u.%u",
+             (unsigned)(ip & 0xFFu),
+             (unsigned)((ip >> 8) & 0xFFu),
+             (unsigned)((ip >> 16) & 0xFFu),
+             (unsigned)((ip >> 24) & 0xFFu));
+    return buf;
+}
+
+int gethostname(char *name, size_t len)
 {
     if (name && len > 0) {
         snprintf(name, len, "n3ds-local");
@@ -541,7 +579,7 @@ static int loopback_gethostname(char *name, size_t len)
     return 0;
 }
 
-static struct hostent *loopback_gethostbyname(const char *name)
+struct hostent *gethostbyname(const char *name)
 {
     static struct hostent he;
     static uint32_t addr = 0;
@@ -561,21 +599,52 @@ static struct hostent *loopback_gethostbyname(const char *name)
     return &he;
 }
 
-const nox_3ds_net_ops_t g_nox_3ds_loopback_ops = {
-    .init          = loopback_init,
-    .shutdown      = loopback_shutdown,
-    .socket        = loopback_socket,
-    .closesocket   = loopback_closesocket,
-    .bind          = loopback_bind,
-    .setsockopt    = loopback_setsockopt,
-    .ioctlsocket   = loopback_ioctlsocket,
-    .sendto        = loopback_sendto,
-    .recvfrom      = loopback_recvfrom,
-    .listen        = loopback_listen,
-    .accept        = loopback_accept,
-    .shutdown_sock = loopback_shutdown_sock,
-    .send          = loopback_send,
-    .recv          = loopback_recv,
-    .gethostname   = loopback_gethostname,
-    .gethostbyname = loopback_gethostbyname,
-};
+/*
+ * Override POSIX TCP helpers referenced by GAME5.c's optional rcon/telnet
+ * console (sub_578E00..sub_579600) so libctru's soc service is never linked
+ * or invoked on 3DS.
+ */
+int listen(int sockfd, int backlog)
+{
+    (void)backlog;
+    net_lock();
+    loopback_sock_t *s = lookup_sock(sockfd);
+    net_unlock();
+    if (!s) {
+        last_socket_error = NOX_WSAENOTSOCK;
+        errno = EBADF;
+        return -1;
+    }
+    last_socket_error = 0;
+    return 0;
+}
+
+int accept(int sockfd, struct sockaddr *addr, socklen_t *addrlen)
+{
+    (void)sockfd; (void)addr; (void)addrlen;
+    last_socket_error = NOX_WSAEWOULDBLOCK;
+    errno = EWOULDBLOCK;
+    return -1;
+}
+
+int shutdown(int sockfd, int how)
+{
+    (void)sockfd; (void)how;
+    last_socket_error = 0;
+    return 0;
+}
+
+ssize_t send(int sockfd, const void *buf, size_t len, int flags)
+{
+    (void)sockfd; (void)buf; (void)flags;
+    last_socket_error = 0;
+    return (ssize_t)len;
+}
+
+ssize_t recv(int sockfd, void *buf, size_t len, int flags)
+{
+    (void)sockfd; (void)buf; (void)len; (void)flags;
+    last_socket_error = NOX_WSAEWOULDBLOCK;
+    errno = EWOULDBLOCK;
+    return -1;
+}

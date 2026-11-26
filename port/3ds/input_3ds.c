@@ -1,5 +1,4 @@
 #include "platform_3ds.h"
-#include "../../src/fov_scaler.h"
 
 #include <3ds.h>
 #include <SDL2/SDL.h>
@@ -51,7 +50,6 @@ static bool  g_wait_touch_release  = false;
 static bool  g_prev_l_held         = false;
 static bool  g_cstick_or_r_active  = false;
 static bool  g_pending_chat        = false;
-static bool  g_pending_direct_ip   = false;
 static int   g_lmb_owner           = LMB_OWNER_NONE;
 static int   g_touch_mode          = TOUCH_MODE_NONE;
 
@@ -90,7 +88,6 @@ static void get_top_viewport_bounds(int *out_l, int *out_t, int *out_r, int *out
     int t = NOX_3DS_VP_TOP;
     int r = NOX_3DS_VP_RIGHT;
     int b = NOX_3DS_VP_BOTTOM;
-    nox_fov_scaler_get_world_viewport(&l, &t, &r, &b, NULL, NULL);
 
     int *vp = (int *)(void *)sub_437250();
     if (vp && (vp[2] - vp[0]) >= 64 && (vp[3] - vp[1]) >= 64) {
@@ -145,13 +142,7 @@ static bool compute_cstick_curved(float *out_nx, float *out_ny, float *out_mag)
     if (u < 0.0f) u = 0.0f;
     if (u > 1.0f) u = 1.0f;
 
-    float curved;
-    if (fabsf(g_in.cstick_cfg.curve_exp - 1.75f) < 1e-4f) {
-        float s = sqrtf(u);
-        curved = u * s * sqrtf(s) * g_in.cstick_cfg.sensitivity;
-    } else {
-        curved = powf(u, g_in.cstick_cfg.curve_exp) * g_in.cstick_cfg.sensitivity;
-    }
+    float curved = powf(u, g_in.cstick_cfg.curve_exp) * g_in.cstick_cfg.sensitivity;
     if (curved > 1.0f) curved = 1.0f;
 
     *out_nx = fx / mag;
@@ -201,23 +192,9 @@ static bool is_creature_cage_hit(int x, int y)
     return false;
 }
 
-static int g_last_injected_mx = -1;
-static int g_last_injected_my = -1;
-
-static inline void inject_mouse_abs_dedup(int x, int y)
-{
-    if (x != g_last_injected_mx || y != g_last_injected_my) {
-        g_last_injected_mx = x;
-        g_last_injected_my = y;
-        nox_ctrl_inject_mouse_abs(x, y);
-    }
-}
-
 void nox_3ds_input_init(void)
 {
     memset(&g_in, 0, sizeof(g_in));
-    g_last_injected_mx = -1;
-    g_last_injected_my = -1;
     g_in.cstick_cfg.deadzone     = read_env_float("NOX_3DS_CSTICK_DEADZONE", 0.14f, 0.02f, 0.85f);
     g_in.cstick_cfg.curve_exp    = read_env_float("NOX_3DS_CSTICK_CURVE",    1.75f, 1.0f,  4.0f);
     g_in.cstick_cfg.sensitivity  = read_env_float("NOX_3DS_CSTICK_SENS",     1.0f,  0.2f,  4.0f);
@@ -372,13 +349,6 @@ void nox_3ds_input_get_bottom_touch(int *out_x, int *out_y)
     if (out_y) *out_y = g_in.bottom_touch_y;
 }
 
-bool nox_3ds_consume_direct_ip_request(void)
-{
-    bool v = g_pending_direct_ip;
-    g_pending_direct_ip = false;
-    return v;
-}
-
 void nox_3ds_input_poll(nox_3ds_input_t *out)
 {
     circlePosition cpad;
@@ -390,35 +360,14 @@ void nox_3ds_input_poll(nox_3ds_input_t *out)
     g_in.keys_down = hidKeysDown();
     g_in.keys_up   = hidKeysUp();
 
-    /* Live A/B toggles while holding L + R:
-     *   L + R + SELECT         : Native GPU Font
-     *   L + R + X / Up / Down  : Cycle FOV Viewport Preset (skips no-op sizes)
-     *   L + R + Y / Left/Right : Toggle Top Screen Aspect Ratio (5:3 <-> 4:3) */
+    /* Live A/B toggle for Native GPU Font: hold L + R, tap SELECT.
+     * Swallow SELECT until released so minimap / movie skip do not fire. */
     {
         static bool s_swallow_select = false;
-        static bool s_swallow_x = false;
-        static bool s_swallow_y = false;
-        static uint32_t s_swallow_dpad = 0;
-        const uint32_t dpad_v = NOX_3DS_KEY_DUP | NOX_3DS_KEY_DDOWN;
-        const uint32_t dpad_h = NOX_3DS_KEY_DLEFT | NOX_3DS_KEY_DRIGHT;
-        bool lr_held = (g_in.keys_held & (NOX_3DS_KEY_L | NOX_3DS_KEY_R)) == (NOX_3DS_KEY_L | NOX_3DS_KEY_R);
-        if (lr_held && (g_in.keys_down & NOX_3DS_KEY_SELECT)) {
+        if (((g_in.keys_held & (NOX_3DS_KEY_L | NOX_3DS_KEY_R)) == (NOX_3DS_KEY_L | NOX_3DS_KEY_R)) &&
+            (g_in.keys_down & NOX_3DS_KEY_SELECT)) {
             nox_3ds_font_toggle();
             s_swallow_select = true;
-        }
-        if (lr_held && (g_in.keys_down & (NOX_3DS_KEY_X | dpad_v))) {
-            char msg[64];
-            nox_fov_scaler_cycle_preset();
-            nox_3ds_font_show_toast(nox_fov_scaler_status_label(msg, sizeof(msg)), true);
-            if (g_in.keys_down & NOX_3DS_KEY_X) s_swallow_x = true;
-            s_swallow_dpad |= (g_in.keys_down & dpad_v);
-        }
-        if (lr_held && (g_in.keys_down & (NOX_3DS_KEY_Y | dpad_h))) {
-            char msg[64];
-            nox_3ds_video_toggle_wide();
-            nox_3ds_font_show_toast(nox_fov_scaler_status_label(msg, sizeof(msg)), true);
-            if (g_in.keys_down & NOX_3DS_KEY_Y) s_swallow_y = true;
-            s_swallow_dpad |= (g_in.keys_down & dpad_h);
         }
         if (s_swallow_select) {
             bool raw_sel = (g_in.keys_held & NOX_3DS_KEY_SELECT) != 0;
@@ -427,53 +376,6 @@ void nox_3ds_input_poll(nox_3ds_input_t *out)
             g_in.keys_up   &= ~NOX_3DS_KEY_SELECT;
             if (!raw_sel) {
                 s_swallow_select = false;
-            }
-        }
-        if (s_swallow_x) {
-            bool raw_x = (g_in.keys_held & NOX_3DS_KEY_X) != 0;
-            g_in.keys_held &= ~NOX_3DS_KEY_X;
-            g_in.keys_down &= ~NOX_3DS_KEY_X;
-            g_in.keys_up   &= ~NOX_3DS_KEY_X;
-            if (!raw_x) {
-                s_swallow_x = false;
-            }
-        }
-        if (s_swallow_y) {
-            bool raw_y = (g_in.keys_held & NOX_3DS_KEY_Y) != 0;
-            g_in.keys_held &= ~NOX_3DS_KEY_Y;
-            g_in.keys_down &= ~NOX_3DS_KEY_Y;
-            g_in.keys_up   &= ~NOX_3DS_KEY_Y;
-            if (!raw_y) {
-                s_swallow_y = false;
-            }
-        }
-        if (s_swallow_dpad) {
-            uint32_t still_held = g_in.keys_held & s_swallow_dpad;
-            g_in.keys_held &= ~s_swallow_dpad;
-            g_in.keys_down &= ~s_swallow_dpad;
-            g_in.keys_up   &= ~s_swallow_dpad;
-            s_swallow_dpad = still_held;
-        }
-    }
-
-    /* Direct IPv4 prompt in Multiplayer Server Browser: plain SELECT when
-     * SelServ.wnd (+814980) is open outside gameplay. */
-    {
-        static bool s_swallow_direct_ip_sel = false;
-        if (!(g_in.keys_held & (NOX_3DS_KEY_L | NOX_3DS_KEY_R)) &&
-            (g_in.keys_down & NOX_3DS_KEY_SELECT) &&
-            nox_read_u32(&byte_5D4594[814980]) != 0 &&
-            !sub_43C700()) {
-            g_pending_direct_ip = true;
-            s_swallow_direct_ip_sel = true;
-        }
-        if (s_swallow_direct_ip_sel) {
-            bool raw_sel = (g_in.keys_held & NOX_3DS_KEY_SELECT) != 0;
-            g_in.keys_held &= ~NOX_3DS_KEY_SELECT;
-            g_in.keys_down &= ~NOX_3DS_KEY_SELECT;
-            g_in.keys_up   &= ~NOX_3DS_KEY_SELECT;
-            if (!raw_sel) {
-                s_swallow_direct_ip_sel = false;
             }
         }
     }
@@ -576,17 +478,9 @@ void nox_3ds_input_process_hybrid(void)
 
         if (l_held) {
             if (g_in.touch_active) {
-                /* TRACKPAD MODE: Map physical Bottom touch directly into active Top viewport */
-                int vp_w = vp_r - vp_l + 1;
-                int vp_h = vp_b - vp_t + 1;
-                int tx = vp_l + ((int)g_in.touch_x * vp_w) / NOX_3DS_BOT_W;
-                int ty = vp_t + ((int)g_in.touch_y * vp_h) / NOX_3DS_BOT_H;
-                if (tx < vp_l) tx = vp_l;
-                if (tx > vp_r) tx = vp_r;
-                if (ty < vp_t) ty = vp_t;
-                if (ty > vp_b) ty = vp_b;
-                g_in.world_aim_x = tx;
-                g_in.world_aim_y = ty;
+                /* TRACKPAD MODE: Match exact bottom touch scaled location directly */
+                g_in.world_aim_x = g_in.bottom_touch_x;
+                g_in.world_aim_y = g_in.bottom_touch_y;
                 g_free_aim_x = (float)g_in.world_aim_x;
                 g_free_aim_y = (float)g_in.world_aim_y;
                 
@@ -707,7 +601,7 @@ void nox_3ds_input_process_hybrid(void)
         /* We explicitly DO NOT clear g_touch_mode here. If you are running
            via the touch screen, we want that to continue seamlessly in the background. */
 
-        inject_mouse_abs_dedup(g_in.world_aim_x, g_in.world_aim_y);
+        nox_ctrl_inject_mouse_abs(g_in.world_aim_x, g_in.world_aim_y);
 
         if (r_held && g_lmb_owner != LMB_OWNER_WORLD_R) {
             nox_ctrl_inject_mouse_button(0, 1);
@@ -725,7 +619,7 @@ void nox_3ds_input_process_hybrid(void)
         release_lmb_if_owned(LMB_OWNER_WORLD_R);
 
         if (g_in.touch_active) {
-            inject_mouse_abs_dedup(g_in.bottom_touch_x, g_in.bottom_touch_y);
+            nox_ctrl_inject_mouse_abs(g_in.bottom_touch_x, g_in.bottom_touch_y);
 
             if (g_in.touch_down && world_mode &&
                 is_creature_cage_hit(g_in.bottom_touch_x, g_in.bottom_touch_y)) {
@@ -745,7 +639,7 @@ void nox_3ds_input_process_hybrid(void)
                 g_lmb_owner = LMB_OWNER_TOUCH;
             }
         } else if (g_in.touch_up) {
-            inject_mouse_abs_dedup(g_in.bottom_touch_x, g_in.bottom_touch_y);
+            nox_ctrl_inject_mouse_abs(g_in.bottom_touch_x, g_in.bottom_touch_y);
 
             if (g_touch_mode == TOUCH_MODE_CTX_MENU) {
                 /* Drag-and-Release State 3 (Stylus Up):
@@ -776,8 +670,8 @@ void nox_3ds_input_process_hybrid(void)
         g_touch_mode = TOUCH_MODE_NONE;
         nox_ctrl_set_touch_move(0, 0, 0);
 
-        inject_mouse_abs_dedup(g_in.world_aim_x, g_in.world_aim_y);
-
+        nox_ctrl_inject_mouse_abs(g_in.world_aim_x, g_in.world_aim_y);
+        
         if (g_lmb_owner == LMB_OWNER_WORLD_R) {
             nox_ctrl_inject_mouse_button(0, 0);
             g_lmb_owner = LMB_OWNER_NONE;
@@ -797,7 +691,6 @@ void nox_3ds_input_reset_after_applet(void)
     release_lmb_if_owned(LMB_OWNER_WORLD_R);
     g_touch_mode = TOUCH_MODE_NONE;
     g_pending_chat = false;
-    g_pending_direct_ip = false;
     nox_ctrl_set_touch_move(0, 0, 0);
 
     /* Drain stale HID state and ignore touch until stylus is lifted so tapping

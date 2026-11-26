@@ -708,11 +708,9 @@ int __cdecl sub_4A28C0(int a1)
 #ifdef __3DS__
 static int nox_3ds_listbox_item_gap(_DWORD *wnd)
 {
-  if ( !wnd )
+  if ( !wnd || !nox_3ds_font_is_enabled() )
     return 1;
   if ( nox_3ds_font_slot_from_ptr(wnd[59]) == 1 )
-    return (wnd[1] & 0x4000) ? 3 : 1;
-  if ( !nox_3ds_font_is_enabled() )
     return 1;
   /* Single-line listboxes (0x4000, e.g. Server List, Map/Rule/Player lists):
    * 12 logical px line height + 4 gap = 16 logical px = exact 8.0 physical px/row
@@ -736,9 +734,8 @@ static void nox_3ds_listbox_sync_metrics(_DWORD *wnd)
     return;
   if ( cnt > max_cnt )
     cnt = max_cnt;
-  bool is_large = (nox_3ds_font_slot_from_ptr(wnd[59]) == 1);
-  bool want_native = nox_3ds_font_is_enabled() && !is_large;
-  uint8_t want_tag = is_large ? 3u : (want_native ? 2u : 1u);
+  bool want_native = nox_3ds_font_is_enabled() && (nox_3ds_font_slot_from_ptr(wnd[59]) != 1);
+  uint8_t want_tag = want_native ? 2u : 1u;
   int items_base = *(_DWORD *)(v2 + 24);
   if ( *(uint8_t *)(items_base + 521) == want_tag )
     return;
@@ -6260,17 +6257,6 @@ int sub_4AA270()
   sub_44A400();
   sub_43BDD0(400);
   sub_4A1A40(1);
-#ifdef __3DS__
-  /* Activate Wi-Fi (soc:u) strictly when player enters Multiplayer menus;
-   * keep Solo Quest (sub_4D6F30 / sub_4D6FA0) strictly on loopback. */
-  if ( !sub_4D6F30() && sub_4D6FA0() == 0 )
-  {
-    nox_3ds_net_set_mode(NOX_3DS_NET_MODE_WIFI);
-    nox_3ds_lobby_prefetch();
-  }
-  else
-    nox_3ds_net_set_mode(NOX_3DS_NET_MODE_LOOPBACK);
-#endif
   if ( sub_40E0C0() && sub_43AF70() == 1 )
     sub_41D4C0();
   sub_43AF50(2);
@@ -35460,23 +35446,11 @@ int sub_4D1660()
                                   sub_416920();
                                   if ( !sub_40A5C0(2048) )
                                   {
-#ifdef __3DS__
-                                    if ( sub_4D6F30() || sub_4D6FA0() != 0 )
-                                      nox_3ds_net_set_mode(NOX_3DS_NET_MODE_LOOPBACK);
-                                    else
-                                      nox_3ds_net_set_mode(NOX_3DS_NET_MODE_WIFI);
-#endif
                                     v1 = sub_40A430();
                                     *(_DWORD *)&byte_5D4594[1548516] = sub_4DEBC0(v1);
                                     if ( !sub_40A5C0(0x2000000) )
                                       sub_413CC0();
                                   }
-#ifdef __3DS__
-                                  else
-                                  {
-                                    nox_3ds_net_set_mode(NOX_3DS_NET_MODE_LOOPBACK);
-                                  }
-#endif
                                   sub_4FB990();
                                   result = sub_516EE0();
                                   if ( result )
@@ -36706,9 +36680,6 @@ BOOL sub_4D3200()
     if ( !sub_40A5C0(0x2000000) )
       sub_413D00();
   }
-#ifdef __3DS__
-  nox_3ds_net_set_mode(NOX_3DS_NET_MODE_LOOPBACK);
-#endif
   sub_56F3B0();
   nullsub_23();
   sub_40EE60();
@@ -44063,6 +44034,8 @@ int __cdecl sub_4DBE10(int a1, int a2)
   struct _WIN32_FIND_DATAA FindFileData; // [esp+Ch] [ebp-24940h]
   CHAR PathName[1024]; // [esp+14Ch] [ebp-24800h]
   CHAR FileName[1024]; // [esp+54Ch] [ebp-24400h]
+  char v23[16384]; // [esp+94Ch] [ebp-24000h]
+  char v24[131072]; // [esp+494Ch] [ebp-20000h]
 
   result = a1;
   if ( a1 )
@@ -44072,14 +44045,6 @@ int __cdecl sub_4DBE10(int a1, int a2)
     result = _access(&PathName, 0);
     if ( result != -1 )
     {
-      char *v23 = (char *)malloc(16384);
-      char *v24 = (char *)malloc(131072);
-      if ( !v23 || !v24 )
-      {
-        free(v23);
-        free(v24);
-        return -1;
-      }
       nox_sprintf(&FileName, (const char *)&byte_587000[199664], &PathName);
       DeleteFileA(&FileName);
       SetCurrentDirectoryA(&PathName);
@@ -44177,8 +44142,6 @@ int __cdecl sub_4DBE10(int a1, int a2)
       result = a2;
       if ( a2 )
         result = RemoveDirectoryA(&PathName);
-      free(v23);
-      free(v24);
     }
   }
   return result;
@@ -45300,15 +45263,15 @@ unsigned int __cdecl sub_4DDA90(int a1, int a2)
   unsigned int result; // eax
 
   *(_BYTE *)a1 = 45;
-  nox_write_u16((void *)(a1 + 1), nox_read_u16((const void *)(a2 + 2060)));
-  nox_write_u16((void *)(a1 + 100), nox_read_u16((const void *)(a2 + 2136)));
-  nox_write_u16((void *)(a1 + 102), nox_read_u16((const void *)(a2 + 2140)));
-  nox_write_u32((void *)(a1 + 104), nox_read_u32((const void *)a2));
-  nox_write_u32((void *)(a1 + 108), nox_read_u32((const void *)(a2 + 4)));
+  *(_WORD *)(a1 + 1) = *(_WORD *)(a2 + 2060);
+  *(_WORD *)(a1 + 100) = *(_WORD *)(a2 + 2136);
+  *(_WORD *)(a1 + 102) = *(_WORD *)(a2 + 2140);
+  *(_DWORD *)(a1 + 104) = *(_DWORD *)a2;
+  *(_DWORD *)(a1 + 108) = *(_DWORD *)(a2 + 4);
   *(_BYTE *)(a1 + 116) = *(_BYTE *)(a2 + 2152);
   *(_BYTE *)(a1 + 117) = *(_BYTE *)(a2 + 2156);
   *(_BYTE *)(a1 + 118) = *(_BYTE *)(a2 + 3676) == 3;
-  nox_write_u32((void *)(a1 + 112), nox_read_u32((const void *)(a2 + 3680)) & 0x423u);
+  *(_DWORD *)(a1 + 112) = *(_DWORD *)(a2 + 3680) & 0x423;
   result = strlen((const char *)(a2 + 2096)) + 1;
   qmemcpy((void *)(a1 + 119), (const void *)(a2 + 2096), result);
   qmemcpy((void *)(a1 + 3), (const void *)(a2 + 2185), 0x61u);
@@ -45323,31 +45286,22 @@ _DWORD *__cdecl sub_4DDB40(_DWORD *a1)
   char *v3; // ebp
   char v5[256]; // [esp+10h] [ebp-100h]
 
-  uint32_t host_proto_ver = 66458u;
-#ifdef __3DS__
-  if ( nox_3ds_net_get_mode() == NOX_3DS_NET_MODE_WIFI )
-  {
-    host_proto_ver = nox_3ds_get_host_client_proto_ver();
-    nox_3ds_net_log("[host3ds] Sending 0xAF welcome with ver=0x%X", (unsigned)host_proto_ver);
-  }
-#endif
-
-  nox_write_u32(&v5[1], *(_DWORD *)&byte_5D4594[2598000]);
+  *(_DWORD *)&v5[1] = *(_DWORD *)&byte_5D4594[2598000];
   v1 = a1[187];
   v5[0] = 40;
   sub_40EBC0(*(unsigned __int8 *)(*(_DWORD *)(v1 + 276) + 2064), 1, v5, 5);
   v5[0] = 44;
-  nox_write_u16(&v5[1], (uint16_t)sub_578AC0(a1));
+  *(_WORD *)&v5[1] = sub_578AC0(a1);
   v2 = *(_DWORD *)(v1 + 276);
-  nox_write_u32(&v5[3], *(_DWORD *)(v2 + 2068));
+  *(_DWORD *)&v5[3] = *(_DWORD *)(v2 + 2068);
   sub_40EBC0(*(unsigned __int8 *)(v2 + 2064), 1, v5, 7);
   sub_4161E0();
   v3 = sub_416590(0);
   v5[8] = -81;
-  nox_write_u32(&v5[9], *(_DWORD *)&byte_5D4594[2598000]);
-  nox_write_u32(&v5[17], (uint32_t)(sub_40A5B0() & 0x7FFF0));
-  nox_write_u32(&v5[21], (uint32_t)sub_409E60());
-  nox_write_u32(&v5[13], host_proto_ver);
+  *(_DWORD *)&v5[9] = *(_DWORD *)&byte_5D4594[2598000];
+  *(_DWORD *)&v5[17] = sub_40A5B0() & 0x7FFF0;
+  *(_DWORD *)&v5[21] = sub_409E60();
+  *(_DWORD *)&v5[13] = 66458;
   v5[25] = sub_409FA0();
   v5[26] = sub_40A020(*((_WORD *)v3 + 26));
   v5[27] = sub_40A180(*((_WORD *)v3 + 26));
@@ -45356,17 +45310,17 @@ _DWORD *__cdecl sub_4DDB40(_DWORD *a1)
   strcpy(&v5[29], sub_40A4C0());
   qmemcpy(&v5[45], v3 + 24, 0x1Cu);
   if ( sub_40A220() && (sub_40A300() || sub_40A180(*((_WORD *)v3 + 26))) )
-    nox_write_u32(&v5[73], (uint32_t)sub_40A230());
+    *(_DWORD *)&v5[73] = sub_40A230();
   else
-    nox_write_u32(&v5[73], 0u);
+    *(_DWORD *)&v5[73] = 0;
   sub_40EBC0(*(unsigned __int8 *)(*(_DWORD *)(v1 + 276) + 2064), 1, &v5[28], 49);
   sub_4DDA90((int)&v5[124], *(_DWORD *)(v1 + 276));
   sub_40EBC0(*(unsigned __int8 *)(*(_DWORD *)(v1 + 276) + 2064), 1, &v5[124], 129);
   sub_4DDDC0(*(unsigned __int8 *)(*(_DWORD *)(v1 + 276) + 2064));
   v5[80] = 43;
   strcpy(&v5[81], sub_409B30());
-  nox_write_u32(&v5[113], (uint32_t)sub_409B00());
-  nox_write_u32(&v5[117], *(_DWORD *)&byte_5D4594[2598000]);
+  *(_DWORD *)&v5[113] = sub_409B00();
+  *(_DWORD *)&v5[117] = *(_DWORD *)&byte_5D4594[2598000];
   sub_552640(*(unsigned __int8 *)(*(_DWORD *)(v1 + 276) + 2064) + 1, &v5[80], 41, 3);
   return sub_4DDE10(*(unsigned __int8 *)(*(_DWORD *)(v1 + 276) + 2064), *(_DWORD *)(v1 + 276));
 }
@@ -46128,8 +46082,8 @@ _DWORD *__cdecl sub_4DEE00(const char *a1, int a2)
   v7[0] = 43;
   v2 = *(_DWORD *)&byte_5D4594[2598000];
   strcpy(&v7[1], a1);
-  nox_write_u32(&v7[37], (uint32_t)v2);
-  nox_write_u32(&v7[33], (uint32_t)a2);
+  *(_DWORD *)&v7[37] = v2;
+  *(_DWORD *)&v7[33] = a2;
   result = (_DWORD *)sub_4DA7C0();
   for ( i = result; result; i = result )
   {
@@ -46154,18 +46108,12 @@ int sub_4DEF00()
   char v2[20]; // [esp+Ch] [ebp-48h]
   char v3[49]; // [esp+20h] [ebp-34h]
 
-  uint32_t host_proto_ver = 66458u;
-#ifdef __3DS__
-  if ( nox_3ds_net_get_mode() == NOX_3DS_NET_MODE_WIFI )
-    host_proto_ver = nox_3ds_get_host_client_proto_ver();
-#endif
-
   v0 = sub_416590(0);
   v2[0] = -81;
-  nox_write_u32(&v2[1], *(_DWORD *)&byte_5D4594[2598000]);
-  nox_write_u32(&v2[9], (uint32_t)(sub_40A5B0() & 0x7FFF0));
-  nox_write_u32(&v2[13], (uint32_t)sub_409E60());
-  nox_write_u32(&v2[5], host_proto_ver);
+  *(_DWORD *)&v2[1] = *(_DWORD *)&byte_5D4594[2598000];
+  *(_DWORD *)&v2[9] = sub_40A5B0() & 0x7FFF0;
+  *(_DWORD *)&v2[13] = sub_409E60();
+  *(_DWORD *)&v2[5] = 66458;
   v2[17] = sub_409FA0();
   v2[18] = sub_40A020(*((_WORD *)v0 + 26));
   v2[19] = sub_40A180(*((_WORD *)v0 + 26));
@@ -46173,9 +46121,9 @@ int sub_4DEF00()
   strcpy(&v3[1], sub_40A4C0());
   qmemcpy(&v3[17], v0 + 24, 0x1Cu);
   if ( sub_40A220() && (sub_40A300() || sub_40A180(*((_WORD *)v0 + 26))) )
-    nox_write_u32(&v3[45], (uint32_t)sub_40A230());
+    *(_DWORD *)&v3[45] = sub_40A230();
   else
-    nox_write_u32(&v3[45], 0u);
+    *(_DWORD *)&v3[45] = 0;
   sub_4E5390(159, (int)v2, 20, 0, 0);
   return sub_4E5390(159, (int)v3, 49, 0, 0);
 }
@@ -50242,7 +50190,17 @@ int __cdecl sub_4E3BF0(int a1)
 //----- (004E3C20) --------------------------------------------------------
 int sub_4E3C20()
 {
-  return *(_DWORD *)&byte_5D4594[1563664];
+  int v0; // edi
+  LPVOID i; // esi
+  int result; // eax
+
+  v0 = 0;
+  for ( i = sub_4E3B30(); i; i = (LPVOID)sub_4E3B40((int)i) )
+    v0 ^= sub_4E31A0((int)i);
+  result = *(_DWORD *)&byte_5D4594[1563664];
+  if ( v0 != *(_DWORD *)&byte_5D4594[1563664] )
+    nullsub_31(1);
+  return result;
 }
 // 560840: using guessed type void __cdecl nullsub_31(_DWORD);
 
@@ -57894,9 +57852,6 @@ int __cdecl sub_4ECC70(int a1)
 }
 
 //----- (004ECCB0) --------------------------------------------------------
-static int s_netcode_cache[4096];
-static int s_extent_cache[4096];
-
 int __cdecl sub_4ECCB0(int a1)
 {
   int result; // eax
@@ -57904,18 +57859,9 @@ int __cdecl sub_4ECCB0(int a1)
   int v3; // esi
   char *v4; // eax
   int v5; // ecx
-  uint32_t slot = ((uint32_t)a1 ^ ((uint32_t)a1 >> 12)) & 4095u;
-  int cached = s_netcode_cache[slot];
-  if ( cached && (*(_DWORD *)(cached + 16) & 4) && !(*(_BYTE *)(cached + 16) & 0x20) && *(_DWORD *)(cached + 36) == a1 )
-    return cached;
 
   result = sub_4ECD90(a1);
-  if ( result )
-  {
-    if ( (*(_DWORD *)(result + 16) & 4) )
-      s_netcode_cache[slot] = result;
-    return result;
-  }
+  if ( !result )
   {
     v2 = sub_4DA790();
     if ( v2 )
@@ -57924,8 +57870,6 @@ int __cdecl sub_4ECCB0(int a1)
       {
         if ( !(*(_BYTE *)(v2 + 16) & 0x20) && *(_DWORD *)(v2 + 36) == a1 )
         {
-          if ( (*(_DWORD *)(v2 + 16) & 4) )
-            s_netcode_cache[slot] = v2;
           sub_4ECEA0(v2);
           return v2;
         }
@@ -57956,8 +57900,6 @@ LABEL_10:
           goto LABEL_17;
       }
 LABEL_16:
-      if ( (*(_DWORD *)(v3 + 16) & 4) )
-        s_netcode_cache[slot] = v3;
       sub_4ECEA0(v3);
       return v3;
     }
@@ -57978,8 +57920,6 @@ LABEL_17:
           goto LABEL_22;
       }
       result = *((_DWORD *)v4 + 514);
-      if ( result && (*(_DWORD *)(result + 16) & 4) )
-        s_netcode_cache[slot] = result;
     }
     else
     {
@@ -58059,8 +57999,6 @@ int sub_4ECE50()
   unsigned __int8 *v0; // esi
   int result; // eax
 
-  memset(s_netcode_cache, 0, sizeof(s_netcode_cache));
-  memset(s_extent_cache, 0, sizeof(s_extent_cache));
   v0 = &byte_5D4594[1568044];
   *(_DWORD *)&byte_5D4594[1568236] = 0;
   *(_DWORD *)&byte_5D4594[1568240] = 0;
@@ -58183,17 +58121,6 @@ int __cdecl sub_4ECFA0(int a1)
   int result; // eax
   _DWORD *v2; // esi
 
-  if ( a1 )
-  {
-    int nc = *(_DWORD *)(a1 + 36);
-    int ex = *(_DWORD *)(a1 + 40);
-    uint32_t nslot = ((uint32_t)nc ^ ((uint32_t)nc >> 12)) & 4095u;
-    uint32_t eslot = ((uint32_t)ex ^ ((uint32_t)ex >> 12)) & 4095u;
-    if ( s_netcode_cache[nslot] == a1 )
-      s_netcode_cache[nslot] = 0;
-    if ( s_extent_cache[eslot] == a1 )
-      s_extent_cache[eslot] = 0;
-  }
   result = *(_DWORD *)&byte_587000[205696];
   if ( !*(_DWORD *)&byte_587000[205696] )
   {
@@ -58221,8 +58148,6 @@ int sub_4ECFE0()
   int v1; // esi
   int v2; // edi
 
-  memset(s_netcode_cache, 0, sizeof(s_netcode_cache));
-  memset(s_extent_cache, 0, sizeof(s_extent_cache));
   result = *(_DWORD *)&byte_587000[205696];
   if ( !*(_DWORD *)&byte_587000[205696] )
   {
@@ -58246,10 +58171,6 @@ int sub_4ECFE0()
 int __cdecl sub_4ED020(int a1)
 {
   int result; // eax
-  uint32_t slot = ((uint32_t)a1 ^ ((uint32_t)a1 >> 12)) & 4095u;
-  int cached = s_extent_cache[slot];
-  if ( cached && (*(_DWORD *)(cached + 16) & 4) && !(*(_BYTE *)(cached + 16) & 0x20) && *(_DWORD *)(cached + 40) == a1 )
-    return cached;
 
   result = sub_4DA790();
   if ( !result )
@@ -58260,8 +58181,6 @@ int __cdecl sub_4ED020(int a1)
     if ( !result )
       return 0;
   }
-  if ( (*(_DWORD *)(result + 16) & 4) )
-    s_extent_cache[slot] = result;
   return result;
 }
 

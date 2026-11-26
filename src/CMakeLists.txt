@@ -18,9 +18,7 @@ endif()
 if (MSVC)
     add_compile_options("$<$<CONFIG:DEBUG>:/RTCs>")
 else ()
-    add_compile_options(-g -fno-strict-aliasing -fno-strict-overflow -fshort-wchar)
-    add_compile_options("$<$<CONFIG:Debug>:-O0>")
-    add_compile_options("$<$<NOT:$<CONFIG:Debug>>:-O2;-fsigned-char;-fno-tree-vectorize;-fno-aggressive-loop-optimizations;-fno-math-errno;-fno-trapping-math>")
+    add_compile_options(-g -fno-strict-aliasing -fno-strict-overflow -fshort-wchar -O0)
     add_compile_options(-fcommon -Wno-error=int-conversion -Wno-error=incompatible-pointer-types)
 
     if (CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|i[3-6]86)$")
@@ -139,7 +137,6 @@ add_executable (
     GAME_data.c
     cdrom.c
     draw.c
-    fov_scaler.c
     imm.c
     control_server.c
     gamepad.c
@@ -157,6 +154,10 @@ add_executable (
 if (CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|i[3-6]86)$")
     target_link_options(out PRIVATE -m32)
 endif()
+
+# ---- ABI wrapper integration ----
+add_library(abi_wrappers STATIC ${PROJECT_SOURCE_DIR}/abi_wrappers.c)
+set_target_properties(abi_wrappers PROPERTIES C_STANDARD 99)
 
 # SDL2 include/link dirs (from pkg-config when available)
 if (SDL2_INCLUDE_DIRS)
@@ -188,6 +189,7 @@ target_link_libraries(out PRIVATE
     ${OPENGL_LIBRARIES}
     ${PTHREAD_LIBRARIES}
     ${WIN32_LIBRARIES}
+    abi_wrappers
 )
 
 if (SDL2_LDFLAGS)

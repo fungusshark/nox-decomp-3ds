@@ -503,18 +503,11 @@ size_t nox_wcsspn(const wchar_t *nox_wcs, const wchar_t *accept)
 
 wchar_t *nox_wcsstr(wchar_t *haystack, const wchar_t *needle)
 {
-    size_t i, j;
-
-    if (!needle[0])
-        return haystack;
+    size_t i, len = nox_wcslen(needle);
 
     for (i = 0; haystack[i]; i++)
     {
-        if (haystack[i] != needle[0])
-            continue;
-        for (j = 1; needle[j] && haystack[i + j] == needle[j]; j++)
-            ;
-        if (!needle[j])
+        if (memcmp(&haystack[i], needle, len * sizeof(wchar_t)) == 0)
             return &haystack[i];
     }
 
@@ -573,19 +566,9 @@ long nox_wcstol(const wchar_t *nptr, wchar_t **endptr, int base)
 {
     long result;
     size_t i, len = nox_wcslen(nptr);
-    char stack_buf[128];
-    char *heap_buf = NULL;
     char *tmp, *ptr;
 
-    if (len < sizeof(stack_buf))
-    {
-        tmp = stack_buf;
-    }
-    else
-    {
-        heap_buf = malloc(len + 1);
-        tmp = heap_buf;
-    }
+	tmp = malloc(len + 1);
 
     for (i = 0; i < len; i++)
         tmp[i] = nptr[i] < 0x80 ? nptr[i] : 0x7f;
@@ -594,11 +577,10 @@ long nox_wcstol(const wchar_t *nptr, wchar_t **endptr, int base)
     result = strtol(tmp, &ptr, base);
 
     if (endptr)
-        *endptr = (wchar_t *)&nptr[ptr - tmp];
+        *endptr = &nptr[ptr - tmp];
 
-    if (heap_buf)
-        free(heap_buf);
-    return result;
+	free(tmp);
+	return result;
 }
 
 int WINAPIV nox_wsprintfA(LPSTR lpBuffer, LPCSTR lpFmt, ...)

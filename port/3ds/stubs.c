@@ -133,13 +133,10 @@ static SDL_Surface *stub_create_surface(int w, int h, int bpp, Uint32 format)
     s->h = h;
     s->format = pf;
 
-    if (bytes_pp == 2 &&
-        ((w == NOX_3DS_LOGICAL_W && h == NOX_3DS_LOGICAL_H) ||
-         (w == NOX_3DS_BOT_W && h == NOX_3DS_BOT_H))) {
-        /* Backbuffer: POT pitch in linearAlloc so C3D_SyncDisplayTransfer is zero-copy.
-         * Top 640x480 -> 1024x512 (1 MB); Bottom 320x240 -> 512x256 (256 KB). */
-        int alloc_w = (w <= 512) ? 512 : NOX_3DS_TEX_W;
-        int alloc_h = (h <= 256) ? 256 : NOX_3DS_TEX_H;
+    if (w >= NOX_3DS_LOGICAL_W && h >= NOX_3DS_LOGICAL_H && bytes_pp == 2) {
+        /* Backbuffer: pitch=1024*2 in linearAlloc so C3D_SyncDisplayTransfer is zero-copy. */
+        int alloc_w = (w <= NOX_3DS_TEX_W) ? NOX_3DS_TEX_W : w;
+        int alloc_h = (h <= NOX_3DS_TEX_H) ? NOX_3DS_TEX_H : h;
         s->pitch = alloc_w * bytes_pp;
         s->pixels = nox_3ds_linear_alloc((size_t)s->pitch * (size_t)alloc_h);
         if (s->pixels) {
@@ -391,10 +388,44 @@ void glViewport(GLint x, GLint y, GLsizei width, GLsizei height) { (void)x; (voi
  * ========================================================================= */
 
 /* =========================================================================
- * 4. Control Server Stubs (Networking in net_*_3ds.c; Lobby in lobby_3ds.c)
+ * 4. Control Server & Netextras Stubs (Loopback sockets live in net_loopback_3ds.c)
  * ========================================================================= */
 void nox_control_server_init(void) { LOG_STUB(); }
 void nox_control_server_pump(void) { LOG_STUB(); }
+
+void nox_netextras_on_discovery_ping_send(int sockfd, const void *buf, size_t len, unsigned dest_port)
+{
+    (void)sockfd; (void)buf; (void)len; (void)dest_port;
+    LOG_STUB();
+}
+
+int nox_netextras_try_fake_recvfrom(int sockfd, void *buf, size_t buf_cap, struct sockaddr *from, socklen_t *fromlen)
+{
+    (void)sockfd; (void)buf; (void)buf_cap; (void)from; (void)fromlen;
+    LOG_STUB();
+    return -1;
+}
+
+void nox_netextras_on_host_bind_success(int sockfd, unsigned bound_port)
+{
+    (void)sockfd; (void)bound_port;
+    LOG_STUB();
+}
+
+void nox_netextras_on_host_serverinfo(const void *packet, size_t len)
+{
+    (void)packet; (void)len;
+    LOG_STUB();
+}
+
+void nox_netextras_host_tick(void) { LOG_STUB(); }
+
+int nox_netextras_fake_pending(int sockfd)
+{
+    (void)sockfd;
+    LOG_STUB();
+    return 0;
+}
 
 /* =========================================================================
  * 5. VQA Movie Stubs Removed (Pure Port native VQA decoder active in src/movie.c)
