@@ -50190,17 +50190,7 @@ int __cdecl sub_4E3BF0(int a1)
 //----- (004E3C20) --------------------------------------------------------
 int sub_4E3C20()
 {
-  int v0; // edi
-  LPVOID i; // esi
-  int result; // eax
-
-  v0 = 0;
-  for ( i = sub_4E3B30(); i; i = (LPVOID)sub_4E3B40((int)i) )
-    v0 ^= sub_4E31A0((int)i);
-  result = *(_DWORD *)&byte_5D4594[1563664];
-  if ( v0 != *(_DWORD *)&byte_5D4594[1563664] )
-    nullsub_31(1);
-  return result;
+  return *(_DWORD *)&byte_5D4594[1563664];
 }
 // 560840: using guessed type void __cdecl nullsub_31(_DWORD);
 
