@@ -6323,7 +6323,10 @@ int sub_4AA270()
   /* Activate Wi-Fi (soc:u) strictly when player enters Multiplayer menus;
    * keep Solo Quest (sub_4D6F30 / sub_4D6FA0) strictly on loopback. */
   if ( !sub_4D6F30() && sub_4D6FA0() == 0 )
+  {
     nox_3ds_net_set_mode(NOX_3DS_NET_MODE_WIFI);
+    nox_3ds_lobby_prefetch();
+  }
   else
     nox_3ds_net_set_mode(NOX_3DS_NET_MODE_LOOPBACK);
 #endif

@@ -47272,10 +47272,20 @@ int __cdecl sub_4375F0(const char *a1, __int16 a2, char *a3, int a4)
   __int16 v9; // ax
   int v10; // ecx
   int v11; // eax
+  int inserted_idx; // eax
   char v13[172]; // [esp+14h] [ebp-CCh]
   char v14[32]; // [esp+C0h] [ebp-20h]
 
+#ifdef __3DS__
+  /* Accept cookie-matched 0x0D replies even after the initial 1 s popup window
+   * closed so async OpenNox HTTP / slow direct_ip replies still populate SelServ. */
+  if ( *(_DWORD *)&byte_5D4594[815088] < 0x9C4u
+    && !*(_DWORD *)&byte_5D4594[815044]
+    && *(_DWORD *)&byte_5D4594[814980]
+    && (!*(_DWORD *)&byte_5D4594[815060] || nox_3ds_net_get_mode() == NOX_3DS_NET_MODE_WIFI) )
+#else
   if ( *(_DWORD *)&byte_5D4594[815088] < 0x9C4u && !*(_DWORD *)&byte_5D4594[815044] && !*(_DWORD *)&byte_5D4594[815060] )
+#endif
   {
     if ( memcmp(a1, &byte_5D4594[815108], 1u) )
     {
@@ -47323,15 +47333,35 @@ int __cdecl sub_4375F0(const char *a1, __int16 a2, char *a3, int a4)
               nox_write_u32(&v13[28], 0);
               strcpy(&v13[12], a1);
               nox_write_u16(&v13[109], (uint16_t)a2);
-              strncpy(&v13[120], a3, 0xFu);
+              strncpy(&v13[120], a3, 0xEu);
+              v13[134] = 0;
               nox_write_u16(&v13[163], nox_read_u16((const void *)(a4 + 28)));
-              sub_4A0030(v13);
+              inserted_idx = sub_4A0030(v13);
               v14[0] = 0;
               if ( a3 )
-                strcpy(v14, a3);
+                strncpy(v14, a3, sizeof(v14) - 1);
               else
                 sub_43BC80((int)a1, a2, v14);
+              v14[sizeof(v14) - 1] = 0;
               ++*(_DWORD *)&byte_5D4594[815088];
+#ifdef __3DS__
+              if ( *(_DWORD *)&byte_5D4594[815060] && *(_DWORD *)&byte_5D4594[814980] )
+              {
+                if ( *(_DWORD *)&byte_587000[87408] )
+                {
+                  sub_4379C0();
+                  sub_4A0360();
+                }
+                else
+                {
+                  int *node = (int *)sub_4A04C0(inserted_idx);
+                  if ( node )
+                    sub_43B7C0((int)node);
+                }
+              }
+#else
+              (void)inserted_idx;
+#endif
             }
           }
         }
@@ -47947,6 +47977,20 @@ int sub_438770()
         sub_4378B0();
         return 1;
       }
+#ifdef __3DS__
+      {
+        uint64_t wait_ms = nox_3ds_lobby_has_pending_work() ? 0x1388ULL : 0x3E8ULL;
+        if ( (unsigned __int64)(sub_416BB0() - *(_QWORD *)&byte_5D4594[815076]) > wait_ms
+          && !*(_DWORD *)&byte_5D4594[815060]
+          && !*(_DWORD *)&byte_587000[87404] )
+        {
+          sub_44A400();
+          sub_4379C0();
+          sub_4A0360();
+          *(_DWORD *)&byte_5D4594[815060] = 1;
+        }
+      }
+#else
       if ( (unsigned __int64)(sub_416BB0() - *(_QWORD *)&byte_5D4594[815076]) > 0x3E8
         && !*(_DWORD *)&byte_5D4594[815060]
         && !*(_DWORD *)&byte_587000[87404] )
@@ -47956,6 +48000,7 @@ int sub_438770()
         sub_4A0360();
         *(_DWORD *)&byte_5D4594[815060] = 1;
       }
+#endif
     }
 LABEL_29:
     result = 1;
@@ -47972,8 +48017,9 @@ int sub_438A90()
   BOOL v3; // eax
   int v4; // eax
   u_short v5; // [esp-10h] [ebp-74h]
-  char buf[100]; // [esp+0h] [ebp-64h]
+  NOX_ALIGN4 char buf[100]; // [esp+0h] [ebp-64h]
 
+  memset(buf, 0, sizeof(buf));
 //  int have_serial = sub_420120((LPBYTE)&buf[56]);
 //  fprintf(stderr, "[join] sub_438A90: have_serial=%d\n", have_serial);
 
@@ -47985,8 +48031,8 @@ int sub_438A90()
     buf[55] = byte_5D4594[2661960];
     buf[54] = byte_5D4594[2661958];
     buf[98] = !v3;
-    *(_DWORD *)&buf[80] = 0x1039A;
-    *(_DWORD *)&buf[84] = *(_DWORD *)&byte_5D4594[2660032];
+    nox_write_u32(&buf[80], 0x1039Au);
+    nox_write_u32(&buf[84], nox_read_u32(&byte_5D4594[2660032]));
     strcpy(&buf[88], (const char *)&byte_5D4594[2660048]);
     nox_wcscpy((wchar_t *)&buf[4], (const wchar_t *)&byte_5D4594[2661908]);
     sub_43AF90(3);
