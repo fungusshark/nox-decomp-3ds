@@ -2768,7 +2768,10 @@ int sdl_unk1(int a1)
         if (SDL_BlitScaled(g_cursor_surf, &src, g_3ds_cursor_dst, &dst))
 			return 0;
 #else
-        if (SDL_BlitScaled(g_cursor_surf, &src, g_backbuffer1, &dst))
+        if (src.w == dst.w && src.h == dst.h) {
+            if (SDL_BlitSurface(g_cursor_surf, &src, g_backbuffer1, &dst))
+                return 0;
+        } else if (SDL_BlitScaled(g_cursor_surf, &src, g_backbuffer1, &dst))
 			return 0;
 #endif
 
