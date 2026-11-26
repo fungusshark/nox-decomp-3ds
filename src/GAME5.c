@@ -3314,10 +3314,9 @@ void __cdecl sub_549270(int a1, int a2)
 }
 
 //----- (00549380) --------------------------------------------------------
-int __cdecl sub_549380(void *p)
+int __cdecl sub_549380__abi_raw(float a1)
 {
-  int a1 = (int)(uintptr_t)p;
-  int v1; // edi
+  float v1; // edi
   int v2; // ebp
   int v3; // esi
   float v4; // eax
@@ -3328,13 +3327,13 @@ int __cdecl sub_549380(void *p)
   float v9; // [esp+24h] [ebp+4h]
 
   v1 = a1;
-  v2 = *(_DWORD *)(a1 + 748);
-  v3 = sub_549440(a1, 0);
+  v2 = *(_DWORD *)(LODWORD(a1) + 748);
+  v3 = sub_549440(SLODWORD(a1), 0);
   if ( v3 )
   {
-    v4 = *(float *)(a1 + 56);
+    v4 = *(float *)(LODWORD(a1) + 56);
     v5 = *(float *)(v3 + 56);
-    v8.field_4 = *(float *)(a1 + 60);
+    v8.field_4 = *(float *)(LODWORD(a1) + 60);
     v8.field_0 = v4;
     v6 = *(float *)(v3 + 60);
     v8.field_8 = v5;
@@ -3344,13 +3343,13 @@ int __cdecl sub_549380(void *p)
       return result;
     (*(void (__cdecl **)(int, _DWORD, _DWORD, _DWORD, _DWORD))(v3 + 716))(
       v3,
-      a1,
-      a1,
+      LODWORD(a1),
+      LODWORD(a1),
       *(_DWORD *)(*(_DWORD *)(v2 + 484) + 116),
       *(_DWORD *)(*(_DWORD *)(v2 + 484) + 124));
     v9 = *(float *)(*(_DWORD *)(v2 + 484) + 120);
     if ( v9 > 0.0 )
-      sub_52DF80(v1 + 56, v3, v9);
+      sub_52DF80(LODWORD(v1) + 56, v3, v9);
   }
   return 1;
 }
@@ -10447,7 +10446,7 @@ int __cdecl sub_552E70(unsigned int a1)
           v8 = *(_DWORD *)&byte_5D4594[2495920];
           v7[22] = *(_DWORD *)&byte_5D4594[2495920];
           v7[23] = *(_DWORD *)&byte_5D4594[2495920];
-          nox_write_u32(&v9[1], (uint32_t)v8);
+          *(_DWORD *)&v9[1] = v8;
           sub_552640(v3, v9, 5, 2);
         }
       }
@@ -10502,7 +10501,7 @@ int __cdecl sub_552F20(unsigned int a1)
           v8 = v7[25] + 1;
           v7[25] = v8;
           v7[26] = *(_DWORD *)&byte_5D4594[2495920];
-          nox_write_u32(&v9[1], (uint32_t)v8);
+          *(_DWORD *)&v9[1] = v8;
           sub_552640(v3, v9, 256, 2);
         }
       }
@@ -10731,11 +10730,12 @@ int __cdecl sub_553210(unsigned int a1, unsigned __int8 *a2, int a3, int a4)
   v7 = *(_DWORD *)&byte_5D4594[4 * a1 + 3843788];
   v73 = (unsigned int)v5;
   v8 = *(_DWORD *)&byte_5D4594[4 * v6 + 3843788];
-  memcpy(v74, (const void *)a4, 8);
+  *(_DWORD *)v74 = *(_DWORD *)a4;
   v9 = a2 + 2;
   v72 = v8;
-  v75 = (int)nox_read_u32((const void *)(a4 + 8));
-  v76 = (int)nox_read_u32((const void *)(a4 + 12));
+  *(_DWORD *)&v74[4] = *(_DWORD *)(a4 + 4);
+  v75 = *(_DWORD *)(a4 + 8);
+  v76 = *(_DWORD *)(a4 + 12);
   if ( (unsigned int)(a2 + 2) < v73 )
   {
     while ( 2 )
@@ -10809,7 +10809,7 @@ LABEL_108:
               *(_BYTE *)v4 = 31;
               *(_BYTE *)(v4 + 1) = v66;
               *(_BYTE *)(v4 + 2) = 1;
-              nox_write_u32((void *)(v4 + 3), (uint32_t)v6);
+              *(_DWORD *)(v4 + 3) = v6;
               *(_BYTE *)(v4 + 7) = v64;
               v67 = sub_552640(v6, (const void *)v4, 8, 3);
               *(_BYTE *)(*(_DWORD *)&byte_5D4594[4 * v6 + 3843788] + 148) = v65;
@@ -10827,7 +10827,7 @@ LABEL_113:
           }
           return result;
         case 1:
-          v11 = (int)nox_read_u32(v9);
+          v11 = *(_DWORD *)v9;
           v12 = *(_BYTE **)(v7 + 48);
           v13 = v9 + 4;
           *(_DWORD *)(v7 + 20) = v11;
@@ -10854,7 +10854,7 @@ LABEL_113:
           v30 = **(_BYTE **)(v7 + 48);
           *(_BYTE *)(v4 + 2) = 7;
           *(_BYTE *)v4 = v30;
-          nox_write_u32((void *)(v4 + 3), nox_read_u32(v9));
+          *(_DWORD *)(v4 + 3) = *(_DWORD *)v9;
           return result;
         case 6:
           v17 = *(_DWORD *)&byte_5D4594[4 * v6 + 3843788];
@@ -10876,9 +10876,9 @@ LABEL_113:
           }
           *(_BYTE *)(v4 + 1) = *(_BYTE *)(v18 + 1);
           result = 7;
-          *(_DWORD *)&byte_5D4594[32 * v6 + 2508792] = nox_read_u32(v9);
+          *(_DWORD *)&byte_5D4594[32 * v6 + 2508792] = *(_DWORD *)v9;
           *(_BYTE *)(v4 + 2) = 8;
-          nox_write_u32((void *)(v4 + 3), nox_read_u32(v9));
+          *(_DWORD *)(v4 + 3) = *(_DWORD *)v9;
           return result;
         case 7:
           if ( !*(_DWORD *)(v8 + 100) )
@@ -10889,18 +10889,18 @@ LABEL_113:
           else
             v32 = -1;
           *(_BYTE *)v4 = 35;
-          nox_write_u32((void *)(v4 + 1), (uint32_t)v32);
+          *(_DWORD *)(v4 + 1) = v32;
           if ( *(int *)(v7 + 20) == -1 )
             (*(void (__cdecl **)(unsigned int, int, int, _DWORD))(v7 + 144))(v6, v4, 5, *(_DWORD *)(v8 + 120));
           else
             (*(void (__cdecl **)(unsigned int, int, int, _DWORD))(v7 + 144))(v6, v4, 5, *(_DWORD *)(v7 + 120));
           return 0;
         case 8:
-          if ( nox_read_u32(v9) != *(_DWORD *)(v8 + 88) )
+          if ( *(_DWORD *)v9 != *(_DWORD *)(v8 + 88) )
             return 0;
           *(_DWORD *)(v8 + 96) = *(_DWORD *)&byte_5D4594[2495920] - *(_DWORD *)(v8 + 92);
           *(_BYTE *)v4 = 36;
-          nox_write_u32((void *)(v4 + 1), *(_DWORD *)(v8 + 96));
+          *(_DWORD *)(v4 + 1) = *(_DWORD *)(v8 + 96);
           if ( *(int *)(v7 + 20) == -1 )
             v19 = *(_DWORD *)(v8 + 120);
           else
@@ -10910,11 +10910,11 @@ LABEL_113:
           v20 = *(_BYTE *)(*(_DWORD *)(v72 + 48) + 1);
           *(_BYTE *)(v4 + 2) = 9;
           *(_BYTE *)(v4 + 1) = v20;
-          nox_write_u32((void *)(v4 + 3), *(_DWORD *)&byte_5D4594[2495920]);
+          *(_DWORD *)(v4 + 3) = *(_DWORD *)&byte_5D4594[2495920];
           return 7;
         case 9:
           v21 = 32 * v6;
-          v22 = (int)nox_read_u32(v9) - *(_DWORD *)&byte_5D4594[32 * v6 + 2508792];
+          v22 = *(_DWORD *)v9 - *(_DWORD *)&byte_5D4594[32 * v6 + 2508792];
           if ( v22 <= 0 || v22 >= 1000 )
             return 0;
           v23 = *(_DWORD *)&byte_5D4594[32 * v6 + 2508788];
@@ -10998,7 +10998,7 @@ LABEL_113:
             *(_BYTE *)(v4 + 3) = 6;
             return 4;
           }
-          if ( nox_read_s16(v35 + 105) != -1 )
+          if ( *(short *)(v35 + 105) != -1 )
             goto LABEL_97;
           goto LABEL_96;
         case 18:
@@ -11058,34 +11058,24 @@ LABEL_9:
     }
     while ( v45 );
 LABEL_50:
+    if ( *((_DWORD *)a2 + 20) != 66458 )
     {
-      uint32_t cli_ver = nox_read_u32(a2 + 80);
-#ifdef __3DS__
-      nox_3ds_net_log("[host3ds] 0x0E join req ver=0x%X", (unsigned)cli_ver);
-#endif
-      if ( !NOX_IS_COMPAT_PROTO_VER(cli_ver) )
-      {
-        *(_BYTE *)(v4 + 2) = 19;
-        *(_BYTE *)(v4 + 3) = 13;
-        return 4;
-      }
-#ifdef __3DS__
-      nox_3ds_set_host_client_proto_ver(cli_ver);
-#endif
+      *(_BYTE *)(v4 + 2) = 19;
+      *(_BYTE *)(v4 + 3) = 13;
+      return 4;
     }
     if ( *(_DWORD *)(v7 + 84) >= (unsigned int)(sub_409FA0() - 1) )
       a4 = 1;
     if ( !sub_40A740() )
       goto LABEL_67;
     v46 = sub_425BF0();
-    uint32_t cli_team = nox_read_u32(a2 + 84);
-    if ( !cli_team )
+    if ( !*((_DWORD *)a2 + 21) )
     {
       if ( v46 >= (unsigned __int8)v78[53] )
         goto LABEL_80;
       goto LABEL_67;
     }
-    if ( sub_418AE0((int)cli_team) )
+    if ( sub_418AE0(*((_DWORD *)a2 + 21)) )
     {
       if ( v46 > 0 )
       {
@@ -11176,10 +11166,10 @@ LABEL_92:
         *(_BYTE *)(v4 + 2) = 15;
         return 3;
       }
-      if ( nox_read_s16(v78 + 105) == -1 )
+      if ( *(short *)(v78 + 105) == -1 )
       {
 LABEL_96:
-        if ( nox_read_s16(v35 + 107) == -1 )
+        if ( *(short *)(v35 + 107) == -1 )
         {
 LABEL_99:
           *(_BYTE *)(v4 + 2) = 20;
@@ -11474,23 +11464,23 @@ unsigned int __cdecl sub_554040(int a1, int a2, char *a3)
   }
   v8 = v3[101];
   v9 = v3[101];
-  nox_write_u16(&v17[36], nox_read_u16(v3 + 105));
+  *(_WORD *)&v17[36] = *(_WORD *)(v3 + 105);
   v17[5] = v9 & 0xF;
   v10 = *((_DWORD *)v3 + 11);
   v17[6] = v8 >> 4;
-  nox_write_u16(&v17[38], nox_read_u16(v3 + 107));
-  nox_write_u32(&v17[40], (uint32_t)v10);
+  *(_WORD *)&v17[38] = *(_WORD *)(v3 + 107);
+  *(_DWORD *)&v17[40] = v10;
   v11 = sub_43BE50();
   v12 = *((_DWORD *)v4 + 12);
   v17[19] = v3[102] | v11;
   v17[20] = v3[100];
   v17[21] = v17[20] & 0x10;
   v13 = *((_DWORD *)v3 + 12);
-  nox_write_u32(&v17[44], nox_read_u32((const void *)(a1 + 8)));
+  *(_DWORD *)&v17[44] = *(_DWORD *)(a1 + 8);
   v14 = *((_DWORD *)v4 + 11);
-  nox_write_u32(&v17[32], (uint32_t)v12);
-  nox_write_u32(&v17[24], (uint32_t)v13);
-  nox_write_u32(&v17[7], (uint32_t)v14);
+  *(_DWORD *)&v17[32] = v12;
+  *(_DWORD *)&v17[24] = v13;
+  *(_DWORD *)&v17[7] = v14;
   qmemcpy(&v17[48], v4 + 24, 0x14u);
   strcpy(&v17[10], sub_409B40());
   qmemcpy(a3, v17, 0x48u);
@@ -11809,10 +11799,6 @@ LABEL_17:
         ++a1[2];
         name.sin_port = htons(v12);
       }
-      *(_WORD *)&byte_5D4594[3843636] = (uint16_t)a1[2];
-#ifdef __3DS__
-      nox_3ds_net_log("[host3ds] Host UDP socket bound on port %u", (unsigned)a1[2]);
-#endif
 
       /* netextras: host socket successfully bound */
       nox_netextras_on_host_bind_success(*v5, (unsigned)a1[2]);
@@ -11911,13 +11897,7 @@ int __cdecl sub_5546A0(unsigned int a1)
   v2 = *(SOCKET **)&byte_5D4594[4 * a1 + 3843788];
   if ( v2 )
   {
-    int closed_fd = (int)*v2;
-    int is_listener = (((int *)v2)[5] == -1);
     closesocket(*v2);
-#ifdef __3DS__
-    if ( is_listener )
-      nox_3ds_lobby_on_host_close(closed_fd);
-#endif
     sub_5531C0(*(LPVOID *)&byte_5D4594[4 * a1 + 3843788]);
     *(_DWORD *)&byte_5D4594[4 * a1 + 3843788] = 0;
     WSACleanup();
@@ -12118,20 +12098,6 @@ int __cdecl sub_554B40(u_short hostshort)
   char optval[4]; // [esp+14h] [ebp-194h]
   struct WSAData WSAData; // [esp+18h] [ebp-190h]
 
-#ifdef __3DS__
-  if ( *(_DWORD *)&byte_5D4594[2513916] == 1 )
-  {
-    int cur_fd = *(int *)&byte_5D4594[2513920];
-    nox_3ds_net_mode_t mode = nox_3ds_net_get_mode();
-    if ( (mode == NOX_3DS_NET_MODE_WIFI && cur_fd < NOX_3DS_SOCKETS_FD_BASE) ||
-         (mode == NOX_3DS_NET_MODE_LOOPBACK && cur_fd >= NOX_3DS_SOCKETS_FD_BASE) )
-    {
-      nox_3ds_net_log("[net3ds] Reopening discovery socket across mode switch (old_fd=%d mode=%d)",
-                      cur_fd, (int)mode);
-      sub_554D10();
-    }
-  }
-#endif
   if ( *(_DWORD *)&byte_5D4594[2513916] == 1 )
     return -14;
   result = WSAStartup(0x101u, &WSAData);
@@ -12374,7 +12340,7 @@ int __cdecl sub_554D70(char a1)
   char v3; // al
   char *v4; // eax
   char *v5; // esi
-  int v6 = 0; // eax (clear upper 16 bits before LOWORD(v6) = ntohs(...))
+  int v6; // eax
   u_short v7; // ax
   int v8; // [esp+0h] [ebp-230h]
   u_long argp; // [esp+10h] [ebp-220h]
@@ -12382,7 +12348,7 @@ int __cdecl sub_554D70(char a1)
   int v11; // [esp+18h] [ebp-218h]
   int v12; // [esp+1Ch] [ebp-214h]
   struct sockaddr_in from; // [esp+20h] [ebp-210h]
-  NOX_ALIGN4 char buf[256]; // [esp+30h] [ebp-200h]
+  char buf[256]; // [esp+30h] [ebp-200h]
   NOX_ALIGN4 char in[256]; // [esp+130h] [ebp-100h]
 
   fromlen = 16;
@@ -12439,18 +12405,6 @@ LABEL_8:
         qmemcpy(in, &from, fromlen);
         if ( v3 == 13 || (unsigned int)sub_43B300() == from.sin_addr.s_addr )
         {
-#ifdef __3DS__
-          if ( (unsigned __int8)v12 != 0xDu )
-          {
-            uint32_t sip = (uint32_t)from.sin_addr.s_addr;
-            nox_3ds_net_log("[join3ds] rx op=0x%02X aux=%u from %u.%u.%u.%u:%u",
-                            (unsigned)(unsigned __int8)v12,
-                            (unsigned)(unsigned __int8)buf[3],
-                            (unsigned)(sip & 0xFFu), (unsigned)((sip >> 8) & 0xFFu),
-                            (unsigned)((sip >> 16) & 0xFFu), (unsigned)((sip >> 24) & 0xFFu),
-                            (unsigned)ntohs(from.sin_port));
-          }
-#endif
           switch ( (unsigned __int8)v12 )
           {
             case 0xDu:
@@ -12488,13 +12442,7 @@ LABEL_8:
               break;
             case 0x13u:
               if ( sub_43B6D0() )
-              {
-#ifdef __3DS__
-                if ( (unsigned __int8)buf[3] == 13u && nox_3ds_try_flip_join_proto_ver() )
-                  break;
-#endif
                 sub_43AFA0((unsigned __int8)buf[3]);
-              }
               break;
             case 0x14u:
               if ( sub_43B6D0() && sub_43AF80() == 3 )
@@ -13483,12 +13431,6 @@ int sub_56F5C0()
   bool v12; // zf
   int result; // eax
   int *v14; // [esp-14h] [ebp-14h]
-
-  if ( !(*(_DWORD *)&byte_5D4594[2650636] & 0x600000) )
-  {
-    ++*(_DWORD *)&byte_5D4594[2516364];
-    return 0;
-  }
 
   if ( !*(_DWORD *)&byte_5D4594[2516348] )
     nullsub_31(1);
@@ -16957,19 +16899,19 @@ int __cdecl sub_57BC50(char *a1, char *a2)
       ;
   }
   sub_578C40(v9);
-  free(v6);
-  v6 = NULL;
   v10 = fopen(a2, (const char *)&byte_587000[313156]);
   if ( !v10 )
   {
 #ifdef __3DS__
     printf("[solo] sub_57BC50: fopen('%s','wb') FAILED\n", a2);
 #endif
+    free(v6);
     free(v8);
     return 0;
   }
   fwrite(v8, v12, 1u, v10);
   fclose(v10);
+  free(v6);
   free(v8);
 #ifdef __3DS__
   printf("[solo] sub_57BC50: extracted '%s' (%u bytes)\n", a2, (unsigned)v12);
@@ -17495,13 +17437,13 @@ void __cdecl sub_57C650(float *a1, float *a2, float *a3)
   v4 = a1[2] - *a1;
   v13 = v4;
   v5 = v3[3] - v3[1];
-  float dist_sq = (float)v5 * (float)v5 + (float)v4 * (float)v4;
-  if ( dist_sq < 0.0001f )
-    dist_sq = 0.0001f;
+  v6 = sqrt(v5 * v5 + v4 * v4);
+  if ( v6 < 0.0099999998 )
+    v6 = 0.0099999998;
   v12 = v5;
   v7 = a3;
   v10 = v5;
-  v8 = (v10 * (a2[1] - v3[1]) + v13 * (*a2 - *v3)) / dist_sq;
+  v8 = (v10 * (a2[1] - v3[1]) + v13 * (*a2 - *v3)) / (v6 * v6);
   v11 = v8 * v13;
   *a3 = v11 + *v3;
   a3[1] = v8 * v12 + v3[1];

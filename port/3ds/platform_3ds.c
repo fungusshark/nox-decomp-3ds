@@ -1,6 +1,5 @@
 #include "platform_3ds.h"
 #include "nox_3ds_version.h"
-#include "../../src/fov_scaler.h"
 
 #ifndef NOX_3DS_VERSION_STR
 #define NOX_3DS_VERSION_STR "3ds-dev"
@@ -17,8 +16,8 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-/* Large stack buffers in sub_4DBE10/sub_51F230 are moved to heap; 256 KB gives safe headroom. */
-u32 __stacksize__ = 256 * 1024;
+/* Nox has functions with 75-144 KB stack frames; libctru's default 32 KB is insufficient. */
+u32 __stacksize__ = 1024 * 1024;
 
 static nox_3ds_state_t g_3ds_state;
 static PrintConsole g_boot_console;
@@ -36,14 +35,9 @@ static void nox_3ds_apt_hook_cb(APT_HookType hook, void *param)
     case APTHOOK_ONSUSPEND:
     case APTHOOK_ONSLEEP:
     case APTHOOK_ONEXIT:
-        /* Mark Wi-Fi sockets suspended (lid close / HOME disconnects 3DS Wi-Fi)
-         * and force a full fflush()/fsync() on open file descriptors. */
-        nox_3ds_net_on_apt_suspend(true);
+        /* Force a full fflush() and fsync() on open file descriptors when
+         * the user presses HOME, closes the lid, or exits. */
         nox_3ds_commit_save();
-        break;
-    case APTHOOK_ONRESTORE:
-    case APTHOOK_ONWAKEUP:
-        nox_3ds_net_on_apt_suspend(false);
         break;
     default:
         break;
@@ -68,14 +62,13 @@ bool nox_3ds_init(void)
         return true;
 
     osSetSpeedupEnable(true);
-    APT_SetAppCpuTimeLimit(30);
     g_start_ms = osGetTime();
 
     gfxInitDefault();
     consoleInit(GFX_BOTTOM, &g_boot_console);
     consoleDebugInit(debugDevice_CONSOLE);
     setvbuf(stdout, NULL, _IONBF, 0);
-    setvbuf(stderr, NULL, _IOLBF, 256);
+    setvbuf(stderr, NULL, _IONBF, 0);
 
     memset(&g_3ds_state, 0, sizeof(g_3ds_state));
     g_3ds_state.bottom_console_mode = true;
@@ -89,53 +82,15 @@ bool nox_3ds_init(void)
         g_3ds_state.is_new_3ds = is_n3ds;
     }
 
-    u8 sys_model = 0xFFu;
-    if (R_SUCCEEDED(cfguInit())) {
-        if (R_FAILED(CFGU_GetSystemModel(&sys_model))) {
-            sys_model = 0xFFu;
-        }
-        cfguExit();
-    }
-    g_3ds_state.system_model = sys_model;
+    g_3ds_state.linear_free_bytes = (uint32_t)linearSpaceFree();
+    g_3ds_state.heap_used_bytes = (uint32_t)mallinfo().uordblks;
 
-    nox_fov_device_id_t fov_dev;
-    switch (sys_model) {
-    case CFG_MODEL_3DS:
-        fov_dev = NOX_FOV_DEV_O3DS;
-        break;
-    case CFG_MODEL_2DS:
-        fov_dev = NOX_FOV_DEV_O2DS;
-        break;
-    case CFG_MODEL_N3DS:
-        fov_dev = NOX_FOV_DEV_N3DS;
-        break;
-    case CFG_MODEL_3DSXL:
-    case CFG_MODEL_N3DSXL:
-    case CFG_MODEL_N2DSXL:
-        fov_dev = NOX_FOV_DEV_N3DSXL;
-        break;
-    default:
-        fov_dev = g_3ds_state.is_new_3ds ? NOX_FOV_DEV_N3DS : NOX_FOV_DEV_O3DS;
-        break;
-    }
-    nox_fov_scaler_init(fov_dev, NOX_3DS_LOGICAL_W, NOX_3DS_LOGICAL_H, g_3ds_state.wide_stretch);
-
-    nox_3ds_refresh_mem_stats();
-
-    {
-        int vp_w = 0, vp_h = 0;
-        nox_fov_scaler_get_world_viewport(NULL, NULL, NULL, NULL, &vp_w, &vp_h);
-        printf("=== Nox New 3DS Port [%s] ===\n", NOX_3DS_VERSION_STR);
-        printf("[3ds] Ported by Fungus Shark & AlbertChen408 (Giraffepus) | Orig: Westwood Studios\n");
-        printf("[3ds] Model: %s (%s) | FOV: %dx%d (%s)\n",
-               nox_fov_scaler_device_name(),
-               g_3ds_state.is_new_3ds ? "804MHz + L2" : "WARNING: Old 3DS 268MHz",
-               vp_w, vp_h,
-               g_3ds_state.wide_stretch ? "5:3" : "4:3");
-        printf("[3ds] Stack: %u KB | linearFree: %u KB\n",
-               (unsigned)(__stacksize__ / 1024u),
-               (unsigned)(g_3ds_state.linear_free_bytes / 1024u));
-    }
+    printf("=== Nox New 3DS Port [%s] ===\n", NOX_3DS_VERSION_STR);
+    printf("[3ds] Ported by Fungus Shark & AlbertChen408 (Giraffepus) | Orig: Westwood Studios\n");
+    printf("[3ds] Model: %s\n", g_3ds_state.is_new_3ds ? "New 3DS (804MHz + L2)" : "WARNING: Old 3DS (268MHz)");
+    printf("[3ds] Stack: %u KB | linearFree: %u KB\n",
+           (unsigned)(__stacksize__ / 1024u),
+           (unsigned)(g_3ds_state.linear_free_bytes / 1024u));
 
     Result rc = romfsInit();
     if (R_SUCCEEDED(rc)) {
@@ -273,14 +228,10 @@ void nox_3ds_sleep_ms(uint32_t ms)
     svcSleepThread((s64)ms * 1000000LL);
 }
 
-void nox_3ds_refresh_mem_stats(void)
+const nox_3ds_state_t *nox_3ds_get_state(void)
 {
     g_3ds_state.linear_free_bytes = (uint32_t)linearSpaceFree();
     g_3ds_state.heap_used_bytes = (uint32_t)mallinfo().uordblks;
-}
-
-const nox_3ds_state_t *nox_3ds_get_state(void)
-{
     return &g_3ds_state;
 }
 

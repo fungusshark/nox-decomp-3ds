@@ -1687,17 +1687,17 @@ int __cdecl sub_42D6B0(_DWORD *a3, int a4)
             else
 #endif
             {
-                const float min_radius = 24.0f;
-                const float max_radius = 180.0f;
-                float radius = min_radius + (float)g_thumbstick_mag * (max_radius - min_radius);
-                float fang = (((float)move_orient / 128.0f) - 1.0f) * (float)M_PI;
+                const double min_radius = 24.0;
+                const double max_radius = 180.0;
+                double radius = min_radius + g_thumbstick_mag * (max_radius - min_radius);
 
-                float fdx = -cosf(fang) * radius;
-                float fdy = -sinf(fang) * radius;
+                ang = (((double)move_orient / 128.0) - 1.0) * M_PI;
 
-                screen_x += (int)lrintf(fdx);
-                screen_y += (int)lrintf(fdy);
-                (void)ang; (void)dx; (void)dy;
+                dx = -cos(ang) * radius;
+                dy = -sin(ang) * radius;
+
+                screen_x += (int)lrint(dx);
+                screen_y += (int)lrint(dy);
             }
         }
         else if (g_radial_aim_active)

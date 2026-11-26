@@ -11,7 +11,7 @@
 #define __thiscall __cdecl // Test compile in C mode
 
 extern char byte_563002[4];
-extern char byte_563006[16];
+extern char byte_563006[26];
 extern unsigned __int8 byte_581450[23472];
 extern unsigned __int8 byte_587000[316820];
 extern unsigned __int8 byte_5D4594[3844309];
@@ -5312,7 +5312,7 @@ int __cdecl sub_4F4A20(int a1);
 int __cdecl sub_4F4AB0(int a1);
 int __cdecl sub_4F4B90(int a1);
 int __cdecl sub_4F4CB0(int a1);
-int __cdecl sub_4F4E50(void *p);
+int __cdecl sub_4F4E50(float a1);
 int __cdecl sub_4F51D0(int a1);
 int __cdecl sub_4F5300(int a1);
 int __cdecl sub_4F53D0(int a1);
@@ -6561,7 +6561,7 @@ int __cdecl sub_52E610(int *a1, int a2);
 void __cdecl sub_52E660(int a1, int a2);
 int __cdecl sub_52E7C0(int a1);
 int __cdecl sub_52E820(int a1);
-int __cdecl sub_52E850(void *p); // idb
+int __cdecl sub_52E850(float); // idb
 void __cdecl sub_52EC60(int a1, int a2);
 void nullsub_29(); // weak
 int __cdecl sub_52ED40(float *a1);
@@ -6615,7 +6615,7 @@ int *__cdecl sub_531B40(int a1, int a2);
 int *__cdecl sub_531C10(int a1, int a2);
 int *__cdecl sub_531C60(int a1, int a2);
 int *__cdecl sub_531D50(int a1, int a2);
-int __cdecl sub_531E20(void *p);
+int __cdecl sub_531E20(float a1);
 int __cdecl sub_531E90(int a1);
 char __cdecl sub_531EC0(int a1);
 int __cdecl sub_532040(int a1, int a2);
@@ -7073,9 +7073,9 @@ void __cdecl sub_548FE0(int a1, const char *a2);
 int __cdecl sub_549040(int a1, char *a2);
 int __cdecl sub_5490E0(int a1, char *a2);
 int __cdecl sub_549180(int a1, char *a2);
-int __cdecl sub_549220(void *p); // idb
+int __cdecl sub_549220(float); // idb
 void __cdecl sub_549270(int a1, int a2);
-int __cdecl sub_549380(void *p); // idb
+int __cdecl sub_549380(float); // idb
 int __cdecl sub_549440(int a3, int a2); // idb
 void __cdecl sub_5494C0(float *, int); // idb
 int __cdecl sub_5495B0(void *p); // idb

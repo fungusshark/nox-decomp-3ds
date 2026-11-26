@@ -5,11 +5,6 @@
 extern "C" {
 #endif
 
-/* Isolate POSIX/libctru system headers from src/proto.h's #pragma pack(push, 1)
- * so system structs (sockaddr_in, hostent, stat, timeval) keep natural ABI layout
- * identically across src/*.c and port/3ds/*.c. */
-#pragma pack(push)
-#pragma pack()
 #include <arpa/inet.h>
 #include <fcntl.h>
 #include <netdb.h>
@@ -22,7 +17,6 @@ extern "C" {
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-#pragma pack(pop)
 
 #define __cdecl
 #define __fastcall
@@ -196,10 +190,7 @@ typedef struct _POINT {
     LONG y;
 } POINT;
 
-/* Ensure struct WSAData has identical 1-byte packed layout (398 B on 32-bit)
- * regardless of whether windows.h is included via proto.h or standalone. */
-#pragma pack(push, 1)
-typedef struct WSAData {
+struct WSAData {
     WORD wVersion;
     WORD wHighVersion;
     CHAR szDescription[257];
@@ -208,11 +199,6 @@ typedef struct WSAData {
     WORD iMaxUdpDg;
     LPVOID lpVendorInfo;
 } WSADATA, *LPWSADATA;
-#pragma pack(pop)
-
-#if defined(__3DS__) && defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
-_Static_assert(sizeof(struct WSAData) == 398, "WSAData ABI pack mismatch across TUs");
-#endif
 
 struct compatin_addr {
     union {
@@ -220,10 +206,7 @@ struct compatin_addr {
     } S_un;
 };
 
-#pragma pack(push)
-#pragma pack()
 #include <sys/stat.h>
-#pragma pack(pop)
 #undef st_mtime
 #undef st_atime
 #undef st_ctime
@@ -343,15 +326,6 @@ enum
 #define WSAGetLastError compatWSAGetLastError
 #define recvfrom compatrecvfrom
 #define sendto compatsendto
-#ifdef __3DS__
-#define gethostname compatgethostname
-#define gethostbyname compatgethostbyname
-#define listen compatlisten
-#define accept compataccept
-#define shutdown compatshutdown
-#define send compatsend
-#define recv compatrecv
-#endif
 #define InterlockedExchange compatInterlockedExchange
 #define InterlockedDecrement compatInterlockedDecrement
 #define InterlockedIncrement compatInterlockedIncrement
@@ -445,15 +419,6 @@ int WINAPI setsockopt(SOCKET s, int level, int opt, const void *value, unsigned 
 int WINAPI bind(int sockfd, const struct sockaddr *addr, unsigned int addrlen);
 int WINAPI recvfrom(int sockfd, void *buffer, unsigned int length, int flags, struct sockaddr *addr, unsigned int *addrlen);
 int WINAPI sendto(int sockfd, void *buffer, unsigned int length, int flags, const struct sockaddr *addr, unsigned int addrlen);
-#ifdef __3DS__
-int compatgethostname(char *name, size_t len);
-struct hostent *compatgethostbyname(const char *name);
-int compatlisten(int sockfd, int backlog);
-int compataccept(int sockfd, struct sockaddr *addr, socklen_t *addrlen);
-int compatshutdown(int sockfd, int how);
-ssize_t compatsend(int sockfd, const void *buf, size_t len, int flags);
-ssize_t compatrecv(int sockfd, void *buf, size_t len, int flags);
-#endif
 
 unsigned int _control87(unsigned int new_, unsigned int mask);
 unsigned int _controlfp(unsigned int new_, unsigned int mask);

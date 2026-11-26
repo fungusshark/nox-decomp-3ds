@@ -73,13 +73,10 @@ typedef enum {
 
 typedef struct {
     bool     is_new_3ds;
-    uint8_t  system_model;        /* CFG_SystemModel (0=O3DS, 1=O3DSXL, 2=N3DS, 3=O2DS, 4=N3DSXL, 5=N2DSXL) */
     bool     romfs_mounted;
     bool     sdmc_root_ready;
     bool     dsp_audio_ready;     /* true if sdmc:/3ds/dspfirm.cdc present and ndspInit() OK */
-    bool     soc_ready;           /* true once lazy socInit() succeeded on Multiplayer entry */
-    bool     httpc_ready;         /* true once lazy httpcInit() succeeded for OpenNox lobby */
-    bool     wide_stretch;        /* top screen: true = 5:3 fill 400x240, false = 4:3 preserve aspect (320x240) */
+    bool     wide_stretch;        /* top screen: true = fill 400x240, false = preserve aspect (4:3 320x240) */
     bool     bottom_console_mode; /* true during boot before citro2d takes GFX_BOTTOM */
     bool     touch_to_aim;        /* false in dual-screen mode (touch is strict bottom UI) */
     nox_3ds_aim_mode_t    aim_mode;
@@ -98,7 +95,6 @@ uint64_t nox_3ds_get_perf_counter(void); /* svcGetSystemTick() */
 uint64_t nox_3ds_get_perf_freq(void);    /* SYSCLOCK_ARM11 (268111856ULL) */
 void     nox_3ds_sleep_ms(uint32_t ms);  /* svcSleepThread */
 const nox_3ds_state_t *nox_3ds_get_state(void);
-void                   nox_3ds_refresh_mem_stats(void);
 nox_3ds_state_t       *nox_3ds_state_mut(void);
 
 /* =========================================================================
@@ -171,10 +167,6 @@ typedef struct {
     int         crop_y;
     int         crop_w;
     int         crop_h;
-    int         font_crop_x;  /* logical 640x480 sub-rect for GPU font mapping (0 = use crop_*) */
-    int         font_crop_y;
-    int         font_crop_w;
-    int         font_crop_h;
     bool        is_linear;
     bool        fill_screen;  /* true = fill full target; false = letterbox aspect */
     bool        reuse_tex;    /* true = skip cache flush + GX upload, redraw existing VRAM tex */
@@ -182,8 +174,7 @@ typedef struct {
 
 #if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
 _Static_assert(offsetof(nox_3ds_screen_frame_t, crop_x) == 20, "ABI pack guard failed on nox_3ds_screen_frame_t");
-_Static_assert(offsetof(nox_3ds_screen_frame_t, font_crop_x) == 36, "ABI pack guard failed on nox_3ds_screen_frame_t font_crop");
-_Static_assert(sizeof(nox_3ds_screen_frame_t) == 56, "Unexpected sizeof(nox_3ds_screen_frame_t)");
+_Static_assert(sizeof(nox_3ds_screen_frame_t) == 40, "Unexpected sizeof(nox_3ds_screen_frame_t)");
 #endif
 
 bool  nox_3ds_video_init(int logical_w, int logical_h);
@@ -229,7 +220,6 @@ const void *nox_3ds_get_world_tooltip(void);
 void nox_3ds_capture_top_splash(void);
 bool nox_3ds_has_top_splash(void);
 bool nox_3ds_present_top_splash(void);
-void nox_3ds_clear_top_backbuffer(void);
 void nox_3ds_skip_default_cursor_blit(void);
 
 /* Native 1:1 PICA200/citro2d Pixel Font Renderer (port/3ds/font_3ds.c) */
@@ -242,7 +232,6 @@ void nox_3ds_font_finish_slot(int font_slot);
 bool nox_3ds_font_is_enabled(void);
 void nox_3ds_font_set_enabled(bool enabled);
 void nox_3ds_font_toggle(void);
-void nox_3ds_font_show_toast(const char *msg, bool green);
 uint32_t nox_3ds_font_generation(void);
 void nox_3ds_font_push_shadow(bool shadow);
 void nox_3ds_font_pop_shadow(bool shadow);
@@ -343,8 +332,6 @@ void nox_3ds_swkbd_request(void *entry_win, bool auto_submit);
 void nox_3ds_swkbd_cancel_pending(void *entry_win);
 bool nox_3ds_swkbd_pump(void);
 bool nox_3ds_swkbd_is_active(void);
-bool nox_3ds_consume_direct_ip_request(void);
-bool nox_3ds_swkbd_prompt_direct_ip(char *out_entry, size_t out_sz);
 
 /* =========================================================================
  * 5. Audio Bridge: Miles AIL -> libctru 24-ch ndsp (audio_3ds.c)
@@ -375,79 +362,20 @@ bool     nox_3ds_movie_audio_is_active(void);
 void     nox_3ds_movie_log(const char *fmt, ...);
 
 /* =========================================================================
- * 6. Dual-Transport Networking (net_3ds.c -> net_loopback_3ds.c / net_sockets_3ds.c)
+ * 6. In-Memory UDP Loopback Transport (net_loopback_3ds.c, NO socInit)
  * ========================================================================= */
-#define NOX_3DS_LOOPBACK_FD_BASE 1024
-#define NOX_3DS_LOOPBACK_FD_MAX  16
-#define NOX_3DS_SOCKETS_FD_BASE  2048
-#define NOX_3DS_SOCKETS_FD_MAX   32
-
-typedef enum {
-    NOX_3DS_NET_MODE_LOOPBACK = 0, /* Solo Campaign & Solo Quest (zero socInit, Airplane Mode OK) */
-    NOX_3DS_NET_MODE_WIFI     = 1  /* Multiplayer menus / Direct IPv4 / Wi-Fi host via soc:u */
-} nox_3ds_net_mode_t;
-
-struct hostent;
-
-typedef struct {
-    void (*init)(void);
-    void (*shutdown)(void);
-    int  (*socket)(int domain, int type, int protocol);
-    int  (*closesocket)(int fd);
-    int  (*bind)(int fd, const void *addr, unsigned int addrlen);
-    int  (*setsockopt)(int fd, int level, int opt, const void *val, unsigned int len);
-    int  (*ioctlsocket)(int fd, long cmd, unsigned long *argp);
-    int  (*sendto)(int fd, const void *buf, unsigned int len, int flags,
-                   const void *to, unsigned int tolen);
-    int  (*recvfrom)(int fd, void *buf, unsigned int len, int flags,
-                     void *from, unsigned int *fromlen);
-    int  (*listen)(int fd, int backlog);
-    int  (*accept)(int fd, void *addr, unsigned int *addrlen);
-    int  (*shutdown_sock)(int fd, int how);
-    int  (*send)(int fd, const void *buf, unsigned int len, int flags);
-    int  (*recv)(int fd, void *buf, unsigned int len, int flags);
-    int  (*gethostname)(char *name, size_t len);
-    struct hostent *(*gethostbyname)(const char *name);
-} nox_3ds_net_ops_t;
-
-extern const nox_3ds_net_ops_t g_nox_3ds_loopback_ops;
-extern const nox_3ds_net_ops_t g_nox_3ds_sockets_ops;
-
-#define NOX_PROTO_VER_LEGACY   0x0001039Au /* 66458: Nox 1.2b / nox-decomp / opennox-ivan */
-#define NOX_PROTO_VER_HIGHRES  0x000F039Au /* 983962: OpenNox HD (highres) */
-#define NOX_IS_COMPAT_PROTO_VER(v) \
-    (((uint32_t)(v) == NOX_PROTO_VER_LEGACY) || ((uint32_t)(v) == NOX_PROTO_VER_HIGHRES))
-
-void               nox_3ds_net_init(void);
-void               nox_3ds_net_shutdown(void);
-void               nox_3ds_net_log(const char *fmt, ...);
-void               nox_3ds_net_set_mode(nox_3ds_net_mode_t mode);
-nox_3ds_net_mode_t nox_3ds_net_get_mode(void);
-bool               nox_3ds_soc_is_ready(void);
-bool               nox_3ds_soc_ensure_ready(void);
-bool               nox_3ds_soc_get_ip_info(uint32_t *out_ip_be, uint32_t *out_mask_be, uint32_t *out_bcast_be);
-bool               nox_3ds_soc_resolve_ipv4(const char *hostname, uint32_t *out_ip_be);
-void               nox_3ds_net_on_apt_suspend(bool suspended);
-void               nox_3ds_lobby_init(void);
-void               nox_3ds_lobby_on_mode_change(nox_3ds_net_mode_t mode);
-void               nox_3ds_lobby_prefetch(void);
-bool               nox_3ds_lobby_has_pending_work(void);
-void               nox_3ds_lobby_shutdown(void);
-void               nox_3ds_reset_join_ver_retry(void);
-int                nox_3ds_try_flip_join_proto_ver(void);
-void               nox_3ds_set_host_client_proto_ver(uint32_t ver);
-uint32_t           nox_3ds_get_host_client_proto_ver(void);
-void               nox_3ds_lobby_on_host_close(int sockfd);
-int                nox_3ds_net_socket(int domain, int type, int protocol);
-int                nox_3ds_net_closesocket(int fd);
-int                nox_3ds_net_bind(int fd, const void *addr, unsigned int addrlen);
-int                nox_3ds_net_setsockopt(int fd, int level, int opt, const void *val, unsigned int len);
-int                nox_3ds_net_ioctlsocket(int fd, long cmd, unsigned long *argp);
-int                nox_3ds_net_sendto(int fd, const void *buf, unsigned int len, int flags,
-                                      const void *to, unsigned int tolen);
-int                nox_3ds_net_recvfrom(int fd, void *buf, unsigned int len, int flags,
-                                        void *from, unsigned int *fromlen);
-int                nox_3ds_net_last_error(void);
+void nox_3ds_net_init(void);
+void nox_3ds_net_shutdown(void);
+int  nox_3ds_net_socket(int domain, int type, int protocol);
+int  nox_3ds_net_closesocket(int fd);
+int  nox_3ds_net_bind(int fd, const void *addr, unsigned int addrlen);
+int  nox_3ds_net_setsockopt(int fd, int level, int opt, const void *val, unsigned int len);
+int  nox_3ds_net_ioctlsocket(int fd, long cmd, unsigned long *argp);
+int  nox_3ds_net_sendto(int fd, const void *buf, unsigned int len, int flags,
+                        const void *to, unsigned int tolen);
+int  nox_3ds_net_recvfrom(int fd, void *buf, unsigned int len, int flags,
+                          void *from, unsigned int *fromlen);
+int  nox_3ds_net_last_error(void);
 
 /* =========================================================================
  * 6. Synchronization & ARM11 Alignment-Safe Helpers

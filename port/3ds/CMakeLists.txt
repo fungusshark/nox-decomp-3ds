@@ -40,15 +40,15 @@ add_compile_options(
     -fno-strict-overflow
     -fno-tree-vectorize
     -fno-aggressive-loop-optimizations
-    -fno-math-errno
-    -fno-trapping-math
-    -ffunction-sections
-    -fdata-sections
     -U_FORTIFY_SOURCE
     -fcommon
     -Wno-error=int-conversion
     -Wno-error=incompatible-pointer-types
 )
+
+# ABI wrapper library for ARM32 AAPCS-VFP pointer-in-float slots
+add_library(abi_wrappers STATIC "${NOX_ROOT}/abi_wrappers.c")
+set_target_properties(abi_wrappers PROPERTIES C_STANDARD 99)
 
 add_executable(nox
     "${NOX_SRC_DIR}/GAME1.c"
@@ -62,7 +62,6 @@ add_executable(nox
     "${NOX_SRC_DIR}/compat.c"
     "${NOX_SRC_DIR}/compat_mss.c"
     "${NOX_SRC_DIR}/draw.c"
-    "${NOX_SRC_DIR}/fov_scaler.c"
     "${NOX_SRC_DIR}/gamepad.c"
     "${NOX_SRC_DIR}/imm.c"
     "${NOX_SRC_DIR}/input.c"
@@ -78,22 +77,13 @@ add_executable(nox
     "${CMAKE_CURRENT_SOURCE_DIR}/font_3ds.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/input_3ds.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/swkbd_3ds.c"
-    "${CMAKE_CURRENT_SOURCE_DIR}/net_3ds.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/net_loopback_3ds.c"
-    "${CMAKE_CURRENT_SOURCE_DIR}/net_sockets_3ds.c"
-    "${CMAKE_CURRENT_SOURCE_DIR}/lobby_3ds.c"
-    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/cJSON.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/stubs.c"
 )
 
-# Hand-written 3DS platform glue and non-IDA runtime/input sources do not rely on
-# IDA-decompiled x86 idioms and benefit from -O3 + loop vectorization on ARM11.
+# Hand-written 3DS platform glue (audio/minimp3, video, input, fs) does not rely on
+# IDA-decompiled x86 idioms and benefits from -O3 + loop optimizations on ARM11.
 set_source_files_properties(
-    "${NOX_SRC_DIR}/string.c"
-    "${NOX_SRC_DIR}/gamepad.c"
-    "${NOX_SRC_DIR}/compat.c"
-    "${NOX_SRC_DIR}/sm.c"
-    "${NOX_SRC_DIR}/main.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/platform_3ds.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/fs_3ds.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/audio_3ds.c"
@@ -101,14 +91,9 @@ set_source_files_properties(
     "${CMAKE_CURRENT_SOURCE_DIR}/font_3ds.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/input_3ds.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/swkbd_3ds.c"
-    "${CMAKE_CURRENT_SOURCE_DIR}/net_3ds.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/net_loopback_3ds.c"
-    "${CMAKE_CURRENT_SOURCE_DIR}/net_sockets_3ds.c"
-    "${CMAKE_CURRENT_SOURCE_DIR}/lobby_3ds.c"
-    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/cJSON.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/stubs.c"
-    "${NOX_SRC_DIR}/fov_scaler.c"
-    PROPERTIES COMPILE_OPTIONS "-O3;-ftree-vectorize;-faggressive-loop-optimizations"
+    PROPERTIES COMPILE_OPTIONS "-O3;-faggressive-loop-optimizations"
 )
 
 target_include_directories(nox PRIVATE
@@ -124,9 +109,9 @@ target_link_libraries(nox PRIVATE
     citro3d
     ctru
     z
+    abi_wrappers
     m
 )
-target_link_options(nox PRIVATE -Wl,--gc-sections)
 
 # Generate custom 3DS metadata & icon (nox.smdh)
 ctr_generate_smdh("${CMAKE_CURRENT_BINARY_DIR}/nox.smdh"

@@ -303,13 +303,6 @@ unsigned int _controlfp(unsigned int new_, unsigned int mask)
         DebugBreak();
 }
 
-#ifdef __3DS__
-/* Track whether any secondary thread was spawned via _beginthread() so single-thread
- * CriticalSections can skip RecursiveLock + CP15 TLS overhead cleanly while
- * audio_3ds.c continues using real nox_3ds_mutex_t for multicore audio. */
-static volatile int g_compat_threads_spawned = 0;
-#endif
-
 uintptr_t _beginthread(void( __cdecl *start_address )( void * ), unsigned int stack_size, void *arglist)
 {
     pthread_t handle;
@@ -317,10 +310,6 @@ uintptr_t _beginthread(void( __cdecl *start_address )( void * ), unsigned int st
 #ifdef __EMSCRIPTEN__
     fprintf(stderr, "%s: unsupported\n");
     while (1) {}
-#endif
-
-#ifdef __3DS__
-    g_compat_threads_spawned = 1;
 #endif
 
     if (pthread_create(&handle, NULL, start_address, arglist))
@@ -333,7 +322,7 @@ char *_strrev(char *str)
 {
     char *begin, *end;
 
-    if (!str || !str[0])
+    if (!str[0])
         return str;
 
     begin = str;
@@ -342,8 +331,8 @@ char *_strrev(char *str)
     while (begin < end)
     {
         char tmp = *end;
-        *end-- = *begin;
-        *begin++ = tmp;
+        *end = *begin;
+        *begin = tmp;
     }
 
     return str;
@@ -2261,11 +2250,6 @@ static int casepath(char const *path, char *r)
     (void)r;
     return 0;
 #else
-    if (access(path, F_OK) == 0)
-    {
-        strcpy(r, path);
-        return 1;
-    }
     size_t l = strlen(path);
     char *p = alloca(l + 1);
     strcpy(p, path);
@@ -2643,19 +2627,11 @@ VOID WINAPI DeleteCriticalSection(LPCRITICAL_SECTION lpCriticalSection)
 
 VOID WINAPI EnterCriticalSection(LPCRITICAL_SECTION lpCriticalSection)
 {
-#ifdef __3DS__
-    if (!g_compat_threads_spawned)
-        return;
-#endif
     SDL_LockMutex(lpCriticalSection->opaque);
 }
 
 VOID WINAPI LeaveCriticalSection(LPCRITICAL_SECTION lpCriticalSection)
 {
-#ifdef __3DS__
-    if (!g_compat_threads_spawned)
-        return;
-#endif
     SDL_UnlockMutex(lpCriticalSection->opaque);
 }
 

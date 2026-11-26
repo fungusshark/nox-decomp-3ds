@@ -175,10 +175,7 @@ struct _STREAM
     unsigned int        file_size;
     unsigned int        chunk_size;
     unsigned int        chunk_pos;
-    long                data_file_offset;
-    unsigned int        data_chunk_size;
     unsigned int        buffered;
-    unsigned int        buf_pos;
 
     union
     {
@@ -233,18 +230,6 @@ static bool             g_dsp_available = false;
 static bool             g_in_serve = false;
 static nox_3ds_mutex_t *g_global_mutex = NULL;
 static HDIGDRIVER       g_driver_head = NULL;
-static Thread           g_stream_thread = NULL;
-static LightEvent       g_stream_event;
-static volatile bool    g_stream_worker_stop = false;
-static bool             g_stream_worker_active = false;
-static void             stream_work_ex(HSTREAM stream, int max_wbufs);
-
-static void audio_ndsp_cb(void *userdata)
-{
-    (void)userdata;
-    if (g_stream_worker_active)
-        LightEvent_Signal(&g_stream_event);
-}
 
 static bool             g_ch_in_use[AUDIO_3DS_MAX_CHANNELS];
 static uint8_t         *g_sfx_linear_pool = NULL;    /* 16 * 3 * 8 KB  = 384 KB */
@@ -566,8 +551,6 @@ static void submit_wbuf(int ch, ndspWaveBuf *wb, unsigned int total_int16_sample
 /* =========================================================================
  * Public 3DS Audio Lifecycle (platform_3ds.h)
  * ========================================================================= */
-static void stream_worker_thread(void *arg);
-
 bool nox_3ds_audio_init(void)
 {
     if (g_audio_inited)
@@ -656,24 +639,8 @@ bool nox_3ds_audio_init(void)
     g_dsp_available = true;
     nox_3ds_state_mut()->dsp_audio_ready = true;
 
-    LightEvent_Init(&g_stream_event, RESET_ONESHOT);
-    g_stream_worker_stop = false;
-    g_stream_worker_active = false;
-    {
-        int pref_cpu = nox_3ds_get_state()->is_new_3ds ? 2 : 1;
-        g_stream_thread = threadCreate(stream_worker_thread, NULL, 49152, 0x28, pref_cpu, false);
-        if (!g_stream_thread && pref_cpu != 1)
-            g_stream_thread = threadCreate(stream_worker_thread, NULL, 49152, 0x28, 1, false);
-        if (!g_stream_thread)
-            g_stream_thread = threadCreate(stream_worker_thread, NULL, 49152, 0x28, -2, false);
-        if (g_stream_thread) {
-            g_stream_worker_active = true;
-            ndspSetCallback(audio_ndsp_cb, NULL);
-        }
-    }
-
-    printf("[audio3ds] ndspInit() OK: 24 ch (0..15 SFX, 16 Music, 17 Dialog, 18..23 spare) | linear=%u KB | stream_worker=%d\n",
-           (unsigned)((sfx_pool_bytes + stream_pool_bytes) / 1024u), g_stream_worker_active ? 1 : 0);
+    printf("[audio3ds] ndspInit() OK: 24 ch (0..15 SFX, 16 Music, 17 Dialog, 18..23 spare) | linear=%u KB\n",
+           (unsigned)((sfx_pool_bytes + stream_pool_bytes) / 1024u));
     return true;
 }
 
@@ -686,16 +653,6 @@ void nox_3ds_audio_shutdown(void)
 {
     if (!g_audio_inited)
         return;
-
-    if (g_stream_worker_active && g_stream_thread) {
-        ndspSetCallback(NULL, NULL);
-        g_stream_worker_stop = true;
-        LightEvent_Signal(&g_stream_event);
-        threadJoin(g_stream_thread, U64_MAX);
-        threadFree(g_stream_thread);
-        g_stream_thread = NULL;
-        g_stream_worker_active = false;
-    }
 
     if (g_global_mutex)
         nox_3ds_mutex_lock(g_global_mutex);
@@ -803,13 +760,6 @@ static void stream_find_data(HSTREAM stream)
         unsigned int size = nox_read_u32(tmp + 4);
         unsigned int skip = size + (size & 1u); /* RIFF chunks are word-aligned */
         if (memcmp(tmp, "data", 4) == 0) {
-            if (stream->data_file_offset <= 0) {
-                long data_pos = ftell(stream->file);
-                if (data_pos > 0) {
-                    stream->data_file_offset = data_pos;
-                    stream->data_chunk_size = size;
-                }
-            }
             stream->chunk_size = size;
             stream->chunk_pos = 0;
             break;
@@ -897,23 +847,18 @@ static bool stream_adpcm_rewind_for_loop(HSTREAM stream)
         return false;
 
     stream->buffered = 0;
-    stream->buf_pos = 0;
     stream->chunk_size = 0;
     stream->chunk_pos = 0;
     stream->adpcm.position = 0;
     stream->adpcm_seek_pcm_samples = 0;
     stream->adpcm_seek_pcm_pos = 0;
 
-    if (stream->data_file_offset > 0 && stream->data_chunk_size > 0 &&
-        fseek(stream->file, stream->data_file_offset, SEEK_SET) == 0) {
-        stream->chunk_size = stream->data_chunk_size;
-    } else {
-        if (fseek(stream->file, 12, SEEK_SET) != 0)
-            return false;
-        stream_find_data(stream);
-        if (stream->chunk_size == 0)
-            return false;
-    }
+    if (fseek(stream->file, 12, SEEK_SET) != 0)
+        return false;
+
+    stream_find_data(stream);
+    if (stream->chunk_size == 0)
+        return false;
 
     stream->loop_declick_pending = true;
     return true;
@@ -1120,25 +1065,19 @@ static unsigned int stream_mp3_decode(HSTREAM stream, int16_t *out, unsigned int
     for (;;) {
         unsigned int remaining = stream->chunk_size - stream->chunk_pos;
 
-        if (stream->buffered < 2048u) {
+        if (stream->buffered < sizeof(stream->buffer)) {
             if (!remaining) {
                 stream_find_data(stream);
                 remaining = stream->chunk_size - stream->chunk_pos;
             }
 
             if (remaining) {
-                if (stream->buffered > 0 && stream->buf_pos > 0)
-                    memmove(stream->buffer, stream->buffer + stream->buf_pos, stream->buffered);
-                stream->buf_pos = 0;
-
                 unsigned int space = (unsigned int)sizeof(stream->buffer) - stream->buffered;
                 unsigned int to_read = (remaining < space) ? remaining : space;
-                if (to_read > 0) {
-                    size_t got = fread(stream->buffer + stream->buffered, 1, to_read, stream->file);
-                    stream->buffered += (unsigned int)got;
-                    stream->chunk_pos += (unsigned int)got;
-                    remaining = stream->chunk_size - stream->chunk_pos;
-                }
+                size_t got = fread(stream->buffer + stream->buffered, 1, to_read, stream->file);
+                stream->buffered += (unsigned int)got;
+                stream->chunk_pos += (unsigned int)got;
+                remaining = stream->chunk_size - stream->chunk_pos;
             }
         }
 
@@ -1149,15 +1088,15 @@ static unsigned int stream_mp3_decode(HSTREAM stream, int16_t *out, unsigned int
 
         mp3dec_frame_info_t info;
         memset(&info, 0, sizeof(info));
-        int frames = mp3dec_decode_frame(&stream->mp3.dec, stream->buffer + stream->buf_pos,
-                                         (int)stream->buffered, out, &info);
+        int frames = mp3dec_decode_frame(&stream->mp3.dec, stream->buffer, (int)stream->buffered, out, &info);
 
         if (info.frame_bytes > 0) {
             unsigned int consumed = (unsigned int)info.frame_bytes;
             if (consumed > stream->buffered)
                 consumed = stream->buffered;
             stream->buffered -= consumed;
-            stream->buf_pos += consumed;
+            if (stream->buffered)
+                memmove(stream->buffer, stream->buffer + consumed, stream->buffered);
         }
 
         if (frames > 0) {
@@ -1185,11 +1124,11 @@ static unsigned int stream_mp3_decode(HSTREAM stream, int16_t *out, unsigned int
                     stream->eof = 1;
                     return 0;
                 }
-            } else if (stream->buffered >= 2048u) {
-                /* Discard first half of unread staging window to guarantee forward progress */
+            } else if (stream->buffered >= sizeof(stream->buffer)) {
+                /* Buffer full of unsyncable garbage; discard first half to guarantee forward progress */
                 unsigned int drop = stream->buffered / 2u;
                 stream->buffered -= drop;
-                stream->buf_pos += drop;
+                memmove(stream->buffer, stream->buffer + drop, stream->buffered);
             }
         }
     }
@@ -1200,7 +1139,6 @@ static void stream_mp3_seek(HSTREAM stream, unsigned int position)
     (void)position;
     mp3dec_init(&stream->mp3.dec);
     stream->buffered = 0;
-    stream->buf_pos = 0;
     stream->chunk_pos = 0;
     stream->chunk_size = 0;
 }
@@ -1387,7 +1325,7 @@ static void apply_loop_declick(int16_t *pcm, unsigned int total_samples,
     }
 }
 
-static void stream_work_ex(HSTREAM stream, int max_wbufs)
+static void stream_work(HSTREAM stream)
 {
     if (!stream->playing || stream->paused)
         return;
@@ -1409,10 +1347,7 @@ static void stream_work_ex(HSTREAM stream, int max_wbufs)
     if (target_samples < 1024u * channels)
         target_samples = 1024u * channels;
 
-    if (max_wbufs <= 0 || max_wbufs > AUDIO_3DS_STREAM_WBUFS)
-        max_wbufs = AUDIO_3DS_STREAM_WBUFS;
-
-    for (int filled = 0; filled < max_wbufs; ++filled) {
+    for (int filled = 0; filled < AUDIO_3DS_STREAM_WBUFS; ++filled) {
         ndspWaveBuf *wb = &stream->wbufs[stream->next_wbuf];
         if (!wbuf_is_reusable(wb))
             break;
@@ -1468,33 +1403,6 @@ static void stream_work_ex(HSTREAM stream, int max_wbufs)
 /* =========================================================================
  * Synchronous Audio Pump & OpenNox PR #376 Timer Dispatch
  * ========================================================================= */
-static void stream_worker_thread(void *arg)
-{
-    (void)arg;
-    while (!g_stream_worker_stop) {
-        LightEvent_Wait(&g_stream_event);
-        if (g_stream_worker_stop || !g_dsp_available)
-            break;
-
-        if (g_global_mutex)
-            nox_3ds_mutex_lock(g_global_mutex);
-
-        for (HDIGDRIVER dig = g_driver_head; dig; dig = dig->next_driver) {
-            if (!valid_dig(dig) || dig->released)
-                continue;
-            nox_3ds_mutex_lock(dig->mutex);
-            for (HSTREAM st = dig->stream_head; st; st = st->next) {
-                if (valid_stream(st) && st->playing)
-                    stream_work_ex(st, AUDIO_3DS_STREAM_WBUFS);
-            }
-            nox_3ds_mutex_unlock(dig->mutex);
-        }
-
-        if (g_global_mutex)
-            nox_3ds_mutex_unlock(g_global_mutex);
-    }
-}
-
 void nox_3ds_audio_pump(void)
 {
     if (!g_audio_inited || !g_dsp_available)
@@ -1515,12 +1423,8 @@ void nox_3ds_audio_pump(void)
         }
 
         for (HSTREAM st = dig->stream_head; st; st = st->next) {
-            if (valid_stream(st) && st->playing) {
-                if (!g_stream_worker_active)
-                    stream_work_ex(st, AUDIO_3DS_STREAM_WBUFS);
-                else
-                    LightEvent_Signal(&g_stream_event);
-            }
+            if (valid_stream(st) && st->playing)
+                stream_work(st);
         }
 
         nox_3ds_mutex_unlock(dig->mutex);
@@ -2051,8 +1955,6 @@ DXDEC void AILCALL AIL_set_sample_volume(HSAMPLE S, S32 volume)
 
     if (volume < 0) volume = 0;
     if (volume > 127) volume = 127;
-    if (S->volume == volume && !S->mix_dirty)
-        return;
     nox_3ds_mutex_lock(S->dig->mutex);
     S->volume = volume;
     apply_channel_mix(S->dsp_ch, S->volume, S->pan);
@@ -2067,8 +1969,6 @@ DXDEC void AILCALL AIL_set_sample_pan(HSAMPLE S, S32 pan)
 
     if (pan < 0) pan = 0;
     if (pan > 127) pan = 127;
-    if (S->pan == pan && !S->mix_dirty)
-        return;
     nox_3ds_mutex_lock(S->dig->mutex);
     S->pan = pan;
     apply_channel_mix(S->dsp_ch, S->volume, S->pan);
@@ -2087,8 +1987,6 @@ DXDEC void AILCALL AIL_set_sample_playback_rate(HSAMPLE S, S32 playback_rate)
         playback_rate = 4000;
     if (playback_rate > 96000)
         playback_rate = 96000;
-    if (S->playback_rate == (unsigned int)playback_rate && !S->rate_dirty)
-        return;
 
     nox_3ds_mutex_lock(S->dig->mutex);
     S->playback_rate = (unsigned int)playback_rate;
@@ -2358,11 +2256,9 @@ DXDEC void AILCALL AIL_start_stream(HSTREAM stream)
     stream->eof = 0;
     if (g_dsp_available && stream->dsp_ch >= 0)
         ndspChnSetPaused(stream->dsp_ch, false);
-    /* Prime 1 initial wave buffer on Core 0 when the worker thread fills the rest off-thread. */
-    stream_work_ex(stream, g_stream_worker_active ? 1 : AUDIO_3DS_STREAM_WBUFS);
+    /* Prime initial wave buffers immediately for zero startup latency. */
+    stream_work(stream);
     nox_3ds_mutex_unlock(stream->dig->mutex);
-    if (g_stream_worker_active)
-        LightEvent_Signal(&g_stream_event);
 }
 
 DXDEC void AILCALL AIL_pause_stream(HSTREAM stream, S32 onoff)
@@ -2379,12 +2275,10 @@ DXDEC void AILCALL AIL_pause_stream(HSTREAM stream, S32 onoff)
         stream->paused = 0;
         if (g_dsp_available && stream->dsp_ch >= 0)
             ndspChnSetPaused(stream->dsp_ch, false);
-        if (stream->playing && !g_stream_worker_active)
-            stream_work_ex(stream, AUDIO_3DS_STREAM_WBUFS);
+        if (stream->playing)
+            stream_work(stream);
     }
     nox_3ds_mutex_unlock(stream->dig->mutex);
-    if (!onoff && stream->playing && g_stream_worker_active)
-        LightEvent_Signal(&g_stream_event);
 }
 
 DXDEC void AILCALL AIL_set_stream_position(HSTREAM stream, S32 offset)
@@ -2405,7 +2299,6 @@ DXDEC void AILCALL AIL_set_stream_position(HSTREAM stream, S32 offset)
     stream->chunk_size = 0;
     stream->chunk_pos = 0;
     stream->buffered = 0;
-    stream->buf_pos = 0;
     stream->eof = 0;
     stream->loop_declick_pending = false;
     stream->have_last_frame = false;
