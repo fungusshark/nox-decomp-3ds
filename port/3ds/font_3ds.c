@@ -866,7 +866,7 @@ static void draw_toast_overlay(int target_w, int target_h)
         return;
     }
 
-    int custom_y = (s_perf_hud_enabled && s_perf_has_sample) ? 18 : 4;
+    int custom_y = (s_perf_hud_enabled && s_perf_has_sample) ? 10 : 4;
     u32 fg = s_toast_green ? C2D_Color32(120, 255, 140, 255) : C2D_Color32(255, 210, 110, 255);
     draw_crisp_pill_overlay(target_w, target_h, s_toast_msg, false, false, custom_y,
                             C2D_Color32(10, 10, 16, 210), fg);
@@ -879,6 +879,15 @@ void nox_3ds_perf_hud_draw_bottom(int target_w, int target_h)
 
     char buf[32];
     snprintf(buf, sizeof(buf), "%u FPS", (unsigned)(s_perf_fps + 0.5f));
+    int text_w = 0;
+    for (const char *p = buf; *p; ++p) {
+        uint16_t c = (uint16_t)(unsigned char)*p;
+        if (c >= 0x20 && c <= 0x7E)
+            text_w += (int)s_crisp_font[c - 0x20].w + 1;
+    }
+    if (text_w > 0)
+        text_w -= 1;
+
     u32 fg;
     if (s_perf_fps >= 27.5f) {
         fg = C2D_Color32(150, 245, 165, 245);
@@ -887,8 +896,23 @@ void nox_3ds_perf_hud_draw_bottom(int target_w, int target_h)
     } else {
         fg = C2D_Color32(255, 130, 120, 245);
     }
-    draw_crisp_pill_overlay(target_w, target_h, buf, false, false, 4,
-                            C2D_Color32(8, 10, 16, 185), fg);
+
+    int box_w = text_w + 2;
+    int box_h = 8;
+    int bx = target_w - box_w;
+    int by = 0;
+    C2D_DrawRectSolid((float)bx, (float)by, 0.0f, (float)box_w, (float)box_h,
+                      C2D_Color32(8, 10, 16, 175));
+    C2D_SetTintMode(C2D_TintMult);
+    int cx = bx + 1;
+    int cy = 1;
+    for (const char *p = buf; *p; ++p) {
+        uint16_t c = (uint16_t)(unsigned char)*p;
+        if (c >= 0x20 && c <= 0x7E) {
+            draw_tier_glyph_clipped(TIER_CRISP, c, cx, cy, 0, 0, target_w, target_h, fg);
+            cx += (int)s_crisp_font[c - 0x20].w + 1;
+        }
+    }
 }
 
 static void draw_version_overlay(int target_w, int target_h)
