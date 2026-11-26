@@ -389,7 +389,7 @@ void nox_3ds_input_poll(nox_3ds_input_t *out)
         }
     }
 
-    /* Live toggle for top-right FPS / CPU / GPU HUD: hold L + R, tap START.
+    /* Live toggle for Bottom-Screen top-right FPS HUD: hold L + R, tap START.
      * Swallow START until released so the Pause/ESC menu or chat does not fire. */
     {
         static bool s_swallow_perf_start = false;

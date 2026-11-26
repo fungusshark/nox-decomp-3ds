@@ -45953,7 +45953,7 @@ BOOL __cdecl sub_4357D0(int a1, int a2)
     }
     while ( v2 );
   }
-#ifdef __EMSCRIPTEN__
+#if defined(__EMSCRIPTEN__) || defined(__3DS__)
   *(_DWORD *)&byte_587000[85724] = 0;
 #endif
   *(_DWORD *)&byte_5D4594[811064] = *(_DWORD *)&byte_587000[80828];
@@ -52693,6 +52693,9 @@ LABEL_24:
         }
       }
     }
+#ifdef __3DS__
+    int v3ds_did_present = 0;
+#endif
     if ( !(*(_DWORD *)&byte_5D4594[2650636] & 0x80000000) )
     {
 #ifdef __3DS__
@@ -52999,6 +53002,8 @@ LABEL_24:
       {
         sub_48A220();
         sub_48A290();
+        if ( nox_3ds_video_is_active() )
+          v3ds_did_present = 1;
       }
 #else
       sub_437180();
@@ -53045,29 +53050,39 @@ LABEL_24:
 LABEL_78:
       v17 = *(_DWORD *)&byte_5D4594[2650636];
 LABEL_65:
-      if ( (v17 & 0x40000000) == 0x40000000 )
+#ifdef __3DS__
+      if ( !v3ds_did_present )
+#endif
       {
-        v19 = sub_416D00();
-        *(_DWORD *)&byte_5D4594[816404] = v19;
-        if ( v19 > 0 )
-          Sleep(v19);
-      }
-      else
-      {
-        while (!sub_416CD0()) {
-                  // Yield the CPU so we don't busy-spin.
-                  // 1ms is usually enough; bump to 2-5ms if you want even less CPU.
-                  SDL_Delay(1);
+        if ( (v17 & 0x40000000) == 0x40000000 )
+        {
+          v19 = sub_416D00();
+          *(_DWORD *)&byte_5D4594[816404] = v19;
+          if ( v19 > 0 )
+            Sleep(v19);
+        }
+        else
+        {
+          while (!sub_416CD0()) {
+                    // Yield the CPU so we don't busy-spin.
+                    // 1ms is usually enough; bump to 2-5ms if you want even less CPU.
+                    SDL_Delay(1);
 
-                  // Optional but often smart: keep SDL responsive while waiting
-                  // (only if you have an SDL pump function; otherwise omit).
-                  // SDL_PumpEvents();
+                    // Optional but often smart: keep SDL responsive while waiting
+                    // (only if you have an SDL pump function; otherwise omit).
+                    // SDL_PumpEvents();
+          }
         }
       }
       goto LABEL_70;
     }
     if ( !(*(_DWORD *)&byte_5D4594[2650636] & 0x80000000) )
-      sub_416DD0();
+    {
+#ifdef __3DS__
+      if ( !v3ds_did_present )
+#endif
+        sub_416DD0();
+    }
 LABEL_70:
     if ( *(_DWORD *)&byte_5D4594[805872] )
     {
