@@ -8,6 +8,24 @@ if (NOT NINTENDO_3DS)
     message(FATAL_ERROR "port/3ds must be configured with -DCMAKE_TOOLCHAIN_FILE=/opt/devkitpro/cmake/3DS.cmake")
 endif()
 
+set(NOX_3DS_VERSION "" CACHE STRING "Release version string embedded into SMDH and UI")
+if (NOT NOX_3DS_VERSION)
+    execute_process(
+        COMMAND git describe --tags --always --dirty
+        WORKING_DIRECTORY "${NOX_ROOT}"
+        OUTPUT_VARIABLE NOX_3DS_GIT_DESC
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET
+    )
+    if (NOX_3DS_GIT_DESC)
+        set(NOX_3DS_VERSION "3ds-${NOX_3DS_GIT_DESC}")
+    else()
+        set(NOX_3DS_VERSION "3ds-dev")
+    endif()
+endif()
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/nox_3ds_version.h"
+    "#pragma once\n#define NOX_3DS_VERSION_STR \"${NOX_3DS_VERSION}\"\n")
+
 # Mandatory ARM11 / Nox decomp diagnostics and ABI flags
 # NOTE: -fsigned-char is CRITICAL on ARM (where plain char defaults to unsigned)
 # because IDA-decompiled x86 code compares `char` sentinels against -1 / < 0
@@ -87,6 +105,7 @@ set_source_files_properties(
 )
 
 target_include_directories(nox PRIVATE
+    "${CMAKE_CURRENT_BINARY_DIR}"
     "${CMAKE_CURRENT_SOURCE_DIR}"
     "${CMAKE_CURRENT_SOURCE_DIR}/include"
     "${NOX_SRC_DIR}/external/include"
@@ -104,8 +123,8 @@ target_link_libraries(nox PRIVATE
 
 # Generate custom 3DS metadata & icon (nox.smdh)
 ctr_generate_smdh("${CMAKE_CURRENT_BINARY_DIR}/nox.smdh"
-    NAME "Nox"
-    DESCRIPTION "Westwood Studios Action RPG (3DS Port)"
+    NAME "Nox (${NOX_3DS_VERSION})"
+    DESCRIPTION "${NOX_3DS_VERSION} - Westwood Action RPG"
     AUTHOR "Westwood Studios / nox-decomp"
     ICON "${CMAKE_CURRENT_SOURCE_DIR}/icon.png"
 )
