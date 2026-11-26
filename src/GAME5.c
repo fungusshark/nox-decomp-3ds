@@ -13432,6 +13432,12 @@ int sub_56F5C0()
   int result; // eax
   int *v14; // [esp-14h] [ebp-14h]
 
+  if ( !(*(_DWORD *)&byte_5D4594[2650636] & 0x600000) )
+  {
+    ++*(_DWORD *)&byte_5D4594[2516364];
+    return 0;
+  }
+
   if ( !*(_DWORD *)&byte_5D4594[2516348] )
     nullsub_31(1);
   v0 = *(_DWORD *)&byte_5D4594[2598000];

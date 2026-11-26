@@ -30132,19 +30132,17 @@ LABEL_25:
       {
         if ( v16 )
         {
-          if ( !(*(_DWORD *)(v16 + 8) & 0x20400000)
+          if ( (v14 & *(_DWORD *)(v16 + 148)) != 0
+            && !(*(_DWORD *)(v16 + 8) & 0x20400000)
             && !sub_4173D0(*(unsigned __int8 *)(*(_DWORD *)(v2 + 276) + 2064), v16)
-            && (*(float *)(v16 + 232) > (double)a1.field_8
-             || *(float *)(v16 + 240) < (double)a1.field_0
-             || *(float *)(v16 + 236) > (double)a1.field_C
-             || *(float *)(v16 + 244) < (double)a1.field_4) )
+            && (*(float *)(v16 + 232) > a1.field_8
+             || *(float *)(v16 + 240) < a1.field_0
+             || *(float *)(v16 + 236) > a1.field_C
+             || *(float *)(v16 + 244) < a1.field_4) )
           {
-            if ( v14 & *(_DWORD *)(v16 + 148) )
-            {
-              sub_528A60(*(unsigned __int8 *)(*(_DWORD *)(v2 + 276) + 2064), (_DWORD *)v16);
-              *(_DWORD *)(v16 + 152) |= v14;
-              *(_DWORD *)(v16 + 148) &= ~v14;
-            }
+            sub_528A60(*(unsigned __int8 *)(*(_DWORD *)(v2 + 276) + 2064), (_DWORD *)v16);
+            *(_DWORD *)(v16 + 152) |= v14;
+            *(_DWORD *)(v16 + 148) &= ~v14;
           }
           if ( v13 )
             v15 = sub_4DA850(v16);
