@@ -266,6 +266,7 @@ static _DWORD COERCE_INT(float x)
 	return *(_DWORD *)&x;
 }
 
+#pragma pack(push, 4)
 typedef struct struc_13
 {
   char field_0[80];
@@ -357,6 +358,7 @@ typedef struct struc_25
 {
   char field_0[12332];
 } struc_25;
+#pragma pack(pop)
 
 /* 300 */
 typedef struct pixel888
@@ -376,6 +378,7 @@ typedef struct pixel8888
 } pixel8888;
 
 /* 302 */
+#pragma pack(push, 4)
 typedef struct float2
 {
   float field_0;
@@ -450,6 +453,12 @@ typedef struct struc_35
 	int field_C;
 	int field_10;
 } struc_35;
+#pragma pack(pop)
+
+#if !defined(__cplusplus) && defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
+_Static_assert(sizeof(pixel888) == 3, "pixel888 must remain 3 bytes");
+_Static_assert(__alignof__(float4) == 4, "float4 must be 4-byte aligned");
+#endif
 
 #endif
 
