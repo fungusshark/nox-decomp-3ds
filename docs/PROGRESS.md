@@ -1,7 +1,8 @@
 # Nox New 3DS Port — Progress Tracker
 
-**Branches:** `port-3ds` / `feat/3ds-multiplayer`  
+**Branches:** `main` (`v0.2.7-3ds-hwfix`)  
 **Architecture Blueprint:** [docs/3DS_PORT_PLAN.md](./3DS_PORT_PLAN.md)  
+**Hardware Learnings:** [docs/3DS_HARDWARE_LEARNINGS.md](./3DS_HARDWARE_LEARNINGS.md)  
 **Target Artifact:** `nox.3dsx` (`sdmc:/3ds/nox/`)
 
 ---

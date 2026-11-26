@@ -6,6 +6,7 @@ This folder tracks the prioritized performance, hardware-utilization, memory-ban
 
 ## Git Workflow & CI
 
+* **[../docs/3DS_HARDWARE_LEARNINGS.md](../docs/3DS_HARDWARE_LEARNINGS.md)** — Consolidated real-3DS hardware findings (dual-LCD `VBlank0`/`VBlank1` phase offset, ARM11 alignment & `VFPv2` traps, PICA200 cache coherency, Horizon OS Wi-Fi/SDMC stalls, and touch/dialog lessons).
 * **[branching_ci.md](./branching_ci.md)** — Trunk-Based GitHub Flow, PR verification & rolling `latest-dev` pre-release rules, and concrete `.github/workflows/build.yml` integration plan (PR gate, `devkitpro/devkitarm` 3DS `.3dsx` job, rolling `latest-dev` updates, and `v*` milestone assets).
 
 ---
