@@ -1517,8 +1517,9 @@ static void worker_do_host_register(const host_reg_job_t *job)
                        "\"name\":\"%s\","
                        "\"map\":\"%s\","
                        "\"mode\":\"%s\","
-                       "\"vers\":\"1.2\","
+                       "\"vers\":\"v1.9.0-3ds\","
                        "\"port\":%u,"
+                       "\"res\":{\"width\":1280,\"height\":800,\"high_res\":true},"
                        "\"players\":{\"cur\":%u,\"max\":%u}"
                      "}",
                      esc_name, esc_map, mode, port, cur_p, max_p);

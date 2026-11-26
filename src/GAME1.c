@@ -49438,30 +49438,40 @@ char *sub_43AA70()
   }
   v4 = sub_43BE50();
   v5 = v1[102];
-  *((_DWORD *)v1 + 12) = 66458;
-  v1[102] = v5 & 0x80 | v4;
-  *((_DWORD *)v1 + 11) = *(_DWORD *)&byte_5D4594[814916];
-  *(_WORD *)(v1 + 109) = sub_40A430();
-  sub_435720((char *)&byte_587000[90740]);
-  if ( *(_DWORD *)&byte_587000[87404] == 1 )
   {
-    memset(v10, 0, sizeof(v10));
-    v6 = sub_41FA40();
-    nox_sprintf(v9, (const char *)&byte_587000[90760], v6, &byte_587000[90752]);
-    strcpy(&v10[52], v9);
-    *(_DWORD *)v10 = sub_420100();
-    *(_DWORD *)&v10[4] = 1;
-    *(_DWORD *)&v10[8] = 32;
-    *(_DWORD *)&v10[12] = 0;
-    *(_DWORD *)&v10[16] = 0;
-    *(_DWORD *)&v10[20] = 1;
-    *(_DWORD *)&v10[24] = 1;
-    *(_DWORD *)&v10[44] = 0;
-    *(_DWORD *)&v10[28] = 0;
-    *(_DWORD *)&v10[224] = 66458;
-    *(_DWORD *)&v10[32] = *(_DWORD *)&byte_5D4594[814916];
-    v10[sub_425550(v1 + 100, &v10[69], 552) + 69] = 0;
-    sub_40D320((int)v10);
+#ifdef __3DS__
+    uint32_t host_proto_ver = (nox_3ds_net_get_mode() == NOX_3DS_NET_MODE_WIFI)
+                                  ? NOX_PROTO_VER_HIGHRES
+                                  : NOX_PROTO_VER_LEGACY;
+    nox_write_u32((char *)v1 + 48, host_proto_ver);
+#else
+    uint32_t host_proto_ver = 66458u;
+    *((_DWORD *)v1 + 12) = 66458;
+#endif
+    v1[102] = v5 & 0x80 | v4;
+    *((_DWORD *)v1 + 11) = *(_DWORD *)&byte_5D4594[814916];
+    *(_WORD *)(v1 + 109) = sub_40A430();
+    sub_435720((char *)&byte_587000[90740]);
+    if ( *(_DWORD *)&byte_587000[87404] == 1 )
+    {
+      memset(v10, 0, sizeof(v10));
+      v6 = sub_41FA40();
+      nox_sprintf(v9, (const char *)&byte_587000[90760], v6, &byte_587000[90752]);
+      strcpy(&v10[52], v9);
+      *(_DWORD *)v10 = sub_420100();
+      *(_DWORD *)&v10[4] = 1;
+      *(_DWORD *)&v10[8] = 32;
+      *(_DWORD *)&v10[12] = 0;
+      *(_DWORD *)&v10[16] = 0;
+      *(_DWORD *)&v10[20] = 1;
+      *(_DWORD *)&v10[24] = 1;
+      *(_DWORD *)&v10[44] = 0;
+      *(_DWORD *)&v10[28] = 0;
+      *(_DWORD *)&v10[224] = host_proto_ver;
+      *(_DWORD *)&v10[32] = *(_DWORD *)&byte_5D4594[814916];
+      v10[sub_425550(v1 + 100, &v10[69], 552) + 69] = 0;
+      sub_40D320((int)v10);
+    }
   }
   result = sub_416590(1);
   v8 = *((_WORD *)result + 26) & 0xE90F;
