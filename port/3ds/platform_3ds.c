@@ -1,4 +1,5 @@
 #include "platform_3ds.h"
+#include "perf_3ds.h"
 #include "nox_3ds_version.h"
 
 #ifndef NOX_3DS_VERSION_STR
@@ -25,6 +26,8 @@ static bool g_initialized = false;
 static bool g_shutdown_done = false;
 static bool g_console_detached = false;
 static u64 g_start_ms = 0;
+static uintptr_t s_main_tls = 0;
+static volatile uint64_t s_main_sleep_ticks = 0;
 static aptHookCookie g_apt_hook_cookie;
 static bool g_apt_hook_registered = false;
 
@@ -68,6 +71,8 @@ bool nox_3ds_init(void)
 
     osSetSpeedupEnable(true);
     g_start_ms = osGetTime();
+    s_main_tls = (uintptr_t)getThreadLocalStorage();
+    s_main_sleep_ticks = 0;
 
     gfxInitDefault();
     consoleInit(GFX_BOTTOM, &g_boot_console);
@@ -91,7 +96,7 @@ bool nox_3ds_init(void)
     g_3ds_state.heap_used_bytes = (uint32_t)mallinfo().uordblks;
 
     printf("=== Nox New 3DS Port [%s] ===\n", NOX_3DS_VERSION_STR);
-    printf("[3ds] Ported by Fungus Shark & AlbertChen408 (Giraffepus) | Orig: Westwood Studios\n");
+    printf("[3ds] Ported by Fungus Shark / Giraffepus | Orig: Westwood Studios\n");
     printf("[3ds] Model: %s\n", g_3ds_state.is_new_3ds ? "New 3DS (804MHz + L2)" : "WARNING: Old 3DS (268MHz)");
     printf("[3ds] Stack: %u KB | linearFree: %u KB\n",
            (unsigned)(__stacksize__ / 1024u),
@@ -230,7 +235,19 @@ uint64_t nox_3ds_get_perf_freq(void)
 
 void nox_3ds_sleep_ms(uint32_t ms)
 {
+    u64 t0 = svcGetSystemTick();
     svcSleepThread((s64)ms * 1000000LL);
+    u64 dt = svcGetSystemTick() - t0;
+    if (s_main_tls != 0 && (uintptr_t)getThreadLocalStorage() == s_main_tls) {
+        s_main_sleep_ticks += dt;
+    }
+}
+
+uint64_t nox_3ds_perf_consume_main_sleep_ticks(void)
+{
+    uint64_t ticks = s_main_sleep_ticks;
+    s_main_sleep_ticks = 0;
+    return ticks;
 }
 
 const nox_3ds_state_t *nox_3ds_get_state(void)

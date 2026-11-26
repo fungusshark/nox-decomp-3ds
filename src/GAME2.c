@@ -8164,8 +8164,8 @@ int __cdecl sub_458230(int a1, char *a2, int a3)
   int v16; // [esp-4h] [ebp-15Ch]
   int v17; // [esp+10h] [ebp-148h]
   int v18; // [esp+14h] [ebp-144h]
-  char v19[58]; // [esp+18h] [ebp-140h]
-  char v20[58]; // [esp+54h] [ebp-104h]
+  NOX_ALIGN4 char v19[60]; // [esp+18h] [ebp-140h]
+  NOX_ALIGN4 char v20[60]; // [esp+54h] [ebp-104h]
   wchar_t v21[100]; // [esp+90h] [ebp-C8h]
 
   sub_46B490(*(int *)&byte_5D4594[1046496], 16399, 0, 0);
@@ -10896,13 +10896,14 @@ int __cdecl sub_45BD40(int a1)
   WCHAR WideCharStr[4]; // [esp+20h] [ebp-20Ch]
   int v70; // [esp+28h] [ebp-204h]
   wchar_t v71[256]; // [esp+2Ch] [ebp-200h]
+#ifdef __3DS__
+  bool v3ds_desc_fb = false;
+  int v3ds_tab = *(_DWORD *)&byte_5D4594[816456];
+#endif
 
   sub_46AA20(a1, &v66, &v67);
   v1 = v66 - 24;
   v2 = v67 - 76;
-#ifdef __3DS__
-  nox_3ds_font_push_fallback(true);
-#endif
   v3 = sub_43F320(0);
   *(_DWORD *)&byte_5D4594[1046656] = v3 + 2;
   sub_434390(*(int *)&byte_5D4594[1046880]);
@@ -10952,30 +10953,38 @@ int __cdecl sub_45BD40(int a1)
           if ( v9 == 2 && !sub_424B70(*(_DWORD *)&byte_5D4594[4 * v8 + 1046960] + 74) )
             sub_434390(*(int *)&byte_5D4594[1046884]);
           v10 = (unsigned __int16 *)sub_427240(*(_DWORD *)&byte_5D4594[4 * v8 + 1046960]);
-          sub_43F840(0, v10, &v65, 0, 128);
-          v62 = v7;
-          v60 = v6 - v65 / 2;
-          v11 = (__int16 *)sub_427240(*(_DWORD *)&byte_5D4594[4 * v8 + 1046960]);
+          v11 = (__int16 *)v10;
         }
         else if ( v9 )
         {
           if ( !sub_424B70(*(_DWORD *)&byte_5D4594[4 * v8 + 1046960]) )
             sub_434390(*(int *)&byte_5D4594[1046884]);
-          v13 = (unsigned __int16 *)sub_424930(*(_DWORD *)&byte_5D4594[4 * v8 + 1046960]);
-          sub_43F840(0, v13, &v65, 0, 128);
-          v62 = v7;
-          v60 = v6 - v65 / 2;
-          v11 = (__int16 *)sub_424930(*(_DWORD *)&byte_5D4594[4 * v8 + 1046960]);
+          v10 = (unsigned __int16 *)sub_424930(*(_DWORD *)&byte_5D4594[4 * v8 + 1046960]);
+          v11 = (__int16 *)v10;
         }
         else
         {
-          v12 = (unsigned __int16 *)sub_425260(*(_DWORD *)&byte_5D4594[4 * v8 + 1046960]);
-          sub_43F840(0, v12, &v65, 0, 128);
+          v10 = (unsigned __int16 *)sub_425260(*(_DWORD *)&byte_5D4594[4 * v8 + 1046960]);
+          v11 = (__int16 *)v10;
+        }
+        (void)v12;
+        (void)v13;
+#ifdef __3DS__
+        {
+          bool v3ds_nm_fb = nox_3ds_font_is_enabled() && !nox_3ds_font_fits_single(0, v10, 112, v3ds_tab);
+          nox_3ds_font_push_fallback(v3ds_nm_fb);
+          sub_43F840(0, v10, &v65, 0, 128);
           v62 = v7;
           v60 = v6 - v65 / 2;
-          v11 = (__int16 *)sub_425260(*(_DWORD *)&byte_5D4594[4 * v8 + 1046960]);
+          sub_43F6E0(0, v11, v60, v62);
+          nox_3ds_font_pop_fallback(v3ds_nm_fb);
         }
+#else
+        sub_43F840(0, v10, &v65, 0, 128);
+        v62 = v7;
+        v60 = v6 - v65 / 2;
         sub_43F6E0(0, v11, v60, v62);
+#endif
         v7 += *(_DWORD *)&byte_5D4594[1046656];
         if ( ++v5 >= 2 * *(_DWORD *)WideCharStr )
           break;
@@ -11026,19 +11035,35 @@ int __cdecl sub_45BD40(int a1)
     if ( *(_BYTE *)(*(_DWORD *)&byte_5D4594[1047516] + 2251) == 2
       && (*(_DWORD *)(*(_DWORD *)&byte_5D4594[1047516] + 4232) || sub_40A5C0(0x2000) && !sub_40A5C0(4096)) )
     {
+#ifdef __3DS__
+      bool v3ds_fb = nox_3ds_font_is_enabled() && !nox_3ds_font_fits_single(0, (const uint16_t *)v71, 108, v3ds_tab);
+      nox_3ds_font_push_fallback(v3ds_fb);
+#endif
       sub_43F840(0, v71, &v70, 0, 0);
       sub_43FAF0(0, v71, (108 - v70) / 2 + v66 + 24, v14, 128, 0);
+#ifdef __3DS__
+      nox_3ds_font_pop_fallback(v3ds_fb);
+#endif
     }
     v23 = v14 + v3 + 2;
     v24 = (unsigned __int16 *)sub_427240(*(_DWORD *)&byte_5D4594[4 * *(_DWORD *)&byte_5D4594[1046932] + 1046960]);
-    sub_43FA80(0, v24, &v70, &v68, 108);
-    if ( v68 <= v3 )
-      v25 = (108 - v70) / 2 + v66 + 24;
-    else
-      v25 = v66 + 24;
-    v55 = v25;
-    v26 = (_WORD *)sub_427240(*(_DWORD *)&byte_5D4594[4 * *(_DWORD *)&byte_5D4594[1046932] + 1046960]);
-    sub_43FD80(0, v26, v55, v23, 128, 0);
+#ifdef __3DS__
+    {
+      bool v3ds_fb = nox_3ds_font_is_enabled() && !nox_3ds_font_fits_multiline(0, v24, 108, 28, v3ds_tab);
+      nox_3ds_font_push_fallback(v3ds_fb);
+#endif
+      sub_43FA80(0, v24, &v70, &v68, 108);
+      if ( v68 <= v3 )
+        v25 = (108 - v70) / 2 + v66 + 24;
+      else
+        v25 = v66 + 24;
+      v55 = v25;
+      v26 = (_WORD *)v24;
+      sub_43FD80(0, v26, v55, v23, 128, 0);
+#ifdef __3DS__
+      nox_3ds_font_pop_fallback(v3ds_fb);
+    }
+#endif
     v63 = v23 + v20 + v68 + 2;
     v61 = (108 - v18) / 2 + v66 + 24;
     v27 = sub_427400(*(_DWORD *)&byte_5D4594[4 * *(_DWORD *)&byte_5D4594[1046932] + 1046960]);
@@ -11048,6 +11073,10 @@ int __cdecl sub_45BD40(int a1)
     v30 = v67 + 52;
     if ( v28 )
     {
+#ifdef __3DS__
+      v3ds_desc_fb = nox_3ds_font_is_enabled() && !nox_3ds_font_fits_multiline(0, v28, 92, 140, v3ds_tab);
+      nox_3ds_font_push_fallback(v3ds_desc_fb);
+#endif
       sub_43F840(0, v28, 0, WideCharStr, 92);
       v31 = *(_DWORD *)WideCharStr;
       v32 = v66 + 153;
@@ -11060,20 +11089,33 @@ int __cdecl sub_45BD40(int a1)
     {
       sub_425450(*(_DWORD *)&byte_5D4594[4 * *(_DWORD *)&byte_5D4594[1046932] + 1046960]);
       v33 = (unsigned __int16 *)sub_425260(*(_DWORD *)&byte_5D4594[4 * *(_DWORD *)&byte_5D4594[1046932] + 1046960]);
-      sub_43FA80(0, v33, &v70, &v68, 108);
-      if ( v68 <= v3 )
-        v34 = (108 - v70) / 2 + v66 + 24;
-      else
-        v34 = v66 + 24;
-      v58 = v67 + 53;
-      v56 = v34;
-      v35 = (_WORD *)sub_425260(*(_DWORD *)&byte_5D4594[4 * *(_DWORD *)&byte_5D4594[1046932] + 1046960]);
-      sub_43FD80(0, v35, v56, v58, 128, 0);
+#ifdef __3DS__
+      {
+        bool v3ds_fb = nox_3ds_font_is_enabled() && !nox_3ds_font_fits_multiline(0, v33, 108, 28, v3ds_tab);
+        nox_3ds_font_push_fallback(v3ds_fb);
+#endif
+        sub_43FA80(0, v33, &v70, &v68, 108);
+        if ( v68 <= v3 )
+          v34 = (108 - v70) / 2 + v66 + 24;
+        else
+          v34 = v66 + 24;
+        v58 = v67 + 53;
+        v56 = v34;
+        v35 = (_WORD *)v33;
+        sub_43FD80(0, v35, v56, v58, 128, 0);
+#ifdef __3DS__
+        nox_3ds_font_pop_fallback(v3ds_fb);
+      }
+#endif
       v36 = (unsigned __int16 *)sub_4252F0(*(_DWORD *)&byte_5D4594[4 * *(_DWORD *)&byte_5D4594[1046932] + 1046960]);
       v29 = v36;
       v30 = v67 + 52;
       if ( !v36 )
         goto LABEL_75;
+#ifdef __3DS__
+      v3ds_desc_fb = nox_3ds_font_is_enabled() && !nox_3ds_font_fits_multiline(0, v36, 92, 140, v3ds_tab);
+      nox_3ds_font_push_fallback(v3ds_desc_fb);
+#endif
       sub_43F840(0, v36, 0, WideCharStr, 92);
       v31 = *(_DWORD *)WideCharStr;
       v32 = v66 + 153;
@@ -11085,16 +11127,25 @@ LABEL_53:
     }
     v38 = sub_424A70(*(_DWORD *)&byte_5D4594[4 * *(_DWORD *)&byte_5D4594[1046932] + 1046960]);
     v39 = (unsigned __int16 *)sub_424930(*(_DWORD *)&byte_5D4594[4 * *(_DWORD *)&byte_5D4594[1046932] + 1046960]);
-    sub_43FA80(0, v39, &v65, &v68, 108);
-    if ( v68 <= v3 )
-      v40 = (108 - v65) / 2 + v66 + 24;
-    else
-      v40 = v66 + 24;
-    v41 = v67 + 53;
-    v59 = v67 + 53;
-    v57 = v40;
-    v42 = (_WORD *)sub_424930(*(_DWORD *)&byte_5D4594[4 * *(_DWORD *)&byte_5D4594[1046932] + 1046960]);
-    sub_43FD80(0, v42, v57, v59, 128, 0);
+#ifdef __3DS__
+    {
+      bool v3ds_fb = nox_3ds_font_is_enabled() && !nox_3ds_font_fits_multiline(0, v39, 108, 28, v3ds_tab);
+      nox_3ds_font_push_fallback(v3ds_fb);
+#endif
+      sub_43FA80(0, v39, &v65, &v68, 108);
+      if ( v68 <= v3 )
+        v40 = (108 - v65) / 2 + v66 + 24;
+      else
+        v40 = v66 + 24;
+      v41 = v67 + 53;
+      v59 = v67 + 53;
+      v57 = v40;
+      v42 = (_WORD *)v39;
+      sub_43FD80(0, v42, v57, v59, 128, 0);
+#ifdef __3DS__
+      nox_3ds_font_pop_fallback(v3ds_fb);
+    }
+#endif
     v43 = v41 + v68 + 2;
     v44 = sub_4249A0(*(_DWORD *)&byte_5D4594[4 * *(_DWORD *)&byte_5D4594[1046932] + 1046960], 1);
     v45 = sub_40F1D0((char *)&byte_587000[132564], 0, (const char *)&byte_587000[132528], 1115);
@@ -11114,36 +11165,73 @@ LABEL_53:
     {
       nox_wcscat(v71, (const wchar_t *)&byte_587000[132588]);
     }
-    sub_43F840(0, v71, &v65, 0, 0);
-    v46 = v43 + 2;
-    sub_43FAF0(0, v71, (108 - v65) / 2 + v66 + 24, v46, 128, 0);
+#ifdef __3DS__
+    {
+      bool v3ds_fb = nox_3ds_font_is_enabled() && !nox_3ds_font_fits_single(0, (const uint16_t *)v71, 108, v3ds_tab);
+      nox_3ds_font_push_fallback(v3ds_fb);
+#endif
+      sub_43F840(0, v71, &v65, 0, 0);
+      v46 = v43 + 2;
+      sub_43FAF0(0, v71, (108 - v65) / 2 + v66 + 24, v46, 128, 0);
+#ifdef __3DS__
+      nox_3ds_font_pop_fallback(v3ds_fb);
+    }
+#endif
     v47 = v46 + v3 + 2;
     if ( v38 & 0x100 )
     {
       v48 = sub_40F1D0((char *)&byte_587000[132628], 0, (const char *)&byte_587000[132592], 1173);
+#ifdef __3DS__
+      bool v3ds_fb = nox_3ds_font_is_enabled() && !nox_3ds_font_fits_single(0, (const uint16_t *)v48, 108, v3ds_tab);
+      nox_3ds_font_push_fallback(v3ds_fb);
+#endif
       sub_43F840(0, v48, &v65, 0, 0);
       sub_43FAF0(0, v48, (108 - v65) / 2 + v66 + 24, v47, 128, 0);
+#ifdef __3DS__
+      nox_3ds_font_pop_fallback(v3ds_fb);
+#endif
       v47 += v3;
     }
     if ( v38 & 4 )
     {
       v49 = sub_40F1D0((char *)&byte_587000[132680], 0, (const char *)&byte_587000[132644], 1181);
+#ifdef __3DS__
+      bool v3ds_fb = nox_3ds_font_is_enabled() && !nox_3ds_font_fits_single(0, (const uint16_t *)v49, 108, v3ds_tab);
+      nox_3ds_font_push_fallback(v3ds_fb);
+#endif
       sub_43F840(0, v49, &v65, 0, 0);
       sub_43FAF0(0, v49, (108 - v65) / 2 + v66 + 24, v47, 128, 0);
+#ifdef __3DS__
+      nox_3ds_font_pop_fallback(v3ds_fb);
+#endif
       v47 += v3;
     }
     if ( v38 & 8 )
     {
       v50 = sub_40F1D0((char *)&byte_587000[132732], 0, (const char *)&byte_587000[132696], 1189);
+#ifdef __3DS__
+      bool v3ds_fb = nox_3ds_font_is_enabled() && !nox_3ds_font_fits_single(0, (const uint16_t *)v50, 108, v3ds_tab);
+      nox_3ds_font_push_fallback(v3ds_fb);
+#endif
       sub_43F840(0, v50, &v65, 0, 0);
       sub_43FAF0(0, v50, (108 - v65) / 2 + v66 + 24, v47, 128, 0);
+#ifdef __3DS__
+      nox_3ds_font_pop_fallback(v3ds_fb);
+#endif
       v47 += v3;
     }
     if ( v38 & 0x20 )
     {
       v51 = sub_40F1D0((char *)&byte_587000[132784], 0, (const char *)&byte_587000[132748], 1197);
+#ifdef __3DS__
+      bool v3ds_fb = nox_3ds_font_is_enabled() && !nox_3ds_font_fits_single(0, (const uint16_t *)v51, 108, v3ds_tab);
+      nox_3ds_font_push_fallback(v3ds_fb);
+#endif
       sub_43F840(0, v51, &v65, 0, 0);
       sub_43FAF0(0, v51, (108 - v65) / 2 + v66 + 24, v47, 128, 0);
+#ifdef __3DS__
+      nox_3ds_font_pop_fallback(v3ds_fb);
+#endif
       v47 += v3;
     }
     v64 = *(_DWORD *)(*(_DWORD *)&byte_5D4594[1047516]
@@ -11151,13 +11239,26 @@ LABEL_53:
                     + 3696);
     v52 = sub_40F1D0((char *)&byte_587000[132836], 0, (const char *)&byte_587000[132800], 1206);
     nox_swprintf(v71, v52, v64);
-    sub_43F840(0, v71, &v65, 0, 0);
-    sub_43FAF0(0, v71, (108 - v65) / 2 + v66 + 24, v3 + v47, 128, 0);
+#ifdef __3DS__
+    {
+      bool v3ds_fb = nox_3ds_font_is_enabled() && !nox_3ds_font_fits_single(0, (const uint16_t *)v71, 108, v3ds_tab);
+      nox_3ds_font_push_fallback(v3ds_fb);
+#endif
+      sub_43F840(0, v71, &v65, 0, 0);
+      sub_43FAF0(0, v71, (108 - v65) / 2 + v66 + 24, v3 + v47, 128, 0);
+#ifdef __3DS__
+      nox_3ds_font_pop_fallback(v3ds_fb);
+    }
+#endif
     v53 = (unsigned __int16 *)sub_424A30(*(_DWORD *)&byte_5D4594[4 * *(_DWORD *)&byte_5D4594[1046932] + 1046960]);
     v29 = v53;
     v30 = v67 + 52;
     if ( v53 )
     {
+#ifdef __3DS__
+      v3ds_desc_fb = nox_3ds_font_is_enabled() && !nox_3ds_font_fits_multiline(0, v53, 92, 140, v3ds_tab);
+      nox_3ds_font_push_fallback(v3ds_desc_fb);
+#endif
       sub_43F840(0, v53, 0, WideCharStr, 92);
       v32 = v66 + 153;
       v37 = (141 - *(_DWORD *)WideCharStr) / 2 + v67 + 17;
@@ -11165,13 +11266,17 @@ LABEL_53:
 LABEL_73:
         v37 = v30;
 LABEL_74:
+#ifdef __3DS__
+      if ( v37 < v67 + 17 )
+        v37 = v67 + 17;
+#endif
       sub_43FAF0(0, v29, v32, v37, 92, 0);
       goto LABEL_75;
     }
   }
 LABEL_75:
 #ifdef __3DS__
-  nox_3ds_font_pop_fallback(true);
+  nox_3ds_font_pop_fallback(v3ds_desc_fb);
 #endif
   if ( !*(_DWORD *)&byte_587000[132132]
     && *(int *)&byte_5D4594[1046932] >= *(int *)&byte_5D4594[1047508] - *(int *)&byte_5D4594[1047512] - 1 )
@@ -23530,7 +23635,12 @@ int __cdecl sub_46C2A0(int a1)
 }
 
 #ifdef __3DS__
-static bool nox_3ds_widget_fits_crisp(_DWORD *wnd)
+static inline bool nox_3ds_valid_wptr(uint32_t p)
+{
+  return p >= 0x00100000u && (p & 3u) == 0u;
+}
+
+static bool nox_3ds_single_widget_fits_crisp(_DWORD *wnd)
 {
   if ( !wnd || (wnd[1] & 0x10) )
     return true;
@@ -23542,48 +23652,30 @@ static bool nox_3ds_widget_fits_crisp(_DWORD *wnd)
     int tab_w = *(_DWORD *)&byte_5D4594[816456];
     const uint16_t *lbl = (const uint16_t *)(a2 + 72);
     uintptr_t fn = (uintptr_t)wnd[95];
-    if ( fn == (uintptr_t)sub_4A81D0 || fn == (uintptr_t)sub_4A8380 )
+    uint32_t p8 = (uint32_t)wnd[8];
+    if ( fn == (uintptr_t)sub_4A81D0 || fn == (uintptr_t)sub_4A8380 ||
+         fn == (uintptr_t)sub_4A8820 || fn == (uintptr_t)sub_4A8A20 ||
+         fn == (uintptr_t)sub_4A8EA0 || fn == (uintptr_t)sub_4A9050 )
     {
-      if ( *lbl && !nox_3ds_font_fits_single(fslot, lbl, w - 2, tab_w) )
-        return false;
-    }
-    else if ( fn == (uintptr_t)sub_4A8820 )
-    {
-      int bw = (wnd[8] && **(_DWORD **)(wnd[8])) ? (w - 2) : (w - 18);
-      if ( *lbl && !nox_3ds_font_fits_single(fslot, lbl, bw, tab_w) )
-        return false;
-    }
-    else if ( fn == (uintptr_t)sub_4A8A20 )
-    {
-      int bw = (wnd[8] && **(_DWORD **)(wnd[8])) ? (w - 2) : (w - 28);
-      if ( *lbl && !nox_3ds_font_fits_single(fslot, lbl, bw, tab_w) )
-        return false;
-    }
-    else if ( fn == (uintptr_t)sub_4A8EA0 )
-    {
-      if ( *lbl && !nox_3ds_font_fits_single(fslot, lbl, w - 18, tab_w) )
-        return false;
-    }
-    else if ( fn == (uintptr_t)sub_4A9050 )
-    {
-      if ( *lbl && !nox_3ds_font_fits_single(fslot, lbl, w - 20, tab_w) )
-        return false;
+      return true;
     }
     else if ( fn == (uintptr_t)sub_488D00 )
     {
-      const uint16_t *st = wnd[8] ? *(const uint16_t **)(wnd[8]) : NULL;
-      if ( st && *st && !nox_3ds_font_fits_multiline(fslot, st, w, h, tab_w) )
+      const uint16_t *st = nox_3ds_valid_wptr(p8) ? *(const uint16_t **)(uintptr_t)p8 : NULL;
+      bool transparent_box = (*(_DWORD *)(a2 + 20) == 0x80000000 && *(_DWORD *)(a2 + 28) == 0x80000000);
+      int eff_h = (transparent_box || h <= 20) ? 0 : h;
+      if ( st && *st && !nox_3ds_font_fits_multiline(fslot, st, w, eff_h, tab_w) )
         return false;
     }
     else if ( fn == (uintptr_t)sub_489550 )
     {
-      const uint16_t *st = wnd[8] ? *(const uint16_t **)(wnd[8]) : NULL;
+      const uint16_t *st = nox_3ds_valid_wptr(p8) ? *(const uint16_t **)(uintptr_t)p8 : NULL;
       if ( st && *st && !nox_3ds_font_fits_single(fslot, st, w, tab_w) )
         return false;
     }
     else if ( fn == (uintptr_t)sub_488160 || fn == (uintptr_t)sub_488870 )
     {
-      const wchar_t *eb = (const wchar_t *)(uintptr_t)wnd[8];
+      const wchar_t *eb = nox_3ds_valid_wptr(p8) ? (const wchar_t *)(uintptr_t)p8 : NULL;
       int ebw = (fn == (uintptr_t)sub_488160 && eb && eb[521] > 0) ? (int)eb[521] : 0;
       int rem = w - ebw - 6;
       if ( *lbl && !nox_3ds_font_fits_single(fslot, lbl, rem, tab_w) )
@@ -23597,15 +23689,10 @@ static bool nox_3ds_widget_fits_crisp(_DWORD *wnd)
     }
     else if ( fn == (uintptr_t)sub_4A3C50 || fn == (uintptr_t)sub_4A3FC0 )
     {
-      int lw = (wnd[8] && *(_DWORD *)(wnd[8] + 12)) ? (w - 10) : w;
+      int lw = (nox_3ds_valid_wptr(p8) && *(_DWORD *)(uintptr_t)(p8 + 12u)) ? (w - 10) : w;
       if ( *lbl && !nox_3ds_font_fits_single(fslot, lbl, lw, tab_w) )
         return false;
     }
-  }
-  for ( _DWORD *c = (_DWORD *)(uintptr_t)wnd[100]; c; c = (_DWORD *)(uintptr_t)c[97] )
-  {
-    if ( !nox_3ds_widget_fits_crisp(c) )
-      return false;
   }
   return true;
 }
@@ -23624,31 +23711,6 @@ int sub_46C2E0()
 #ifdef __3DS__
   nox_3ds_gui_filter_t gui_filter = nox_3ds_get_gui_filter();
   int main_bg_wnd = *(_DWORD *)&byte_5D4594[1307300];
-  bool v3ds_gui_fb = false;
-  if ( nox_3ds_is_bottom_swbuf_active() && nox_3ds_font_is_enabled() )
-  {
-    int srv_main_wnd = *(_DWORD *)&byte_5D4594[814980];
-    int srv_info_wnd = *(_DWORD *)&byte_5D4594[815000];
-    int wol_find_wnd = *(_DWORD *)&byte_5D4594[830108];
-    int dlg_wnd = *(_DWORD *)&byte_5D4594[1123524];
-    for ( int rw = *(_DWORD *)&byte_5D4594[1064892]; rw; rw = *(_DWORD *)(rw + 392) )
-    {
-      if ( *(_BYTE *)(rw + 4) & 0x10 )
-        continue;
-      if ( !((gui_filter == NOX_3DS_GUI_ALL)
-          || (gui_filter == NOX_3DS_GUI_BG_ONLY && rw == main_bg_wnd)
-          || (gui_filter == NOX_3DS_GUI_NO_BG && rw != main_bg_wnd)) )
-        continue;
-      if ( rw == srv_main_wnd || rw == srv_info_wnd || rw == wol_find_wnd || rw == dlg_wnd )
-        continue;
-      if ( !nox_3ds_widget_fits_crisp((_DWORD *)(uintptr_t)rw) )
-      {
-        v3ds_gui_fb = true;
-        break;
-      }
-    }
-  }
-  nox_3ds_font_push_fallback(v3ds_gui_fb);
 #endif
 
   v0 = *(_DWORD *)&byte_5D4594[1064892];
@@ -23715,9 +23777,6 @@ int sub_46C2E0()
     }
     while ( v6 );
   }
-#ifdef __3DS__
-  nox_3ds_font_pop_fallback(v3ds_gui_fb);
-#endif
   return result;
 }
 
@@ -23731,11 +23790,20 @@ int __cdecl sub_46C370(_DWORD *a1)
     return -2;
   if ( !(a1[1] & 0x10) )
   {
+#ifdef __3DS__
+    bool v3ds_w_fb = nox_3ds_is_bottom_swbuf_active()
+                     && nox_3ds_font_is_enabled()
+                     && !nox_3ds_single_widget_fits_crisp(a1);
+    nox_3ds_font_push_fallback(v3ds_w_fb);
+#endif
     v2 = (int (__cdecl *)(_DWORD *, _DWORD *))a1[95];
     if ( v2 )
       v2(a1, a1 + 9);
     if ( (a1[1] & 0x1000) == 4096 )
       sub_4AA030(a1, (int)(a1 + 9));
+#ifdef __3DS__
+    nox_3ds_font_pop_fallback(v3ds_w_fb);
+#endif
     for ( i = (_DWORD *)a1[100]; i; i = (_DWORD *)i[97] )
       sub_46C370(i);
   }

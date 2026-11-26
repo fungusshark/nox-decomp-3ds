@@ -373,7 +373,11 @@ void NET_CONNECT_THEN (sm_args_t *args)
   sub_40ED10(31, 0);
   sub_40A340(0);
   sub_40A360(0);
+#ifdef __3DS__
+  GOTO_CONNECT_WAIT_LOOP(sub_416BB0() + 20000);
+#else
   GOTO_CONNECT_WAIT_LOOP(sub_416BB0() + 10000);
+#endif
 }
 
 void CONNECT_WAIT_LOOP (sm_args_t *args)
