@@ -49071,7 +49071,7 @@ _DWORD *__cdecl sub_48E970(int a1, unsigned int a2, int a3, int a4)
 
 //----- (0048EA70) --------------------------------------------------------
 //nox_xxx_netOnPacketRecvCli_48EA70
-int __cdecl sub_48EA70__abi_raw(int a1, unsigned int a2, int a3)
+int __cdecl sub_48EA70(int a1, unsigned int a2, int a3)
 {
   unsigned int v3; // ebp
   unsigned int v4; // ebx

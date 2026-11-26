@@ -120,8 +120,7 @@ bool nox_3ds_init(void)
     }
     nox_fov_scaler_init(fov_dev, NOX_3DS_LOGICAL_W, NOX_3DS_LOGICAL_H, g_3ds_state.wide_stretch);
 
-    g_3ds_state.linear_free_bytes = (uint32_t)linearSpaceFree();
-    g_3ds_state.heap_used_bytes = (uint32_t)mallinfo().uordblks;
+    nox_3ds_refresh_mem_stats();
 
     {
         int vp_w = 0, vp_h = 0;
@@ -274,10 +273,14 @@ void nox_3ds_sleep_ms(uint32_t ms)
     svcSleepThread((s64)ms * 1000000LL);
 }
 
-const nox_3ds_state_t *nox_3ds_get_state(void)
+void nox_3ds_refresh_mem_stats(void)
 {
     g_3ds_state.linear_free_bytes = (uint32_t)linearSpaceFree();
     g_3ds_state.heap_used_bytes = (uint32_t)mallinfo().uordblks;
+}
+
+const nox_3ds_state_t *nox_3ds_get_state(void)
+{
     return &g_3ds_state;
 }
 

@@ -303,6 +303,13 @@ unsigned int _controlfp(unsigned int new_, unsigned int mask)
         DebugBreak();
 }
 
+#ifdef __3DS__
+/* Track whether any secondary thread was spawned via _beginthread() so single-thread
+ * CriticalSections can skip RecursiveLock + CP15 TLS overhead cleanly while
+ * audio_3ds.c continues using real nox_3ds_mutex_t for multicore audio. */
+static volatile int g_compat_threads_spawned = 0;
+#endif
+
 uintptr_t _beginthread(void( __cdecl *start_address )( void * ), unsigned int stack_size, void *arglist)
 {
     pthread_t handle;
@@ -310,6 +317,10 @@ uintptr_t _beginthread(void( __cdecl *start_address )( void * ), unsigned int st
 #ifdef __EMSCRIPTEN__
     fprintf(stderr, "%s: unsupported\n");
     while (1) {}
+#endif
+
+#ifdef __3DS__
+    g_compat_threads_spawned = 1;
 #endif
 
     if (pthread_create(&handle, NULL, start_address, arglist))
@@ -2627,11 +2638,19 @@ VOID WINAPI DeleteCriticalSection(LPCRITICAL_SECTION lpCriticalSection)
 
 VOID WINAPI EnterCriticalSection(LPCRITICAL_SECTION lpCriticalSection)
 {
+#ifdef __3DS__
+    if (!g_compat_threads_spawned)
+        return;
+#endif
     SDL_LockMutex(lpCriticalSection->opaque);
 }
 
 VOID WINAPI LeaveCriticalSection(LPCRITICAL_SECTION lpCriticalSection)
 {
+#ifdef __3DS__
+    if (!g_compat_threads_spawned)
+        return;
+#endif
     SDL_UnlockMutex(lpCriticalSection->opaque);
 }
 

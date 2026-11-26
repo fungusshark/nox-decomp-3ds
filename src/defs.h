@@ -119,20 +119,10 @@ static inline void *NOX_CROSS_PTR_FROM_PTR(void *p) { return p; }
 #endif
 
 /* ============================================================
- * ABI pointer-slot type
+ * ABI pointer-slot type (collapsed to native void * — todo #09)
  * ============================================================ */
-#if defined(__arm__) && defined(__ARM_PCS_VFP)
-typedef float nox_abi_ptrslot_t;
-static inline void *nox_from_ptrslot(nox_abi_ptrslot_t x)
-{
-    uint32_t u;
-    memcpy(&u, &x, sizeof(u));
-    return (void *)(uintptr_t)u;
-}
-#else
 typedef void *nox_abi_ptrslot_t;
 static inline void *nox_from_ptrslot(nox_abi_ptrslot_t x) { return x; }
-#endif
 
 #define NOX_PTR(x) ((int)(uintptr_t)nox_from_ptrslot((x)))
 
