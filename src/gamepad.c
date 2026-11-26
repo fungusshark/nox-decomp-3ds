@@ -98,16 +98,23 @@ static int nox_env_int_default(const char *name, int def_val)
 
 static int nox_gamepad_abs_deadzone_pct(void)
 {
-    return nox_env_int_default("NOX_GAMEPAD_ABS_DEADZONE_PERCENT", 18);
+    static int cached = -1;
+    if (cached < 0)
+        cached = nox_env_int_default("NOX_GAMEPAD_ABS_DEADZONE_PERCENT", 18);
+    return cached;
 }
 
 static int nox_gamepad_abs_run_pct(void)
 {
+    static int cached = -1;
+    if (cached < 0) {
 #ifdef __3DS__
-    return nox_env_int_default("NOX_GAMEPAD_ABS_RUN_PERCENT", 55);
+        cached = nox_env_int_default("NOX_GAMEPAD_ABS_RUN_PERCENT", 55);
 #else
-    return nox_env_int_default("NOX_GAMEPAD_ABS_RUN_PERCENT", 85);
+        cached = nox_env_int_default("NOX_GAMEPAD_ABS_RUN_PERCENT", 85);
 #endif
+    }
+    return cached;
 }
 
 // --------------------------

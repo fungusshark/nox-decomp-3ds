@@ -199,7 +199,7 @@ typedef struct _POINT {
 /* Ensure struct WSAData has identical 1-byte packed layout (398 B on 32-bit)
  * regardless of whether windows.h is included via proto.h or standalone. */
 #pragma pack(push, 1)
-struct WSAData {
+typedef struct WSAData {
     WORD wVersion;
     WORD wHighVersion;
     CHAR szDescription[257];

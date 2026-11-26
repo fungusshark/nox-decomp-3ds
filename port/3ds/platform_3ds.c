@@ -75,7 +75,7 @@ bool nox_3ds_init(void)
     consoleInit(GFX_BOTTOM, &g_boot_console);
     consoleDebugInit(debugDevice_CONSOLE);
     setvbuf(stdout, NULL, _IONBF, 0);
-    setvbuf(stderr, NULL, _IONBF, 0);
+    setvbuf(stderr, NULL, _IOLBF, 256);
 
     memset(&g_3ds_state, 0, sizeof(g_3ds_state));
     g_3ds_state.bottom_console_mode = true;
