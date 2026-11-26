@@ -26,6 +26,7 @@
 #endif
 
 #include "proto.h"
+#include "fov_scaler.h"
 
 #ifdef USE_SDL
 enum {
@@ -415,6 +416,8 @@ int g_rotated;
 Uint32 g_format;
 SDL_GLContext g_ddraw;
 GLuint g_texture, g_program, g_tex_coord_buffer, g_tex_coord_attr, g_gamma_uniform, g_matrix_uniform, g_sampler_uniform;
+GLint g_filter_mode_uniform = -1, g_tex_size_uniform = -1, g_scale_uniform = -1;
+static int g_gl_vp_w = 640, g_gl_vp_h = 480;
 unsigned int g_tex_coord_itemsize, g_tex_coord_numitems;
 float draw_gamma = 1.0;
 
@@ -459,62 +462,103 @@ static bool g_3ds_top_fill_screen = true;
 static nox_3ds_gui_filter_t g_3ds_gui_filter = NOX_3DS_GUI_ALL;
 static int g_3ds_world_cursor_id = 14;
 static uint16_t g_3ds_world_tooltip[256];
-static uint16_t *g_3ds_top_splash_pixels = NULL;
-static int g_3ds_top_splash_w = 0;
-static int g_3ds_top_splash_h = 0;
+static uint16_t *g_3ds_top_splash_5_3 = NULL;
+static uint16_t *g_3ds_top_splash_4_3 = NULL;
+static int g_3ds_top_splash_uploaded_wide = -1;
+static int g_3ds_top_frame_reuse = 0;
+static int g_3ds_top_splash_frame_active = 0;
 
 static void nox_3ds_free_top_splash(void)
 {
-    free(g_3ds_top_splash_pixels);
-    g_3ds_top_splash_pixels = NULL;
-    g_3ds_top_splash_w = 0;
-    g_3ds_top_splash_h = 0;
+    free(g_3ds_top_splash_5_3);
+    free(g_3ds_top_splash_4_3);
+    g_3ds_top_splash_5_3 = NULL;
+    g_3ds_top_splash_4_3 = NULL;
+    g_3ds_top_splash_uploaded_wide = -1;
+    g_3ds_top_frame_reuse = 0;
+    g_3ds_top_splash_frame_active = 0;
 }
 
 void nox_3ds_capture_top_splash(void)
 {
-    if (g_3ds_top_splash_pixels || !g_backbuffer1 || !g_backbuffer1->pixels)
+    if (g_3ds_top_splash_5_3 || !g_backbuffer1 || !g_backbuffer1->pixels)
         return;
     int w = g_backbuffer1->w;
     int h = g_backbuffer1->h;
     if (w <= 0 || h <= 0)
         return;
 
-    uint16_t *buf = (uint16_t *)malloc((size_t)w * (size_t)h * sizeof(uint16_t));
-    if (!buf)
+    /* One-shot load-time Lanczos-2 pre-downscale for 5:3 (400x240) and 4:3 (320x240).
+     * Never called per-frame; allows static menu splash reuse with 0 CPU/DMA work. */
+    uint16_t *b53 = (uint16_t *)malloc((size_t)NOX_3DS_TOP_W * (size_t)NOX_3DS_TOP_H * sizeof(uint16_t));
+    uint16_t *b43 = (uint16_t *)malloc((size_t)NOX_3DS_BOT_W * (size_t)NOX_3DS_BOT_H * sizeof(uint16_t));
+    if (!b53 || !b43) {
+        free(b53);
+        free(b43);
         return;
-
-    const uint8_t *src = (const uint8_t *)g_backbuffer1->pixels;
-    for (int y = 0; y < h; ++y) {
-        memcpy(buf + (size_t)y * (size_t)w, src + (size_t)y * (size_t)g_backbuffer1->pitch, (size_t)w * sizeof(uint16_t));
     }
-    g_3ds_top_splash_pixels = buf;
-    g_3ds_top_splash_w = w;
-    g_3ds_top_splash_h = h;
+
+    nox_fov_scaler_precompute_lanczos2_5551(
+        (const uint16_t *)g_backbuffer1->pixels, g_backbuffer1->pitch, w, h,
+        b53, NOX_3DS_TOP_W * (int)sizeof(uint16_t), NOX_3DS_TOP_W, NOX_3DS_TOP_H
+    );
+    nox_fov_scaler_precompute_lanczos2_5551(
+        (const uint16_t *)g_backbuffer1->pixels, g_backbuffer1->pitch, w, h,
+        b43, NOX_3DS_BOT_W * (int)sizeof(uint16_t), NOX_3DS_BOT_W, NOX_3DS_BOT_H
+    );
+    g_3ds_top_splash_5_3 = b53;
+    g_3ds_top_splash_4_3 = b43;
+    g_3ds_top_splash_uploaded_wide = -1;
 }
 
 bool nox_3ds_has_top_splash(void)
 {
-    return (g_3ds_top_splash_pixels != NULL);
+    return (g_3ds_top_splash_5_3 != NULL && g_3ds_top_splash_4_3 != NULL);
 }
 
 bool nox_3ds_present_top_splash(void)
 {
-    if (!g_3ds_top_splash_pixels || !g_backbuffer1 || !g_backbuffer1->pixels)
+    if (!g_3ds_top_splash_5_3 || !g_3ds_top_splash_4_3 || !g_backbuffer1 || !g_backbuffer1->pixels)
         return false;
-    int w = g_3ds_top_splash_w;
-    int h = g_3ds_top_splash_h;
-    if (w > g_backbuffer1->w) w = g_backbuffer1->w;
-    if (h > g_backbuffer1->h) h = g_backbuffer1->h;
 
-    uint8_t *dst = (uint8_t *)g_backbuffer1->pixels;
-    for (int y = 0; y < h; ++y) {
-        memcpy(dst + (size_t)y * (size_t)g_backbuffer1->pitch,
-               g_3ds_top_splash_pixels + (size_t)y * (size_t)g_3ds_top_splash_w,
-               (size_t)w * sizeof(uint16_t));
-    }
+    int wide = nox_fov_scaler_get_wide_aspect() ? 1 : 0;
+    int sw = wide ? NOX_3DS_TOP_W : NOX_3DS_BOT_W;
+    int sh = NOX_3DS_TOP_H;
+
     nox_3ds_font_clear_screen(NOX_3DS_SWBUF_TOP);
+    nox_3ds_set_top_crop(0, 0, sw, sh, (wide != 0));
+    g_3ds_top_splash_frame_active = 1;
+
+    if (g_3ds_top_splash_uploaded_wide == wide) {
+        g_3ds_top_frame_reuse = 1;
+        return true;
+    }
+
+    const uint16_t *src = wide ? g_3ds_top_splash_5_3 : g_3ds_top_splash_4_3;
+    uint8_t *dst = (uint8_t *)g_backbuffer1->pixels;
+    for (int y = 0; y < sh; ++y) {
+        memcpy(dst + (size_t)y * (size_t)g_backbuffer1->pitch,
+               src + (size_t)y * (size_t)sw,
+               (size_t)sw * sizeof(uint16_t));
+    }
+    g_3ds_top_splash_uploaded_wide = wide;
+    g_3ds_top_frame_reuse = 0;
     return true;
+}
+
+void nox_3ds_clear_top_backbuffer(void)
+{
+    void *swbuf = *(void **)&byte_5D4594[3798780];
+    int w = *(_DWORD *)&byte_5D4594[3801784];
+    int h = *(_DWORD *)&byte_5D4594[3801788];
+    if (swbuf && w > 0 && h > 0) {
+        memset(swbuf, 0, (size_t)w * (size_t)h * sizeof(uint16_t));
+    }
+    if (g_backbuffer1 && g_backbuffer1->pixels && g_backbuffer1->h > 0 && g_backbuffer1->pitch > 0) {
+        memset(g_backbuffer1->pixels, 0, (size_t)g_backbuffer1->h * (size_t)g_backbuffer1->pitch);
+    }
+    g_3ds_top_splash_uploaded_wide = -1;
+    g_3ds_top_frame_reuse = 0;
 }
 
 void nox_3ds_skip_default_cursor_blit(void)
@@ -658,65 +702,18 @@ void nox_3ds_swbuf_end_bottom(void)
     if (g_backbuffer_bot && g_backbuffer_bot->pixels && g_3ds_bot_swrows) {
         int w = *(_DWORD *)&byte_5D4594[3801784];
         int h = *(_DWORD *)&byte_5D4594[3801788];
-        if (w > g_backbuffer_bot->w) w = g_backbuffer_bot->w;
-        if (h > g_backbuffer_bot->h) h = g_backbuffer_bot->h;
+        if (w > g_3ds_bot_sw_w) w = g_3ds_bot_sw_w;
+        if (h > g_3ds_bot_sw_h) h = g_3ds_bot_sw_h;
 
-        /* Resolve pixel-exact bit-15 occlusion for Bottom native glyphs before upload */
+        /* Resolve pixel-exact bit-15 occlusion for Bottom native glyphs before 2x2 downsample */
         nox_3ds_font_resolve_occlusion(NOX_3DS_SWBUF_BOTTOM, g_3ds_bot_swrows, w, h);
 
-        int blocks16 = w >> 4;
-        int rem      = w & 15;
-        int pad_bytes = g_backbuffer_bot->pitch - 2 * w;
-        _WORD *dst = (_WORD *)g_backbuffer_bot->pixels;
-        const _WORD A = 1;
+        /* Fast 32-bit SWAR 2x2 box filter: 640x480 0RGB555 -> 320x240 RGBA5551 (512x256 linear) */
+        nox_fov_scaler_downsample_2x_box_555_to_5551(
+            g_3ds_bot_swrows, w, h,
+            (uint16_t *)g_backbuffer_bot->pixels, g_backbuffer_bot->pitch
+        );
 
-        for (int y = 0; y < h; ++y) {
-            const uint16_t *src = g_3ds_bot_swrows[y];
-            int b = blocks16;
-            if ((((uintptr_t)src | (uintptr_t)dst) & 3u) == 0u) {
-                uint32_t *dst32 = (uint32_t *)(void *)dst;
-                const uint32_t *src32 = (const uint32_t *)(const void *)src;
-                while (b-- > 0) {
-                    dst32[0] = ((src32[0] & 0x7FFF7FFFu) << 1) | 0x00010001u;
-                    dst32[1] = ((src32[1] & 0x7FFF7FFFu) << 1) | 0x00010001u;
-                    dst32[2] = ((src32[2] & 0x7FFF7FFFu) << 1) | 0x00010001u;
-                    dst32[3] = ((src32[3] & 0x7FFF7FFFu) << 1) | 0x00010001u;
-                    dst32[4] = ((src32[4] & 0x7FFF7FFFu) << 1) | 0x00010001u;
-                    dst32[5] = ((src32[5] & 0x7FFF7FFFu) << 1) | 0x00010001u;
-                    dst32[6] = ((src32[6] & 0x7FFF7FFFu) << 1) | 0x00010001u;
-                    dst32[7] = ((src32[7] & 0x7FFF7FFFu) << 1) | 0x00010001u;
-                    dst32 += 8;
-                    src32 += 8;
-                }
-                dst = (_WORD *)(void *)dst32;
-                src = (const uint16_t *)(const void *)src32;
-            } else {
-                while (b-- > 0) {
-                    dst[0]  = (_WORD)((src[0]  << 1) | A);
-                    dst[1]  = (_WORD)((src[1]  << 1) | A);
-                    dst[2]  = (_WORD)((src[2]  << 1) | A);
-                    dst[3]  = (_WORD)((src[3]  << 1) | A);
-                    dst[4]  = (_WORD)((src[4]  << 1) | A);
-                    dst[5]  = (_WORD)((src[5]  << 1) | A);
-                    dst[6]  = (_WORD)((src[6]  << 1) | A);
-                    dst[7]  = (_WORD)((src[7]  << 1) | A);
-                    dst[8]  = (_WORD)((src[8]  << 1) | A);
-                    dst[9]  = (_WORD)((src[9]  << 1) | A);
-                    dst[10] = (_WORD)((src[10] << 1) | A);
-                    dst[11] = (_WORD)((src[11] << 1) | A);
-                    dst[12] = (_WORD)((src[12] << 1) | A);
-                    dst[13] = (_WORD)((src[13] << 1) | A);
-                    dst[14] = (_WORD)((src[14] << 1) | A);
-                    dst[15] = (_WORD)((src[15] << 1) | A);
-                    dst += 16;
-                    src += 16;
-                }
-            }
-            for (int r = 0; r < rem; ++r) {
-                dst[r] = (_WORD)((src[r] << 1) | A);
-            }
-            dst = (_WORD *)((char *)(dst + rem) + pad_bytes);
-        }
         g_3ds_bot_frame_ready = 1;
         g_3ds_bot_has_frame   = 1;
     }
@@ -1439,6 +1436,8 @@ static void set_viewport(float srcw, float srch)
     }
 
     glViewport(vpx, vpy, vpw, vph);
+    g_gl_vp_w = (vpw > 0) ? vpw : 1;
+    g_gl_vp_h = (vph > 0) ? vph : 1;
 }
 
 static void glCheckErrorAt(const char *where)
@@ -1561,10 +1560,13 @@ void sdl_present()
             srcsurf->is_linear != 0,
             0, 0, srcsurf->w, srcsurf->h
         );
-        g_3ds_bot_frame_ready        = 0;
-        g_3ds_bot_has_frame          = 0;
-        g_3ds_top_crop_valid         = 0;
-        g_3ds_cursor_already_blitted = 0;
+        g_3ds_bot_frame_ready          = 0;
+        g_3ds_bot_has_frame            = 0;
+        g_3ds_top_crop_valid           = 0;
+        g_3ds_cursor_already_blitted   = 0;
+        g_3ds_top_splash_uploaded_wide = -1;
+        g_3ds_top_frame_reuse          = 0;
+        g_3ds_top_splash_frame_active  = 0;
         nox_3ds_font_clear_all();
         return;
     }
@@ -1578,6 +1580,7 @@ void sdl_present()
         top_frame.pitch      = srcsurf->pitch;
         top_frame.sdl_format = srcsurf->format ? srcsurf->format->format : g_format;
         top_frame.is_linear  = (srcsurf->is_linear != 0);
+        top_frame.reuse_tex  = (g_3ds_top_frame_reuse != 0);
 
         if (g_3ds_top_crop_valid && !g_present_is_movie) {
             top_frame.crop_x      = g_3ds_top_crop_x;
@@ -1606,9 +1609,17 @@ void sdl_present()
             bot_frame.crop_y      = 0;
             bot_frame.crop_w      = g_backbuffer_bot->w;
             bot_frame.crop_h      = g_backbuffer_bot->h;
+            bot_frame.font_crop_x = 0;
+            bot_frame.font_crop_y = 0;
+            bot_frame.font_crop_w = NOX_3DS_LOGICAL_W;
+            bot_frame.font_crop_h = NOX_3DS_LOGICAL_H;
             bot_frame.fill_screen = true;
             bot_frame.reuse_tex   = (g_3ds_bot_frame_ready == 2);
             bot_ptr = &bot_frame;
+        }
+
+        if (!g_3ds_top_splash_frame_active) {
+            g_3ds_top_splash_uploaded_wide = -1;
         }
 
         nox_3ds_video_present_dual(&top_frame, bot_ptr);
@@ -1616,9 +1627,11 @@ void sdl_present()
     /* Clear Top queue for next frame; Bottom queue persists across reuse_tex
      * frames and is cleared at the start of each fresh nox_3ds_swbuf_begin_bottom(). */
     nox_3ds_font_clear_screen(NOX_3DS_SWBUF_TOP);
-    g_3ds_bot_frame_ready        = 0;
-    g_3ds_top_crop_valid         = 0;
-    g_3ds_cursor_already_blitted = 0;
+    g_3ds_bot_frame_ready         = 0;
+    g_3ds_top_crop_valid          = 0;
+    g_3ds_cursor_already_blitted  = 0;
+    g_3ds_top_frame_reuse         = 0;
+    g_3ds_top_splash_frame_active = 0;
     return;
 #endif
     if (SDL_GL_GetCurrentWindow() != dword_973FE0 ||
@@ -1822,6 +1835,17 @@ static int tex_w = 0, tex_h = 0;
     // Draw textured quad
     // --------------------------------------------------------------------
     GLint filter = nox_use_linear_scaling() ? GL_LINEAR : GL_NEAREST;
+    int gl_filter_mode = (filter == GL_LINEAR) ? 1 : 0;
+    if (nox_fov_scaler_get_filter() == NOX_SCALER_SHARP_BILINEAR) {
+        filter = GL_LINEAR;
+        gl_filter_mode = 2;
+    } else if (nox_fov_scaler_get_filter() == NOX_SCALER_NEAREST) {
+        filter = GL_NEAREST;
+        gl_filter_mode = 0;
+    } else if (nox_fov_scaler_get_filter() == NOX_SCALER_BILINEAR) {
+        filter = GL_LINEAR;
+        gl_filter_mode = 1;
+    }
 
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
@@ -1853,6 +1877,22 @@ static int tex_w = 0, tex_h = 0;
 
         glUniform1f(g_gamma_uniform, draw_gamma);
         glCheckErrorAt("uniform gamma");
+
+#ifndef __3DS__
+        if (g_filter_mode_uniform >= 0) {
+            glUniform1i(g_filter_mode_uniform, gl_filter_mode);
+        }
+        if (g_tex_size_uniform >= 0) {
+            glUniform2f(g_tex_size_uniform, (float)w, (float)h);
+        }
+        if (g_scale_uniform >= 0) {
+            float sx = (float)g_gl_vp_w / (float)((w > 0) ? w : 1);
+            float sy = (float)g_gl_vp_h / (float)((h > 0) ? h : 1);
+            if (sx < 1.0f) sx = 1.0f;
+            if (sy < 1.0f) sy = 1.0f;
+            glUniform2f(g_scale_uniform, sx, sy);
+        }
+#endif
     }
 
     glBindBuffer(GL_ARRAY_BUFFER, g_tex_coord_buffer);
@@ -2026,7 +2066,9 @@ int create_surfaces(HWND a1, int width, int height)
     if (g_backbuffer_bot) {
         sub_48B1D0(&g_backbuffer_bot);
     }
-    g_backbuffer_bot = sub_48A600(width, height, DDSD_CAPS | DDSD_HEIGHT | DDSD_WIDTH, DDSCAPS_OFFSCREENPLAIN);
+    g_backbuffer_bot = sub_48A600(NOX_3DS_BOT_W, NOX_3DS_BOT_H, DDSD_CAPS | DDSD_HEIGHT | DDSD_WIDTH, DDSCAPS_OFFSCREENPLAIN);
+#else
+    nox_fov_scaler_init(NOX_FOV_DEV_AUTO, width, height, false);
 #endif
     //g_backbufferrgb = SDL_CreateRGBSurfaceWithFormat(0, width, height, 32, SDL_PIXELFORMAT_ABGR8888);
     if (g_backbuffer1)
@@ -2168,11 +2210,21 @@ const GLchar *fragment_source = FLOAT_PRECISION \
     "uniform sampler2D uSampler;\n" \
     "uniform float uGamma;\n" \
     "uniform mat2 uMatrix;\n" \
+    "uniform int uFilterMode;\n" \
+    "uniform vec2 uTexSize;\n" \
+    "uniform vec2 uScale;\n" \
     "\n" \
     "void main(void) {\n" \
     "    vec2 coordTex = vec3(vTextureCoord - 0.5, 1).xy + 0.5;\n" \
     "    coordTex.y = uMatrix[1].y - (2.0 * uMatrix[1].y - 1.0) * coordTex.y;\n" \
-    "    gl_FragColor.rgb = pow(texture2D(uSampler, coordTex * uMatrix).rgb, vec3(1.0/uGamma));\n" \
+    "    vec2 uv = coordTex * uMatrix;\n" \
+    "    if (uFilterMode == 2 && uTexSize.x > 0.0 && uTexSize.y > 0.0) {\n" \
+    "        vec2 texel = uv * uTexSize;\n" \
+    "        vec2 seam = floor(texel + 0.5);\n" \
+    "        vec2 f = clamp((texel - seam) * uScale + 0.5, 0.0, 1.0);\n" \
+    "        uv = (seam + f - 0.5) / uTexSize;\n" \
+    "    }\n" \
+    "    gl_FragColor.rgb = pow(texture2D(uSampler, uv).rgb, vec3(1.0/uGamma));\n" \
     "}\n";
 
 
@@ -2374,6 +2426,10 @@ int sub_48B000()
         g_sampler_uniform = glGetUniformLocation(g_program, "uSampler");
         glCheckError();
         fprintf(stderr, "GLINIT_UNIFORM: uSampler loc=%d\n", g_sampler_uniform);
+
+        g_filter_mode_uniform = glGetUniformLocation(g_program, "uFilterMode");
+        g_tex_size_uniform    = glGetUniformLocation(g_program, "uTexSize");
+        g_scale_uniform       = glGetUniformLocation(g_program, "uScale");
 
         glGenBuffers(1, &g_tex_coord_buffer);
         glCheckError();
@@ -2765,6 +2821,12 @@ int sdl_unk1(int a1)
 #ifdef __3DS__
         if (!g_3ds_cursor_dst)
             return 0;
+        if (g_3ds_cursor_dst == g_backbuffer_bot) {
+            dst.x = dst.x / 2;
+            dst.y = dst.y / 2;
+            dst.w = (dst.w + 1) / 2;
+            dst.h = (dst.h + 1) / 2;
+        }
         if (SDL_BlitScaled(g_cursor_surf, &src, g_3ds_cursor_dst, &dst))
 			return 0;
 #else
@@ -3515,30 +3577,91 @@ void sub_4AD1E0()
     if (!result)
     {
 #ifdef __3DS__
+        if (g_3ds_top_frame_reuse) {
+            SDL_UnlockSurface(g_backbuffer1);
+            ++*(_DWORD *)&byte_5D4594[3798652];
+            return;
+        }
+        if (g_3ds_top_splash_frame_active) {
+            SDL_UnlockSurface(g_backbuffer1);
+            ++*(_DWORD *)&byte_5D4594[3798652];
+            return;
+        }
         {
+            int full_w = *(_DWORD *)&byte_5D4594[3801784];
+            int full_h = *(_DWORD *)&byte_5D4594[3801788];
+            int total_blocks = *(_DWORD *)&byte_5D4594[3801800];
+            _WORD **all_rows = *(_WORD ***)&byte_5D4594[3798784];
+
             /* Resolve pixel-exact bit-15 occlusion for Top native glyphs before upload */
             nox_3ds_font_resolve_occlusion(
                 NOX_3DS_SWBUF_TOP,
-                *(uint16_t ***)&byte_5D4594[3798784],
-                *(_DWORD *)&byte_5D4594[3801784],
-                *(_DWORD *)&byte_5D4594[3801788]
+                (uint16_t **)(void *)all_rows,
+                full_w,
+                full_h
             );
+
             int y_start = 0;
-            int y_end   = *(_DWORD *)&byte_5D4594[3801788];
+            int y_end   = full_h;
+            int blk0    = 0;
+            int blk1    = total_blocks;
             if (g_3ds_top_crop_valid && g_3ds_top_crop_h > 0) {
-                /* Include 2-row guard band for GPU_LINEAR edge filtering */
+                /* Include 2px guard band for GPU_LINEAR edge filtering */
                 int cy = g_3ds_top_crop_y - 2;
                 int ce = g_3ds_top_crop_y + g_3ds_top_crop_h + 2;
                 if (cy < 0) cy = 0;
-                if (ce > y_end) ce = y_end;
+                if (ce > full_h) ce = full_h;
                 if (cy < ce) {
                     y_start = cy;
                     y_end   = ce;
                 }
+                if (g_3ds_top_crop_w > 0) {
+                    int cx = g_3ds_top_crop_x - 2;
+                    int cr = g_3ds_top_crop_x + g_3ds_top_crop_w + 2;
+                    if (cx < 0) cx = 0;
+                    if (cr > full_w) cr = full_w;
+                    blk0 = cx >> 4;
+                    blk1 = (cr + 15) >> 4;
+                    if (blk0 < 0) blk0 = 0;
+                    if (blk1 > total_blocks) blk1 = total_blocks;
+                }
             }
-            v2 = y_end - y_start;
-            v3 = (*(_WORD ***)&byte_5D4594[3798784]) + y_start;
-            v1 = (_WORD *)(void *)((char *)v1 + (size_t)y_start * (size_t)g_backbuffer1->pitch);
+            const int x_off = blk0 << 4;
+            const int x_blocks = blk1 - blk0;
+            uint8_t *dst_base = (uint8_t *)g_backbuffer1->pixels;
+            for (int y = y_start; y < y_end; ++y) {
+                const _WORD *src_row = all_rows[y] + x_off;
+                _WORD *dst_row = (_WORD *)(void *)(dst_base + (size_t)y * (size_t)g_backbuffer1->pitch) + x_off;
+                int blocks = x_blocks;
+                if ((((uintptr_t)src_row | (uintptr_t)dst_row) & 3u) == 0u) {
+                    uint32_t *dst32 = (uint32_t *)(void *)dst_row;
+                    const uint32_t *src32 = (const uint32_t *)(const void *)src_row;
+                    while (blocks-- > 0) {
+                        dst32[0] = ((src32[0] & 0x7FFF7FFFu) << 1) | 0x00010001u;
+                        dst32[1] = ((src32[1] & 0x7FFF7FFFu) << 1) | 0x00010001u;
+                        dst32[2] = ((src32[2] & 0x7FFF7FFFu) << 1) | 0x00010001u;
+                        dst32[3] = ((src32[3] & 0x7FFF7FFFu) << 1) | 0x00010001u;
+                        dst32[4] = ((src32[4] & 0x7FFF7FFFu) << 1) | 0x00010001u;
+                        dst32[5] = ((src32[5] & 0x7FFF7FFFu) << 1) | 0x00010001u;
+                        dst32[6] = ((src32[6] & 0x7FFF7FFFu) << 1) | 0x00010001u;
+                        dst32[7] = ((src32[7] & 0x7FFF7FFFu) << 1) | 0x00010001u;
+                        dst32 += 8;
+                        src32 += 8;
+                    }
+                } else {
+                    const WORD A = 1;
+                    while (blocks-- > 0) {
+                        for (int k = 0; k < 16; ++k) {
+                            dst_row[k] = (WORD)((src_row[k] << 1) | A);
+                        }
+                        dst_row += 16;
+                        src_row += 16;
+                    }
+                }
+            }
+            SDL_UnlockSurface(g_backbuffer1);
+            ++*(_DWORD *)&byte_5D4594[3798652];
+            return;
         }
 #else
         v2 = *(_DWORD *)&byte_5D4594[3801788];          // height

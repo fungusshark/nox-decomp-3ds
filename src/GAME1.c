@@ -3,6 +3,7 @@
 #endif
 
 #include "proto.h"
+#include "fov_scaler.h"
 
 extern int g_fullscreen;
 extern float draw_gamma;
@@ -46408,15 +46409,25 @@ int sub_436100()
       v6 = *(_DWORD *)&byte_5D4594[811068];
     }
 #ifdef __3DS__
-    /* Keep isometric world viewport at centered 5:3 (640x384 -> GPU_LINEAR 400x240) */
-    v6 = NOX_3DS_VP_LEFT;
-    v7 = NOX_3DS_VP_TOP;
-    *(_DWORD *)&byte_5D4594[811068] = NOX_3DS_VP_LEFT;
-    *(_DWORD *)&byte_5D4594[811072] = NOX_3DS_VP_TOP;
-    *(_DWORD *)&byte_5D4594[811076] = NOX_3DS_VP_RIGHT;
-    *(_DWORD *)&byte_5D4594[811080] = NOX_3DS_VP_BOTTOM;
-    *(_DWORD *)&byte_5D4594[811100] = NOX_3DS_VP_W;
-    *(_DWORD *)&byte_5D4594[811104] = NOX_3DS_VP_H;
+    /* Dynamic FOV-scaled world viewport (centered around 320,240; square pixels in 5:3 & 4:3) */
+    {
+      int vp_l, vp_t, vp_r, vp_b, vp_w, vp_h;
+      nox_fov_scaler_get_world_viewport(&vp_l, &vp_t, &vp_r, &vp_b, &vp_w, &vp_h);
+      v6 = vp_l;
+      v7 = vp_t;
+      *(_DWORD *)&byte_5D4594[811068] = vp_l;
+      *(_DWORD *)&byte_5D4594[811072] = vp_t;
+      *(_DWORD *)&byte_5D4594[811076] = vp_r;
+      *(_DWORD *)&byte_5D4594[811080] = vp_b;
+      *(_DWORD *)&byte_5D4594[811100] = vp_w;
+      *(_DWORD *)&byte_5D4594[811104] = vp_h;
+      if ( nox_fov_scaler_consume_viewport_dirty() )
+      {
+        *(_DWORD *)&byte_5D4594[1193188] = 1;
+        *(_DWORD *)&byte_5D4594[3799524] = 1;
+        nox_3ds_clear_top_backbuffer();
+      }
+    }
 #endif
     sub_430B50(v6, v7, *(int *)&byte_5D4594[811076], *(int *)&byte_5D4594[811080]);
     if ( *(_DWORD *)&byte_5D4594[2616328] )
@@ -47727,6 +47738,49 @@ int sub_438480()
   if ( *(_DWORD *)&byte_5D4594[815024] ) *(_DWORD *)(*(_DWORD *)&byte_5D4594[815024] + 4) |= 0x4000;
   if ( *(_DWORD *)&byte_5D4594[815028] ) *(_DWORD *)(*(_DWORD *)&byte_5D4594[815028] + 4) |= 0x4000;
   if ( *(_DWORD *)&byte_5D4594[815032] ) *(_DWORD *)(*(_DWORD *)&byte_5D4594[815032] + 4) |= 0x4000;
+  if ( nox_fov_scaler_should_promote_small_ui_font() )
+  {
+    /* Rebalance Server List columns so Server Name has +56% width inside 10037 (0..388 left of scrollbar) */
+    _DWORD *c_name   = *(_DWORD **)&byte_5D4594[815016];
+    _DWORD *c_ply    = *(_DWORD **)&byte_5D4594[815020];
+    _DWORD *c_type   = *(_DWORD **)&byte_5D4594[815024];
+    _DWORD *c_ping   = *(_DWORD **)&byte_5D4594[815028];
+    _DWORD *c_status = *(_DWORD **)&byte_5D4594[815032];
+    if ( c_name )   { sub_46A9B0(c_name,   4,   0); sub_46AB20(c_name,   156, 400); }
+    if ( c_ply )    { sub_46A9B0(c_ply,    160, 0); sub_46AB20(c_ply,    44,  400); }
+    if ( c_type )   { sub_46A9B0(c_type,   204, 0); sub_46AB20(c_type,   78,  400); }
+    if ( c_ping )   { sub_46A9B0(c_ping,   282, 0); sub_46AB20(c_ping,   44,  400); }
+    if ( c_status ) { sub_46A9B0(c_status, 326, 0); sub_46AB20(c_status, 62,  400); }
+
+    _DWORD *srv_root = *(_DWORD **)&byte_5D4594[814980];
+    if ( srv_root )
+    {
+      _DWORD *h0 = (_DWORD *)sub_46B0C0(srv_root, 10047);
+      _DWORD *h1 = (_DWORD *)sub_46B0C0(srv_root, 10048);
+      _DWORD *h2 = (_DWORD *)sub_46B0C0(srv_root, 10049);
+      _DWORD *h3 = (_DWORD *)sub_46B0C0(srv_root, 10050);
+      _DWORD *h4 = (_DWORD *)sub_46B0C0(srv_root, 10051);
+      if ( h0 ) { sub_46A9B0(h0, 224, 30); sub_46AB20(h0, 72, 20); }
+      if ( h1 ) sub_46A9B0(h1, 376, 30);
+      if ( h2 ) sub_46A9B0(h2, 434, 30);
+      if ( h3 ) sub_46A9B0(h3, 496, 30);
+      if ( h4 ) sub_46A9B0(h4, 550, 30);
+    }
+
+    if ( !nox_3ds_font_is_enabled() )
+    {
+      int large_fnt = sub_43F360("large");
+      if ( large_fnt )
+      {
+        if ( *(_DWORD *)&byte_5D4594[815012] ) *(_DWORD *)(*(_DWORD *)&byte_5D4594[815012] + 236) = large_fnt;
+        if ( c_name )   c_name[59]   = large_fnt;
+        if ( c_ply )    c_ply[59]    = large_fnt;
+        if ( c_type )   c_type[59]   = large_fnt;
+        if ( c_ping )   c_ping[59]   = large_fnt;
+        if ( c_status ) c_status[59] = large_fnt;
+      }
+    }
+  }
 #endif
   **(_DWORD **)(*(_DWORD *)(*(_DWORD *)&byte_5D4594[815004] + 32) + 28) = 10035;
   **(_DWORD **)(*(_DWORD *)(*(_DWORD *)&byte_5D4594[815004] + 32) + 32) = 10036;
@@ -52255,8 +52309,8 @@ LABEL_24:
               }
               sub_4AD170();
             }
+            nox_3ds_set_top_crop(0, 0, NOX_3DS_LOGICAL_W, NOX_3DS_LOGICAL_H, true);
           }
-          nox_3ds_set_top_crop(0, 0, NOX_3DS_LOGICAL_W, NOX_3DS_LOGICAL_H, true);
         }
 
         nox_3ds_swbuf_begin_bottom(0);
@@ -52338,10 +52392,15 @@ LABEL_24:
         v25 = (int *)sub_437250();
         sub_431720(v25);
 
+        int vp_l = NOX_3DS_VP_LEFT, vp_t = NOX_3DS_VP_TOP;
+        int vp_r = NOX_3DS_VP_RIGHT, vp_b = NOX_3DS_VP_BOTTOM;
+        int vp_w = NOX_3DS_VP_W, vp_h = NOX_3DS_VP_H;
+        nox_fov_scaler_get_world_viewport(&vp_l, &vp_t, &vp_r, &vp_b, &vp_w, &vp_h);
+
         if ( do_present )
         {
           if ( sub_43C700() && !(*(_DWORD *)&byte_5D4594[2650636] & 0x40000) )
-            nox_3ds_set_top_crop(NOX_3DS_VP_LEFT, NOX_3DS_VP_TOP, NOX_3DS_VP_W, NOX_3DS_VP_H, true);
+            nox_3ds_set_top_crop(vp_l, vp_t, vp_w, vp_h, nox_fov_scaler_get_wide_aspect());
           else
             nox_3ds_set_top_crop(0, 0, NOX_3DS_LOGICAL_W, NOX_3DS_LOGICAL_H, true);
         }
@@ -52382,10 +52441,10 @@ LABEL_24:
             th += 4;
             tx = aim_x - *(_DWORD *)&byte_5D4594[1097204];
             ty = aim_y - *(_DWORD *)&byte_5D4594[1097208];
-            if ( tx + tw + 4 > NOX_3DS_VP_RIGHT )  tx = NOX_3DS_VP_RIGHT - (tw + 4);
-            if ( tx < NOX_3DS_VP_LEFT )            tx = NOX_3DS_VP_LEFT;
-            if ( ty + th > NOX_3DS_VP_BOTTOM )     ty = NOX_3DS_VP_BOTTOM - th;
-            if ( ty < NOX_3DS_VP_TOP )             ty = NOX_3DS_VP_TOP;
+            if ( tx + tw + 4 > vp_r )  tx = vp_r - (tw + 4);
+            if ( tx < vp_l )           tx = vp_l;
+            if ( ty + th > vp_b )      ty = vp_b - th;
+            if ( ty < vp_t )           ty = vp_t;
             sub_49CF10(tx, ty, tw + 4, th);
             sub_434390(*(int *)&byte_5D4594[2589772]);
             sub_43FAF0(0, (void *)wtip, tx + 2, ty + 2, 0, 0);
@@ -54891,6 +54950,18 @@ int sub_440900()
   v1 = *(_DWORD *)&byte_5D4594[3801800];
   v2 = *(_DWORD *)&byte_5D4594[3801788];
   result = *(_DWORD *)(*(_DWORD *)&byte_5D4594[3799572] + 232);
+#ifdef __3DS__
+  if ( !nox_3ds_is_bottom_swbuf_active() && nox_3ds_input_is_world_mode() )
+  {
+    int vp_t = 0, vp_h = v2;
+    nox_fov_scaler_get_world_viewport(NULL, &vp_t, NULL, NULL, NULL, &vp_h);
+    if ( vp_t >= 0 && vp_t + vp_h <= v2 && vp_h > 0 )
+    {
+      v0 += vp_t;
+      v2 = vp_h;
+    }
+  }
+#endif
   do
   {
     v4 = *v0;

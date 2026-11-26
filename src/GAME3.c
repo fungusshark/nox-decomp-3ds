@@ -708,9 +708,11 @@ int __cdecl sub_4A28C0(int a1)
 #ifdef __3DS__
 static int nox_3ds_listbox_item_gap(_DWORD *wnd)
 {
-  if ( !wnd || !nox_3ds_font_is_enabled() )
+  if ( !wnd )
     return 1;
   if ( nox_3ds_font_slot_from_ptr(wnd[59]) == 1 )
+    return (wnd[1] & 0x4000) ? 3 : 1;
+  if ( !nox_3ds_font_is_enabled() )
     return 1;
   /* Single-line listboxes (0x4000, e.g. Server List, Map/Rule/Player lists):
    * 12 logical px line height + 4 gap = 16 logical px = exact 8.0 physical px/row
@@ -734,8 +736,9 @@ static void nox_3ds_listbox_sync_metrics(_DWORD *wnd)
     return;
   if ( cnt > max_cnt )
     cnt = max_cnt;
-  bool want_native = nox_3ds_font_is_enabled() && (nox_3ds_font_slot_from_ptr(wnd[59]) != 1);
-  uint8_t want_tag = want_native ? 2u : 1u;
+  bool is_large = (nox_3ds_font_slot_from_ptr(wnd[59]) == 1);
+  bool want_native = nox_3ds_font_is_enabled() && !is_large;
+  uint8_t want_tag = is_large ? 3u : (want_native ? 2u : 1u);
   int items_base = *(_DWORD *)(v2 + 24);
   if ( *(uint8_t *)(items_base + 521) == want_tag )
     return;

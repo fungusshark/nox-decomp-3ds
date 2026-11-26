@@ -1,5 +1,6 @@
 #include "platform_3ds.h"
 #include "nox_3ds_version.h"
+#include "../../src/fov_scaler.h"
 
 #ifndef NOX_3DS_VERSION_STR
 #define NOX_3DS_VERSION_STR "3ds-dev"
@@ -82,15 +83,54 @@ bool nox_3ds_init(void)
         g_3ds_state.is_new_3ds = is_n3ds;
     }
 
+    u8 sys_model = 0xFFu;
+    if (R_SUCCEEDED(cfguInit())) {
+        if (R_FAILED(CFGU_GetSystemModel(&sys_model))) {
+            sys_model = 0xFFu;
+        }
+        cfguExit();
+    }
+    g_3ds_state.system_model = sys_model;
+
+    nox_fov_device_id_t fov_dev;
+    switch (sys_model) {
+    case CFG_MODEL_3DS:
+        fov_dev = NOX_FOV_DEV_O3DS;
+        break;
+    case CFG_MODEL_2DS:
+        fov_dev = NOX_FOV_DEV_O2DS;
+        break;
+    case CFG_MODEL_N3DS:
+        fov_dev = NOX_FOV_DEV_N3DS;
+        break;
+    case CFG_MODEL_3DSXL:
+    case CFG_MODEL_N3DSXL:
+    case CFG_MODEL_N2DSXL:
+        fov_dev = NOX_FOV_DEV_N3DSXL;
+        break;
+    default:
+        fov_dev = g_3ds_state.is_new_3ds ? NOX_FOV_DEV_N3DS : NOX_FOV_DEV_O3DS;
+        break;
+    }
+    nox_fov_scaler_init(fov_dev, NOX_3DS_LOGICAL_W, NOX_3DS_LOGICAL_H, g_3ds_state.wide_stretch);
+
     g_3ds_state.linear_free_bytes = (uint32_t)linearSpaceFree();
     g_3ds_state.heap_used_bytes = (uint32_t)mallinfo().uordblks;
 
-    printf("=== Nox New 3DS Port [%s] ===\n", NOX_3DS_VERSION_STR);
-    printf("[3ds] Ported by Fungus Shark & AlbertChen408 (Giraffepus) | Orig: Westwood Studios\n");
-    printf("[3ds] Model: %s\n", g_3ds_state.is_new_3ds ? "New 3DS (804MHz + L2)" : "WARNING: Old 3DS (268MHz)");
-    printf("[3ds] Stack: %u KB | linearFree: %u KB\n",
-           (unsigned)(__stacksize__ / 1024u),
-           (unsigned)(g_3ds_state.linear_free_bytes / 1024u));
+    {
+        int vp_w = 0, vp_h = 0;
+        nox_fov_scaler_get_world_viewport(NULL, NULL, NULL, NULL, &vp_w, &vp_h);
+        printf("=== Nox New 3DS Port [%s] ===\n", NOX_3DS_VERSION_STR);
+        printf("[3ds] Ported by Fungus Shark & AlbertChen408 (Giraffepus) | Orig: Westwood Studios\n");
+        printf("[3ds] Model: %s (%s) | FOV: %dx%d (%s)\n",
+               nox_fov_scaler_device_name(),
+               g_3ds_state.is_new_3ds ? "804MHz + L2" : "WARNING: Old 3DS 268MHz",
+               vp_w, vp_h,
+               g_3ds_state.wide_stretch ? "5:3" : "4:3");
+        printf("[3ds] Stack: %u KB | linearFree: %u KB\n",
+               (unsigned)(__stacksize__ / 1024u),
+               (unsigned)(g_3ds_state.linear_free_bytes / 1024u));
+    }
 
     Result rc = romfsInit();
     if (R_SUCCEEDED(rc)) {

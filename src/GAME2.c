@@ -1,4 +1,5 @@
 #include "proto.h"
+#include "fov_scaler.h"
 
 BYTE *npc_array;
 
@@ -31058,13 +31059,19 @@ int __cdecl sub_476700(int a1, int a2)
   v2 = a2;
   v3 = sub_437250();
 #ifdef __3DS__
-  /* Lock gameplay world viewport to centered 5:3 640x384 (GPU_LINEAR -> 400x240) */
-  *(_DWORD *)v3 = NOX_3DS_VP_LEFT;
-  *((_DWORD *)v3 + 1) = NOX_3DS_VP_TOP;
-  *((_DWORD *)v3 + 2) = NOX_3DS_VP_RIGHT;
-  *((_DWORD *)v3 + 3) = NOX_3DS_VP_BOTTOM;
-  *((_DWORD *)v3 + 8) = NOX_3DS_VP_W;
-  *((_DWORD *)v3 + 9) = NOX_3DS_VP_H;
+  /* Dynamic FOV-scaled gameplay world viewport (centered around 320,240; square pixels in 5:3 & 4:3) */
+  {
+    int vp_l, vp_t, vp_r, vp_b, vp_w, vp_h;
+    nox_fov_scaler_get_world_viewport(&vp_l, &vp_t, &vp_r, &vp_b, &vp_w, &vp_h);
+    *(_DWORD *)v3 = vp_l;
+    *((_DWORD *)v3 + 1) = vp_t;
+    *((_DWORD *)v3 + 2) = vp_r;
+    *((_DWORD *)v3 + 3) = vp_b;
+    *((_DWORD *)v3 + 8) = vp_w;
+    *((_DWORD *)v3 + 9) = vp_h;
+    if ( nox_fov_scaler_consume_viewport_dirty() )
+      nox_3ds_clear_top_backbuffer();
+  }
   *(_DWORD *)&byte_5D4594[1193188] = 1;
   *(_DWORD *)&byte_5D4594[3799524] = 1;
   (void)v2;

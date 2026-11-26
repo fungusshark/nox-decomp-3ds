@@ -137,6 +137,7 @@ add_executable (
     GAME_data.c
     cdrom.c
     draw.c
+    fov_scaler.c
     imm.c
     control_server.c
     gamepad.c
