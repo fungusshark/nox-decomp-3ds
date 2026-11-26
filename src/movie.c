@@ -1804,7 +1804,17 @@ _DWORD *sub_556050()
         for (int y = 0; y < h; ++y) {
             const uint8_t *sr = s_3ds_vqa_pal_buf + (size_t)y * (size_t)s_3ds_vqa_buf_w;
             uint16_t *dr = dst + y * dst_stride;
-            for (int x = 0; x < w; ++x) {
+            int x = 0;
+            if (((uintptr_t)dr & 2u) && x < w) {
+                dr[x] = s_3ds_vqa_pal_lut[sr[x]];
+                ++x;
+            }
+            for (; x + 1 < w; x += 2) {
+                uint32_t pair = (uint32_t)s_3ds_vqa_pal_lut[sr[x]]
+                              | ((uint32_t)s_3ds_vqa_pal_lut[sr[x + 1]] << 16);
+                *(uint32_t *)(dr + x) = pair;
+            }
+            if (x < w) {
                 dr[x] = s_3ds_vqa_pal_lut[sr[x]];
             }
         }
@@ -3920,7 +3930,7 @@ LABEL_13:
 			(void)b470_rc;
 #endif
 			v4 = sub_55AEF0(v3[177], 1, 0);
-			#ifdef USE_SDL
+			#if defined(USE_SDL) && !defined(__3DS__)
             static int last_v4 = 123456;
             if (v4 != last_v4) {
                 fprintf(stderr, "[MOVIE] sub_55AEF0 -> %d\n", v4);
@@ -6765,6 +6775,8 @@ int __cdecl sub_55BA80(int a1, int a2)
 	return result;
 }
 
+static int s_vqa_lut_mode = -1;
+
 //----- (0055BB30) --------------------------------------------------------
 int __cdecl sub_55BB30(int a1)
 {
@@ -6847,6 +6859,7 @@ int __cdecl sub_55BB30(int a1)
 		}
 		v1 = i + 1;
 	}
+	s_vqa_lut_mode = a1;
 	return 1;
 }
 // 5667CB: using guessed type void *__cdecl operator_new(unsigned int);
@@ -6854,16 +6867,45 @@ int __cdecl sub_55BB30(int a1)
 //----- (0055BC60) --------------------------------------------------------
 int sub_55BC60()
 {
-	int result; // eax
-
-	operator_delete(*(LPVOID *)&byte_5D4594[2516188]);
-	*(_DWORD *)&byte_5D4594[2516188] = 0;
-	return result;
+	if (*(_DWORD *)&byte_5D4594[2516188])
+	{
+		operator_delete(*(LPVOID *)&byte_5D4594[2516188]);
+		*(_DWORD *)&byte_5D4594[2516188] = 0;
+	}
+	s_vqa_lut_mode = -1;
+	return 0;
 }
 
 //----- (0055BC80) --------------------------------------------------------
 unsigned __int16 *__cdecl sub_55BC80(unsigned __int16 *a1, int a2)
 {
+#ifdef __3DS__
+	if (s_vqa_lut_mode == 2 && a2 > 0)
+	{
+		unsigned __int16 *p = a1;
+		int rem = a2;
+		if (((uintptr_t)p & 2u) && rem > 0)
+		{
+			uint16_t v = *p;
+			*p++ = (uint16_t)(((v & 0x7FFFu) << 1) | 1u);
+			--rem;
+		}
+		uint32_t *p32 = (uint32_t *)p;
+		while (rem >= 2)
+		{
+			uint32_t w = *p32;
+			*p32++ = ((w & 0x7FFF7FFFu) << 1) | 0x00010001u;
+			rem -= 2;
+		}
+		p = (unsigned __int16 *)p32;
+		if (rem > 0)
+		{
+			uint16_t v = *p;
+			*p++ = (uint16_t)(((v & 0x7FFFu) << 1) | 1u);
+		}
+		return a1 + a2;
+	}
+#endif
 	int v2; // ecx
 	unsigned __int16 *result; // eax
 	unsigned __int16 v4; // dx
@@ -13612,8 +13654,11 @@ int __cdecl sub_562C9B(unsigned __int8 *a1, char *a2, int a3)
 						v12 = &a2[v5];
 						if (v9 > v24)
 							v9 = v22 - v3;
-						for (unsigned int _k = 0; _k < v9; ++_k)
-							v3[_k] = v12[_k];
+						if (v3 - v12 >= (ptrdiff_t)v9 || v12 >= v3 + v9)
+							memcpy(v3, v12, v9);
+						else
+							for (unsigned int _k = 0; _k < v9; ++_k)
+								v3[_k] = v12[_k];
 						v3 += v9;
 					}
 				}
@@ -13639,8 +13684,13 @@ int __cdecl sub_562C9B(unsigned __int8 *a1, char *a2, int a3)
 				v4 += 2;
 				{
 					const char *_src = &v3[-v5];
-					for (unsigned int _k = 0; _k < v7; ++_k)
-						v3[_k] = _src[_k];
+					if (v3 - _src >= (ptrdiff_t)v7)
+						memcpy(v3, _src, v7);
+					else if (v5 == 1)
+						memset(v3, (unsigned char)_src[0], v7);
+					else
+						for (unsigned int _k = 0; _k < v7; ++_k)
+							v3[_k] = _src[_k];
 				}
 				v3 += v7;
 			}
@@ -13684,8 +13734,13 @@ int __cdecl sub_562C9B(unsigned __int8 *a1, char *a2, int a3)
 						LOWORD(v15) = *v16;
 						{
 							const char *_src = &v3[-v15];
-							for (unsigned int _k = 0; _k < v19; ++_k)
-								v3[_k] = _src[_k];
+							if (v3 - _src >= (ptrdiff_t)v19)
+								memcpy(v3, _src, v19);
+							else if (v15 == 1)
+								memset(v3, (unsigned char)_src[0], v19);
+							else
+								for (unsigned int _k = 0; _k < v19; ++_k)
+									v3[_k] = _src[_k];
 						}
 						v3 += v19;
 					}
@@ -13712,8 +13767,13 @@ int __cdecl sub_562C9B(unsigned __int8 *a1, char *a2, int a3)
 				v14 += 2;
 				{
 					const char *_src = &v3[-v15];
-					for (unsigned int _k = 0; _k < v17; ++_k)
-						v3[_k] = _src[_k];
+					if (v3 - _src >= (ptrdiff_t)v17)
+						memcpy(v3, _src, v17);
+					else if (v15 == 1)
+						memset(v3, (unsigned char)_src[0], v17);
+					else
+						for (unsigned int _k = 0; _k < v17; ++_k)
+							v3[_k] = _src[_k];
 				}
 				v3 += v17;
 			}
