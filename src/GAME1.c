@@ -52212,11 +52212,16 @@ LABEL_24:
         }
       }
     }
+#ifdef __3DS__
+    int v3ds_did_present = 0;
+#endif
     if ( !(*(_DWORD *)&byte_5D4594[2650636] & 0x80000000) )
     {
 #ifdef __3DS__
       static int s_bot_was_gameplay = 0;
       static unsigned int s_bot_idle_tick = 0;
+      static int s_prev_mm_x = 0x7fffffff;
+      static int s_prev_mm_y = 0x7fffffff;
       int do_present = (!(*(_DWORD *)&byte_5D4594[2650636] & 0x40000)
                         || (byte_5D4594[2650637] & 1)
                         || *(_DWORD *)&byte_5D4594[815132]);
@@ -52413,6 +52418,9 @@ LABEL_24:
                             && *(_DWORD *)&byte_5D4594[1556112] != 1
                             && *(_DWORD *)&byte_5D4594[2614252]
                             && sub_43C700());
+          _DWORD *player_drw = minimap_on ? sub_45A6F0(*(int *)&byte_5D4594[2616328]) : NULL;
+          int mm_moved = (player_drw != NULL &&
+                          ((int)player_drw[3] != s_prev_mm_x || (int)player_drw[4] != s_prev_mm_y));
           int ui_drawer_open = (byte_5D4594[1049868] != 0
                                 || (*(_DWORD *)&byte_5D4594[1046860]
                                     && !sub_46ACC0(*(int *)&byte_5D4594[1046860]))
@@ -52427,7 +52435,7 @@ LABEL_24:
                                             || in3ds->touch_up))));
           int bot_active = (!s_bot_was_gameplay
                             || !world_mode
-                            || minimap_on
+                            || mm_moved
                             || ui_drawer_open
                             || sub_477600()
                             || ui_touch
@@ -52451,10 +52459,14 @@ LABEL_24:
           }
           else
           {
+            if ( player_drw )
+            {
+              s_prev_mm_x = (int)player_drw[3];
+              s_prev_mm_y = (int)player_drw[4];
+            }
             nox_3ds_swbuf_begin_bottom(NOX_3DS_BOT_BG_RGB555);
             if ( minimap_on )
             {
-              _DWORD *player_drw = sub_45A6F0(*(int *)&byte_5D4594[2616328]);
               if ( player_drw )
                 sub_4725C0((int)player_drw);
               sub_437290();
@@ -52518,6 +52530,8 @@ LABEL_24:
       {
         sub_48A220();
         sub_48A290();
+        if ( nox_3ds_video_is_active() )
+          v3ds_did_present = 1;
       }
 #else
       sub_437180();
@@ -52564,23 +52578,22 @@ LABEL_24:
 LABEL_78:
       v17 = *(_DWORD *)&byte_5D4594[2650636];
 LABEL_65:
-      if ( (v17 & 0x40000000) == 0x40000000 )
+#ifdef __3DS__
+      if ( !v3ds_did_present )
+#endif
       {
-        v19 = sub_416D00();
-        *(_DWORD *)&byte_5D4594[816404] = v19;
-        if ( v19 > 0 )
-          Sleep(v19);
-      }
-      else
-      {
-        while (!sub_416CD0()) {
-                  // Yield the CPU so we don't busy-spin.
-                  // 1ms is usually enough; bump to 2-5ms if you want even less CPU.
-                  SDL_Delay(1);
-
-                  // Optional but often smart: keep SDL responsive while waiting
-                  // (only if you have an SDL pump function; otherwise omit).
-                  // SDL_PumpEvents();
+        if ( (v17 & 0x40000000) == 0x40000000 )
+        {
+          v19 = sub_416D00();
+          *(_DWORD *)&byte_5D4594[816404] = v19;
+          if ( v19 > 0 )
+            Sleep(v19);
+        }
+        else
+        {
+          while (!sub_416CD0()) {
+                    SDL_Delay(1);
+          }
         }
       }
       goto LABEL_70;
