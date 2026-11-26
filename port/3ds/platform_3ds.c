@@ -86,6 +86,7 @@ bool nox_3ds_init(void)
     g_3ds_state.heap_used_bytes = (uint32_t)mallinfo().uordblks;
 
     printf("=== Nox New 3DS Port [%s] ===\n", NOX_3DS_VERSION_STR);
+    printf("[3ds] Ported by Fungus Shark & AlbertChen408 (Giraffepus) | Orig: Westwood Studios\n");
     printf("[3ds] Model: %s\n", g_3ds_state.is_new_3ds ? "New 3DS (804MHz + L2)" : "WARNING: Old 3DS (268MHz)");
     printf("[3ds] Stack: %u KB | linearFree: %u KB\n",
            (unsigned)(__stacksize__ / 1024u),
