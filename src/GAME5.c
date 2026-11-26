@@ -11805,6 +11805,10 @@ LABEL_17:
         ++a1[2];
         name.sin_port = htons(v12);
       }
+      *(_WORD *)&byte_5D4594[3843636] = (uint16_t)a1[2];
+#ifdef __3DS__
+      nox_3ds_net_log("[host3ds] Host UDP socket bound on port %u", (unsigned)a1[2]);
+#endif
 
       /* netextras: host socket successfully bound */
       nox_netextras_on_host_bind_success(*v5, (unsigned)a1[2]);
