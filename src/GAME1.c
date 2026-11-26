@@ -40959,7 +40959,7 @@ int __cdecl sub_42EE30(int a1)
   if ( result )
   {
 #ifdef __3DS__
-    setvbuf((FILE *)result, NULL, _IOFBF, 65536);
+    setvbuf((FILE *)result, NULL, _IOFBF, 4096);
 #endif
     v3 = (int *)sub_42F0B0(a1);
     v4 = v3;
