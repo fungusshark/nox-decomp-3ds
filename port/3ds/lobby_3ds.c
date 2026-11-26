@@ -23,6 +23,7 @@
 #include <netdb.h>
 #include <netinet/in.h>
 #include <poll.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -41,12 +42,55 @@ extern int nox_env_truthy(const char *s);
 #define NOX_3DS_LOBBY_CACHE_TTL_MS      60000u
 #define NOX_3DS_LOBBY_REPING_TTL_MS     10000u
 #define NOX_3DS_LOBBY_RETRY_BACKOFF_MS  5000u
-#define NOX_3DS_LOBBY_HTTP_TIMEOUT_MS   3500
-#define NOX_3DS_LOBBY_HTTP_TIMEOUT_NS   3500000000ULL /* 3.5 seconds */
+#define NOX_3DS_LOBBY_HTTP_TIMEOUT_MS   5000
+#define NOX_3DS_LOBBY_HTTP_TIMEOUT_NS   5000000000ULL /* 5.0 seconds */
 #define NOX_3DS_LOBBY_MAX_REDIRECTS     4
 #define NOX_3DS_LOBBY_DEFAULT_PORT      18590u
 #define NOX_3DS_LOBBY_REG_PERIOD_MS     20000u
 #define NOX_3DS_LOBBY_MAX_ENDPOINTS     8
+#define NOX_3DS_NET_LOG_CAP             65536u
+
+static RecursiveLock g_netlog_lock;
+static bool          g_netlog_lock_inited = false;
+static bool          g_netlog_started     = false;
+static size_t        g_netlog_bytes       = 0;
+
+void nox_3ds_net_log(const char *fmt, ...)
+{
+    if (!fmt)
+        return;
+
+    if (!g_netlog_lock_inited) {
+        RecursiveLock_Init(&g_netlog_lock);
+        g_netlog_lock_inited = true;
+    }
+
+    char msg[512];
+    va_list ap;
+    va_start(ap, fmt);
+    int n = vsnprintf(msg, sizeof(msg), fmt, ap);
+    va_end(ap);
+    if (n < 0)
+        return;
+
+    uint32_t ms = nox_3ds_get_ticks_ms();
+    printf("[%ums] %s\n", (unsigned)ms, msg);
+
+    RecursiveLock_Lock(&g_netlog_lock);
+    if (g_netlog_bytes < NOX_3DS_NET_LOG_CAP) {
+        const char *mode = g_netlog_started ? "a" : "w";
+        FILE *f = fopen(NOX_3DS_DATA_ROOT "/net.log", mode);
+        if (f) {
+            g_netlog_started = true;
+            int wrote = fprintf(f, "[%ums] %s\n", (unsigned)ms, msg);
+            if (wrote > 0)
+                g_netlog_bytes += (size_t)wrote;
+            fflush(f);
+            fclose(f);
+        }
+    }
+    RecursiveLock_Unlock(&g_netlog_lock);
+}
 
 /* Default endpoints matching desktop src/lobby.c */
 static const char *const k_default_lobby_endpoints[] = {
@@ -555,8 +599,8 @@ static size_t queue_cached_rows_locked(void)
     }
 
     if (queued > 0) {
-        printf("[lobby3ds] Queued %zu internet server(s) into 0x0D UI bridge (fd=%d)\n",
-               queued, g_active_ping_sockfd);
+        nox_3ds_net_log("[lobby3ds] Queued %zu internet server(s) into 0x0D UI bridge (fd=%d)",
+                        queued, g_active_ping_sockfd);
     }
     return queued;
 }
@@ -576,25 +620,25 @@ static bool httpc_ensure_init(void)
         ACU_GetWifiStatus(&wifi_status);
         acExit();
         if (wifi_status == 0) {
-            printf("[lobby3ds] WARN: ACU_GetWifiStatus=0; attempting httpcInit anyway\n");
+            nox_3ds_net_log("[lobby3ds] WARN: ACU_GetWifiStatus=0; attempting httpcInit anyway");
         }
     }
 
     /* 4 KB shared memory supports both HTTP GET and HTTP POST; fallback to 0 (GET-only). */
     Result rc = httpcInit(0x1000);
     if (R_FAILED(rc)) {
-        printf("[lobby3ds] httpcInit(0x1000) failed: 0x%08lX; trying httpcInit(0)\n",
-               (unsigned long)rc);
+        nox_3ds_net_log("[lobby3ds] httpcInit(0x1000) failed: 0x%08lX; trying httpcInit(0)",
+                        (unsigned long)rc);
         rc = httpcInit(0);
     }
     if (R_FAILED(rc)) {
-        printf("[lobby3ds] httpcInit failed: 0x%08lX\n", (unsigned long)rc);
+        nox_3ds_net_log("[lobby3ds] httpcInit failed: 0x%08lX", (unsigned long)rc);
         return false;
     }
 
     g_httpc_inited = true;
     nox_3ds_state_mut()->httpc_ready = true;
-    printf("[lobby3ds] httpcInit succeeded\n");
+    nox_3ds_net_log("[lobby3ds] httpcInit succeeded");
     return true;
 }
 
@@ -625,7 +669,7 @@ static bool build_redirect_url(const char *current_url, const char *location, ch
     return false;
 }
 
-static int httpc_get_body(const char *initial_url, char *out_buf, size_t out_cap)
+static int httpc_get_body_with_proxy(const char *initial_url, char *out_buf, size_t out_cap, u32 use_proxy)
 {
     if (!initial_url || !out_buf || out_cap < 2)
         return -1;
@@ -641,12 +685,10 @@ static int httpc_get_body(const char *initial_url, char *out_buf, size_t out_cap
         httpcContext ctx;
         memset(&ctx, 0, sizeof(ctx));
 
-        Result rc = httpcOpenContext(&ctx, HTTPC_METHOD_GET, url, 1);
+        Result rc = httpcOpenContext(&ctx, HTTPC_METHOD_GET, url, use_proxy);
         if (R_FAILED(rc)) {
-            rc = httpcOpenContext(&ctx, HTTPC_METHOD_GET, url, 0);
-        }
-        if (R_FAILED(rc)) {
-            printf("[lobby3ds] httpcOpenContext(%s) failed: 0x%08lX\n", url, (unsigned long)rc);
+            nox_3ds_net_log("[lobby3ds] httpcOpenContext(%s, proxy=%lu) failed: 0x%08lX",
+                            url, (unsigned long)use_proxy, (unsigned long)rc);
             return -1;
         }
 
@@ -658,7 +700,8 @@ static int httpc_get_body(const char *initial_url, char *out_buf, size_t out_cap
 
         rc = httpcBeginRequest(&ctx);
         if (R_FAILED(rc)) {
-            printf("[lobby3ds] httpcBeginRequest(%s) failed: 0x%08lX\n", url, (unsigned long)rc);
+            nox_3ds_net_log("[lobby3ds] httpcBeginRequest(%s, proxy=%lu) failed: 0x%08lX",
+                            url, (unsigned long)use_proxy, (unsigned long)rc);
             httpcCancelConnection(&ctx);
             httpcCloseContext(&ctx);
             return -1;
@@ -667,7 +710,8 @@ static int httpc_get_body(const char *initial_url, char *out_buf, size_t out_cap
         u32 status = 0;
         rc = httpcGetResponseStatusCodeTimeout(&ctx, &status, NOX_3DS_LOBBY_HTTP_TIMEOUT_NS);
         if (R_FAILED(rc)) {
-            printf("[lobby3ds] Status timeout/error for %s: 0x%08lX\n", url, (unsigned long)rc);
+            nox_3ds_net_log("[lobby3ds] http:C status timeout/error for %s (proxy=%lu): 0x%08lX",
+                            url, (unsigned long)use_proxy, (unsigned long)rc);
             httpcCancelConnection(&ctx);
             httpcCloseContext(&ctx);
             return -1;
@@ -692,7 +736,7 @@ static int httpc_get_body(const char *initial_url, char *out_buf, size_t out_cap
         }
 
         if (status < 200 || status >= 300) {
-            printf("[lobby3ds] HTTP %lu from %s\n", (unsigned long)status, url);
+            nox_3ds_net_log("[lobby3ds] http:C HTTP %lu from %s", (unsigned long)status, url);
             httpcCancelConnection(&ctx);
             httpcCloseContext(&ctx);
             return -1;
@@ -729,7 +773,7 @@ static int httpc_get_body(const char *initial_url, char *out_buf, size_t out_cap
             httpcCancelConnection(&ctx);
             httpcCloseContext(&ctx);
             if (rc != 0 && !aborted) {
-                printf("[lobby3ds] Download failed for %s: 0x%08lX\n", url, (unsigned long)rc);
+                nox_3ds_net_log("[lobby3ds] http:C download failed for %s: 0x%08lX", url, (unsigned long)rc);
                 return -1;
             }
             if (g_worker_stop)
@@ -745,7 +789,15 @@ static int httpc_get_body(const char *initial_url, char *out_buf, size_t out_cap
     return -1;
 }
 
-static int httpc_post_json(const char *url, const char *json_body)
+static int httpc_get_body(const char *initial_url, char *out_buf, size_t out_cap)
+{
+    int n = httpc_get_body_with_proxy(initial_url, out_buf, out_cap, 0);
+    if (n > 0 || g_worker_stop)
+        return n;
+    return httpc_get_body_with_proxy(initial_url, out_buf, out_cap, 1);
+}
+
+static int httpc_post_json_with_proxy(const char *url, const char *json_body, u32 use_proxy)
 {
     if (!url || !json_body)
         return -1;
@@ -763,9 +815,7 @@ static int httpc_post_json(const char *url, const char *json_body)
 
     httpcContext ctx;
     memset(&ctx, 0, sizeof(ctx));
-    Result rc = httpcOpenContext(&ctx, HTTPC_METHOD_POST, url, 1);
-    if (R_FAILED(rc))
-        rc = httpcOpenContext(&ctx, HTTPC_METHOD_POST, url, 0);
+    Result rc = httpcOpenContext(&ctx, HTTPC_METHOD_POST, url, use_proxy);
     if (R_FAILED(rc))
         return -1;
 
@@ -797,6 +847,14 @@ static int httpc_post_json(const char *url, const char *json_body)
     if (R_FAILED(rc))
         return -1;
     return (status >= 200 && status < 300) ? 0 : -1;
+}
+
+static int httpc_post_json(const char *url, const char *json_body)
+{
+    int r = httpc_post_json_with_proxy(url, json_body, 0);
+    if (r >= 0 || g_worker_stop)
+        return r;
+    return httpc_post_json_with_proxy(url, json_body, 1);
 }
 
 /* =========================================================================
@@ -938,8 +996,10 @@ static int decode_chunked_body(const char *src, size_t src_len, char *dst, size_
 static int soc_connect_with_timeout(struct in_addr ip, uint16_t port, int timeout_ms)
 {
     int fd = socket(AF_INET, SOCK_STREAM, 0);
-    if (fd < 0)
+    if (fd < 0) {
+        nox_3ds_net_log("[lobby3ds] soc socket() failed: errno=%d", errno);
         return -1;
+    }
 
     int flags = fcntl(fd, F_GETFL, 0);
     if (flags >= 0) {
@@ -953,46 +1013,72 @@ static int soc_connect_with_timeout(struct in_addr ip, uint16_t port, int timeou
     sa.sin_addr = ip;
 
     int rc = connect(fd, (struct sockaddr *)&sa, sizeof(sa));
-    if (rc < 0 && errno != EINPROGRESS && errno != EWOULDBLOCK) {
+    if (rc == 0)
+        return fd;
+    if (errno == EISCONN)
+        return fd;
+    if (errno != EINPROGRESS && errno != EALREADY && errno != EWOULDBLOCK && errno != EAGAIN) {
+        nox_3ds_net_log("[lobby3ds] soc initial connect(%s:%u) failed: errno=%d",
+                        inet_ntoa(ip), (unsigned)port, errno);
         close(fd);
         return -1;
     }
 
-    if (rc < 0) {
-        uint32_t start_ms = nox_3ds_get_ticks_ms();
-        while (!g_worker_stop) {
-            uint32_t elapsed = nox_3ds_get_ticks_ms() - start_ms;
-            if ((int)elapsed >= timeout_ms) {
-                close(fd);
-                return -1;
-            }
-            int slice = timeout_ms - (int)elapsed;
-            if (slice > 250) slice = 250;
-
-            struct pollfd pfd;
-            pfd.fd = fd;
-            pfd.events = POLLOUT;
-            pfd.revents = 0;
-            int pr = poll(&pfd, 1, slice);
-            if (pr > 0) {
-                int err = 0;
-                socklen_t elen = (socklen_t)sizeof(err);
-                if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &err, &elen) == 0 && err == 0)
-                    break;
-                close(fd);
-                return -1;
-            }
-            if (pr < 0 && errno != EINTR) {
-                close(fd);
-                return -1;
-            }
-        }
-        if (g_worker_stop) {
+    uint32_t start_ms = nox_3ds_get_ticks_ms();
+    while (!g_worker_stop) {
+        uint32_t elapsed = nox_3ds_get_ticks_ms() - start_ms;
+        if ((int)elapsed >= timeout_ms) {
+            nox_3ds_net_log("[lobby3ds] soc connect(%s:%u) timed out after %d ms",
+                            inet_ntoa(ip), (unsigned)port, timeout_ms);
             close(fd);
             return -1;
         }
+        int slice = timeout_ms - (int)elapsed;
+        if (slice > 50) slice = 50;
+
+        uint32_t poll_t0 = nox_3ds_get_ticks_ms();
+        struct pollfd pfd;
+        pfd.fd = fd;
+        pfd.events = POLLOUT;
+        pfd.revents = 0;
+        int pr = poll(&pfd, 1, slice);
+        if (pr < 0 && errno != EINTR) {
+            nox_3ds_net_log("[lobby3ds] soc connect poll() error: errno=%d", errno);
+            close(fd);
+            return -1;
+        }
+        if (pr > 0 && (pfd.revents & (POLLERR | POLLHUP | POLLNVAL))) {
+            nox_3ds_net_log("[lobby3ds] soc connect failed revents=0x%x", (unsigned)pfd.revents);
+            close(fd);
+            return -1;
+        }
+
+        /* Horizon soc:u fails/skips SO_ERROR reliably; verify completion via
+         * getpeername() + devkitPro 3DS connect()-retry idiom instead. */
+        struct sockaddr_in peer;
+        socklen_t plen = (socklen_t)sizeof(peer);
+        memset(&peer, 0, sizeof(peer));
+        if (getpeername(fd, (struct sockaddr *)&peer, &plen) == 0 && peer.sin_addr.s_addr != 0)
+            return fd;
+
+        rc = connect(fd, (struct sockaddr *)&sa, sizeof(sa));
+        if (rc == 0 || errno == EISCONN)
+            return fd;
+        if (errno == EINPROGRESS || errno == EALREADY || errno == EWOULDBLOCK || errno == EAGAIN) {
+            uint32_t poll_dt = nox_3ds_get_ticks_ms() - poll_t0;
+            if (pr != 0 || poll_dt < 5u)
+                nox_3ds_sleep_ms(15);
+            continue;
+        }
+
+        nox_3ds_net_log("[lobby3ds] soc connect(%s:%u) failed: errno=%d",
+                        inet_ntoa(ip), (unsigned)port, errno);
+        close(fd);
+        return -1;
     }
-    return fd;
+
+    close(fd);
+    return -1;
 }
 
 static bool soc_send_all(int fd, const char *buf, size_t len, int timeout_ms)
@@ -1056,8 +1142,10 @@ static int soc_http_request(const char *method, const char *initial_url,
         }
 
         struct in_addr ip;
-        if (!resolve_ipv4_addr(host, &ip))
+        if (!resolve_ipv4_addr(host, &ip)) {
+            nox_3ds_net_log("[lobby3ds] soc DNS resolve failed for %s", host);
             break;
+        }
 
         int fd = soc_connect_with_timeout(ip, port, NOX_3DS_LOBBY_HTTP_TIMEOUT_MS);
         if (fd < 0)
@@ -1096,11 +1184,17 @@ static int soc_http_request(const char *method, const char *initial_url,
                        soc_send_all(fd, req_hdr, (size_t)req_len, NOX_3DS_LOBBY_HTTP_TIMEOUT_MS) &&
                        (body_len == 0 || soc_send_all(fd, req_body, body_len, NOX_3DS_LOBBY_HTTP_TIMEOUT_MS));
         if (!send_ok) {
+            nox_3ds_net_log("[lobby3ds] soc send failed for %s", url);
             close(fd);
             break;
         }
 
         size_t raw_len = 0;
+        bool headers_parsed = false;
+        size_t cached_body_off = 0;
+        bool has_content_length = false;
+        size_t content_length = 0;
+        bool is_chunked = false;
         uint32_t start_ms = nox_3ds_get_ticks_ms();
         while (!g_worker_stop && raw_len + 1u < raw_cap) {
             uint32_t elapsed = nox_3ds_get_ticks_ms() - start_ms;
@@ -1108,34 +1202,73 @@ static int soc_http_request(const char *method, const char *initial_url,
                 break;
 
             int slice = NOX_3DS_LOBBY_HTTP_TIMEOUT_MS - (int)elapsed;
-            if (slice > 250) slice = 250;
+            if (slice > 50) slice = 50;
 
             struct pollfd pfd;
             pfd.fd = fd;
             pfd.events = POLLIN;
             pfd.revents = 0;
             int pr = poll(&pfd, 1, slice);
-            if (pr < 0) {
-                if (errno == EINTR) continue;
+            if (pr < 0 && errno != EINTR)
                 break;
-            }
-            if (pr == 0)
-                continue;
 
-            ssize_t r = recv(fd, raw + raw_len, (raw_cap - 1u) - raw_len, 0);
+            ssize_t r = recv(fd, raw + raw_len, (raw_cap - 1u) - raw_len, MSG_DONTWAIT);
             if (r > 0) {
                 raw_len += (size_t)r;
+                raw[raw_len] = '\0';
+
+                if (!headers_parsed) {
+                    const char *hdr_end = strstr(raw, "\r\n\r\n");
+                    size_t sep_len = 4u;
+                    if (!hdr_end) {
+                        hdr_end = strstr(raw, "\n\n");
+                        sep_len = 2u;
+                    }
+                    if (hdr_end) {
+                        headers_parsed = true;
+                        size_t hdrs_len = (size_t)(hdr_end - raw);
+                        cached_body_off = hdrs_len + sep_len;
+
+                        char te_val[64];
+                        if (find_header_ci(raw, hdrs_len, "Transfer-Encoding", te_val, sizeof(te_val)) &&
+                            strncasecmp(te_val, "chunked", 7) == 0) {
+                            is_chunked = true;
+                        } else {
+                            char cl_val[32];
+                            if (find_header_ci(raw, hdrs_len, "Content-Length", cl_val, sizeof(cl_val))) {
+                                content_length = (size_t)strtoul(cl_val, NULL, 10);
+                                has_content_length = true;
+                            }
+                        }
+                    }
+                }
+
+                if (headers_parsed) {
+                    const char *cur_body = raw + cached_body_off;
+                    size_t cur_body_len = raw_len - cached_body_off;
+                    if (has_content_length && cur_body_len >= content_length)
+                        break;
+                    if (is_chunked &&
+                        (strstr(cur_body, "\r\n0\r\n") != NULL || strncmp(cur_body, "0\r\n", 3) == 0) &&
+                        decode_chunked_body(cur_body, cur_body_len, out_buf, out_cap) >= 0) {
+                        break;
+                    }
+                }
                 continue;
             }
             if (r == 0)
                 break;
             if (errno != EWOULDBLOCK && errno != EAGAIN && errno != EINTR)
                 break;
+            if (pr > 0)
+                nox_3ds_sleep_ms(5);
         }
         close(fd);
 
-        if (raw_len == 0 || g_worker_stop)
+        if (raw_len == 0 || g_worker_stop) {
+            nox_3ds_net_log("[lobby3ds] soc recv empty/stopped for %s", url);
             break;
+        }
         raw[raw_len] = '\0';
 
         const char *hdr_end = strstr(raw, "\r\n\r\n");
@@ -1164,7 +1297,7 @@ static int soc_http_request(const char *method, const char *initial_url,
         }
 
         if (status < 200 || status >= 300) {
-            printf("[lobby3ds] soc HTTP %d from %s\n", status, url);
+            nox_3ds_net_log("[lobby3ds] soc HTTP %d from %s", status, url);
             break;
         }
 
@@ -1203,7 +1336,7 @@ static int http_get_body(const char *url, char *out_buf, size_t out_cap)
             return n;
         if (g_worker_stop)
             return -1;
-        printf("[lobby3ds] soc GET failed for %s; falling back to http:C\n", url);
+        nox_3ds_net_log("[lobby3ds] soc GET failed for %s; falling back to http:C", url);
     }
     return httpc_get_body(url, out_buf, out_cap);
 }
@@ -1248,7 +1381,7 @@ static void worker_do_fetch_list(char *json_buf, size_t json_cap)
     for (size_t i = 0; i < ep_count && !g_worker_stop; ++i) {
         char full_url[320];
         snprintf(full_url, sizeof(full_url), "%s/api/v0/games/list", endpoints[i].base_url);
-        printf("[lobby3ds] Fetching %s\n", full_url);
+        nox_3ds_net_log("[lobby3ds] Fetching %s", full_url);
 
         int n = http_get_body(full_url, json_buf, json_cap);
         if (n <= 0)
@@ -1258,7 +1391,7 @@ static void worker_do_fetch_list(char *json_buf, size_t json_cap)
         const char *p = json_buf;
         while (*p && (unsigned char)*p <= ' ') p++;
         if (*p != '{' && *p != '[') {
-            printf("[lobby3ds] Non-JSON response from %s\n", full_url);
+            nox_3ds_net_log("[lobby3ds] Non-JSON response from %s", full_url);
             continue;
         }
 
@@ -1269,8 +1402,8 @@ static void worker_do_fetch_list(char *json_buf, size_t json_cap)
         for (size_t j = 0; j < parsed_count && !g_worker_stop; ++j) {
             struct in_addr srv_ip;
             if (!resolve_ipv4_addr(parsed[j].row.addr, &srv_ip)) {
-                printf("[lobby3ds] Skip unresolvable server '%s' (%s)\n",
-                       parsed[j].row.name, parsed[j].row.addr);
+                nox_3ds_net_log("[lobby3ds] Skip unresolvable server '%s' (%s)",
+                                parsed[j].row.name, parsed[j].row.addr);
                 continue;
             }
             resolved[resolved_count] = parsed[j];
@@ -1280,8 +1413,8 @@ static void worker_do_fetch_list(char *json_buf, size_t json_cap)
 
         got_valid_response = true;
         snprintf(good_base, sizeof(good_base), "%s", endpoints[i].base_url);
-        printf("[lobby3ds] Parsed %zu server(s) (%zu resolved) from %s (%d bytes)\n",
-               parsed_count, resolved_count, endpoints[i].base_url, n);
+        nox_3ds_net_log("[lobby3ds] Parsed %zu server(s) (%zu resolved) from %s (%d bytes)",
+                        parsed_count, resolved_count, endpoints[i].base_url, n);
         if (resolved_count > 0)
             break;
     }
@@ -1304,8 +1437,8 @@ static void worker_do_fetch_list(char *json_buf, size_t json_cap)
         }
     } else {
         g_cache_next_try_ms = now_ms + NOX_3DS_LOBBY_RETRY_BACKOFF_MS;
-        printf("[lobby3ds] All lobby endpoints failed; backing off %u ms\n",
-               (unsigned)NOX_3DS_LOBBY_RETRY_BACKOFF_MS);
+        nox_3ds_net_log("[lobby3ds] All lobby endpoints failed; backing off %u ms",
+                        (unsigned)NOX_3DS_LOBBY_RETRY_BACKOFF_MS);
     }
     g_fetch_inflight = false;
     RecursiveLock_Unlock(&g_lobby_lock);
@@ -1438,21 +1571,27 @@ static bool ensure_worker_started_locked(void)
 
     s32 main_prio = 0x30;
     svcGetThreadPriority(&main_prio, CUR_THREAD_HANDLE);
-    s32 worker_prio = main_prio + 1;
-    if (worker_prio > 0x3F)
-        worker_prio = 0x3F;
+    /* Horizon OS Kernel11 uses strict fixed-priority scheduling with zero
+     * time-slicing for lower-priority threads on Core 0. Keep the I/O worker
+     * higher priority than the 30 Hz software render loop so Wi-Fi handshakes
+     * are not starved; it blocks >99% of the time on LightEvent/poll/IPC. */
+    s32 worker_prio = (main_prio > 0x18) ? (main_prio - 1) : main_prio;
+    if (worker_prio < 0x18)
+        worker_prio = 0x18;
+    if (worker_prio > 0x3E)
+        worker_prio = 0x3E;
 
     g_worker_stop = false;
     g_worker_thread = threadCreate(lobby_worker_main, NULL,
                                    NOX_3DS_LOBBY_WORKER_STACK,
                                    worker_prio, -2, false);
     if (!g_worker_thread) {
-        printf("[lobby3ds] threadCreate() failed\n");
+        nox_3ds_net_log("[lobby3ds] threadCreate() failed");
         return false;
     }
     g_worker_started = true;
-    printf("[lobby3ds] Background HTTP worker started (stack=32KB prio=0x%lX)\n",
-           (unsigned long)worker_prio);
+    nox_3ds_net_log("[lobby3ds] Background HTTP worker started (stack=32KB prio=0x%lX main=0x%lX)",
+                    (unsigned long)worker_prio, (unsigned long)main_prio);
     return true;
 }
 

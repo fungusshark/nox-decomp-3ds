@@ -250,6 +250,7 @@ void nox_3ds_font_render_screen(int screen,
                                 int crop_x, int crop_y, int crop_w, int crop_h,
                                 float draw_x, float draw_y, float dst_w, float dst_h,
                                 float gamma);
+void nox_3ds_font_set_show_version(bool show);
 
 /* =========================================================================
  * 4. Hybrid Dual-Screen Touch, C-Stick & Button Input Bridge (input_3ds.c)
@@ -397,6 +398,7 @@ extern const nox_3ds_net_ops_t g_nox_3ds_sockets_ops;
 
 void               nox_3ds_net_init(void);
 void               nox_3ds_net_shutdown(void);
+void               nox_3ds_net_log(const char *fmt, ...);
 void               nox_3ds_net_set_mode(nox_3ds_net_mode_t mode);
 nox_3ds_net_mode_t nox_3ds_net_get_mode(void);
 bool               nox_3ds_soc_is_ready(void);

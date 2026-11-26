@@ -152,15 +152,15 @@ static bool soc_ensure_init_locked(void)
         Result wrc = ACU_GetWifiStatus(&wifi_status);
         acExit();
         if (R_FAILED(wrc) || wifi_status == 0u) {
-            printf("[net3ds:soc] WARN: ACU_GetWifiStatus rc=0x%08X status=%u; attempting socInit anyway\n",
-                   (unsigned)wrc, (unsigned)wifi_status);
+            nox_3ds_net_log("[net3ds:soc] WARN: ACU_GetWifiStatus rc=0x%08X status=%u; attempting socInit anyway",
+                            (unsigned)wrc, (unsigned)wifi_status);
         }
     }
 
     g_soc_buffer = (u32 *)memalign(SOC_ALIGN, SOC_BUFFERSIZE);
     if (!g_soc_buffer) {
-        printf("[net3ds:soc] ERROR: memalign(0x%x, 0x%x) failed\n",
-               (unsigned)SOC_ALIGN, (unsigned)SOC_BUFFERSIZE);
+        nox_3ds_net_log("[net3ds:soc] ERROR: memalign(0x%x, 0x%x) failed",
+                        (unsigned)SOC_ALIGN, (unsigned)SOC_BUFFERSIZE);
         last_socket_error = NOX_WSAENOBUFS;
         errno = ENOMEM;
         return false;
@@ -168,7 +168,7 @@ static bool soc_ensure_init_locked(void)
 
     Result rc = socInit(g_soc_buffer, SOC_BUFFERSIZE);
     if (R_FAILED(rc)) {
-        printf("[net3ds:soc] ERROR: socInit failed (rc=0x%08X)\n", (unsigned)rc);
+        nox_3ds_net_log("[net3ds:soc] ERROR: socInit failed (rc=0x%08X)", (unsigned)rc);
         free(g_soc_buffer);
         g_soc_buffer = NULL;
         last_socket_error = NOX_WSAENETDOWN;
@@ -189,12 +189,12 @@ static bool soc_ensure_init_locked(void)
 
     long hid = gethostid();
     uint32_t ip = (uint32_t)hid;
-    printf("[net3ds:soc] socInit OK (%u KB memalign buf, local IP=%u.%u.%u.%u)\n",
-           (unsigned)(SOC_BUFFERSIZE / 1024u),
-           (unsigned)(ip & 0xFFu),
-           (unsigned)((ip >> 8) & 0xFFu),
-           (unsigned)((ip >> 16) & 0xFFu),
-           (unsigned)((ip >> 24) & 0xFFu));
+    nox_3ds_net_log("[net3ds:soc] socInit OK (%u KB memalign buf, local IP=%u.%u.%u.%u)",
+                    (unsigned)(SOC_BUFFERSIZE / 1024u),
+                    (unsigned)(ip & 0xFFu),
+                    (unsigned)((ip >> 8) & 0xFFu),
+                    (unsigned)((ip >> 16) & 0xFFu),
+                    (unsigned)((ip >> 24) & 0xFFu));
     return true;
 }
 
@@ -377,13 +377,30 @@ static int sockets_bind(int vfd, const void *addr, unsigned int addrlen)
         return -1;
     }
     int rfd = s->real_fd;
+    int stype = s->type;
     soc_unlock();
 
     int r = bind(rfd, (const struct sockaddr *)&sin, (socklen_t)sizeof(sin));
+    if (r < 0 && stype == SOCK_DGRAM && sin.sin_port == 0) {
+        int orig_errno = errno;
+        for (uint16_t ephem = 49152u; ephem <= 49215u; ++ephem) {
+            sin.sin_port = htons(ephem);
+            r = bind(rfd, (const struct sockaddr *)&sin, (socklen_t)sizeof(sin));
+            if (r == 0) {
+                nox_3ds_net_log("[net3ds:soc] bind(port=0) fallback succeeded on ephemeral UDP port %u",
+                                (unsigned)ephem);
+                break;
+            }
+        }
+        if (r < 0) {
+            sin.sin_port = 0;
+            errno = orig_errno;
+        }
+    }
     if (r < 0) {
         last_socket_error = wsa_from_errno(errno);
-        printf("[net3ds:soc] bind(vfd=%d, rfd=%d, port=%u) FAILED errno=%d wsa=%u\n",
-               vfd, rfd, (unsigned)ntohs(sin.sin_port), errno, last_socket_error);
+        nox_3ds_net_log("[net3ds:soc] bind(vfd=%d, rfd=%d, port=%u) FAILED errno=%d wsa=%u",
+                        vfd, rfd, (unsigned)ntohs(sin.sin_port), errno, last_socket_error);
         return -1;
     }
 
