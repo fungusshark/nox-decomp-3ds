@@ -201,8 +201,6 @@ static bool           s_show_version_overlay = false;
 static bool           s_perf_hud_enabled = true;
 static bool           s_perf_has_sample = false;
 static float          s_perf_fps = 0.0f;
-static float          s_perf_cpu_ms = 0.0f;
-static float          s_perf_gpu_ms = 0.0f;
 
 /* Stock .fnt metrics recorded from all 4 slots for exact auto-fit comparison */
 static bool           s_stock_loaded[FONT_SLOTS];
@@ -429,11 +427,9 @@ void nox_3ds_font_show_custom_toast(const char *msg, bool green)
     s_toast_until_ms = nox_3ds_get_ticks_ms() + TOAST_MS;
 }
 
-void nox_3ds_perf_hud_update(float fps, float cpu_ms, float gpu_ms)
+void nox_3ds_perf_hud_update(float fps)
 {
     s_perf_fps = fps;
-    s_perf_cpu_ms = cpu_ms;
-    s_perf_gpu_ms = gpu_ms;
     s_perf_has_sample = true;
 }
 
@@ -446,9 +442,9 @@ void nox_3ds_perf_hud_toggle(void)
 {
     s_perf_hud_enabled = !s_perf_hud_enabled;
     nox_3ds_font_show_custom_toast(
-        s_perf_hud_enabled ? "PERF HUD: ON" : "PERF HUD: OFF",
+        s_perf_hud_enabled ? "FPS HUD: ON" : "FPS HUD: OFF",
         s_perf_hud_enabled);
-    fprintf(stderr, "[perf3ds] Perf HUD: %s\n",
+    fprintf(stderr, "[perf3ds] FPS HUD: %s\n",
             s_perf_hud_enabled ? "ON" : "OFF");
 }
 
@@ -830,7 +826,7 @@ void nox_3ds_font_set_show_version(bool show)
 
 static void draw_crisp_pill_overlay(int target_w, int target_h,
                                     const char *msg, bool bottom_right,
-                                    bool align_left, u32 bg, u32 fg)
+                                    bool align_left, int custom_y, u32 bg, u32 fg)
 {
     if (!s_atlas_inited || !msg || !*msg)
         return;
@@ -845,7 +841,7 @@ static void draw_crisp_pill_overlay(int target_w, int target_h,
     int box_w = total_w + pad_x * 2;
     int box_h = 6 + pad_y * 2;
     int bx = align_left ? 4 : (target_w - box_w - 4);
-    int by = bottom_right ? (target_h - box_h - 4) : 4;
+    int by = (custom_y >= 0) ? custom_y : (bottom_right ? (target_h - box_h - 4) : 4);
 
     C2D_DrawRectSolid((float)bx, (float)by, 0.0f, (float)box_w, (float)box_h, bg);
     C2D_SetTintMode(C2D_TintMult);
@@ -870,19 +866,19 @@ static void draw_toast_overlay(int target_w, int target_h)
         return;
     }
 
+    int custom_y = (s_perf_hud_enabled && s_perf_has_sample) ? 18 : 4;
     u32 fg = s_toast_green ? C2D_Color32(120, 255, 140, 255) : C2D_Color32(255, 210, 110, 255);
-    draw_crisp_pill_overlay(target_w, target_h, s_toast_msg, false, false,
+    draw_crisp_pill_overlay(target_w, target_h, s_toast_msg, false, false, custom_y,
                             C2D_Color32(10, 10, 16, 210), fg);
 }
 
-void nox_3ds_perf_hud_draw_top(int target_w, int target_h)
+void nox_3ds_perf_hud_draw_bottom(int target_w, int target_h)
 {
     if (!s_perf_hud_enabled || !s_atlas_inited || !s_perf_has_sample)
         return;
 
-    char buf[64];
-    snprintf(buf, sizeof(buf), "%.1f FPS | CPU %.1fms | GPU %.1fms",
-             (double)s_perf_fps, (double)s_perf_cpu_ms, (double)s_perf_gpu_ms);
+    char buf[32];
+    snprintf(buf, sizeof(buf), "%u FPS", (unsigned)(s_perf_fps + 0.5f));
     u32 fg;
     if (s_perf_fps >= 27.5f) {
         fg = C2D_Color32(150, 245, 165, 245);
@@ -891,7 +887,7 @@ void nox_3ds_perf_hud_draw_top(int target_w, int target_h)
     } else {
         fg = C2D_Color32(255, 130, 120, 245);
     }
-    draw_crisp_pill_overlay(target_w, target_h, buf, false, false,
+    draw_crisp_pill_overlay(target_w, target_h, buf, false, false, 4,
                             C2D_Color32(8, 10, 16, 185), fg);
 }
 
@@ -899,20 +895,28 @@ static void draw_version_overlay(int target_w, int target_h)
 {
     if (!s_show_version_overlay)
         return;
-    draw_crisp_pill_overlay(target_w, target_h, NOX_3DS_VERSION_STR, true, false,
+    draw_crisp_pill_overlay(target_w, target_h, NOX_3DS_VERSION_STR, true, false, -1,
                             C2D_Color32(8, 8, 14, 195),
                             C2D_Color32(235, 205, 130, 245));
     if (nox_3ds_net_get_mode() == NOX_3DS_NET_MODE_WIFI) {
-        char lan_msg[64];
-        uint32_t ip = 0, mask = 0, bcast = 0;
-        if (nox_3ds_soc_is_ready() && nox_3ds_soc_get_ip_info(&ip, &mask, &bcast)) {
-            snprintf(lan_msg, sizeof(lan_msg), "LAN %u.%u.%u.%u:18590 | SELECT: Direct IP",
-                     (unsigned)(ip & 0xFFu), (unsigned)((ip >> 8) & 0xFFu),
-                     (unsigned)((ip >> 16) & 0xFFu), (unsigned)((ip >> 24) & 0xFFu));
-        } else {
-            snprintf(lan_msg, sizeof(lan_msg), "Wi-Fi | SELECT: Direct IP");
+        static char s_lan_msg[64] = "";
+        static uint32_t s_lan_last_ms = 0;
+        static bool s_lan_was_ready = false;
+        bool ready = nox_3ds_soc_is_ready();
+        uint32_t now = nox_3ds_get_ticks_ms();
+        if (s_lan_msg[0] == '\0' || ready != s_lan_was_ready || (uint32_t)(now - s_lan_last_ms) >= 2000u) {
+            s_lan_was_ready = ready;
+            s_lan_last_ms = now;
+            uint32_t ip = 0, mask = 0, bcast = 0;
+            if (ready && nox_3ds_soc_get_ip_info(&ip, &mask, &bcast)) {
+                snprintf(s_lan_msg, sizeof(s_lan_msg), "LAN %u.%u.%u.%u:18590 | SELECT: Direct IP",
+                         (unsigned)(ip & 0xFFu), (unsigned)((ip >> 8) & 0xFFu),
+                         (unsigned)((ip >> 16) & 0xFFu), (unsigned)((ip >> 24) & 0xFFu));
+            } else {
+                snprintf(s_lan_msg, sizeof(s_lan_msg), "Wi-Fi | SELECT: Direct IP");
+            }
         }
-        draw_crisp_pill_overlay(target_w, target_h, lan_msg, false, true,
+        draw_crisp_pill_overlay(target_w, target_h, s_lan_msg, false, true, -1,
                                 C2D_Color32(8, 16, 14, 195),
                                 C2D_Color32(140, 240, 190, 245));
     }
@@ -1011,9 +1015,9 @@ void nox_3ds_font_render_screen(int screen,
     }
 
     if (screen == NOX_3DS_SWBUF_BOTTOM) {
+        nox_3ds_perf_hud_draw_bottom(target_w, target_h);
         draw_toast_overlay(target_w, target_h);
     } else if (screen == NOX_3DS_SWBUF_TOP) {
         draw_version_overlay(target_w, target_h);
-        nox_3ds_perf_hud_draw_top(target_w, target_h);
     }
 }

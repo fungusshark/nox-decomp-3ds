@@ -183,7 +183,7 @@ static bool soc_ensure_init_locked(void)
         g_soc_slots[i].real_fd = -1;
     }
 
-    g_soc_inited = true;
+    __atomic_store_n(&g_soc_inited, true, __ATOMIC_RELEASE);
     g_soc_suspended = false;
     nox_3ds_state_mut()->soc_ready = true;
 
@@ -202,7 +202,7 @@ static bool soc_ensure_init_locked(void)
 
 bool nox_3ds_soc_get_ip_info(uint32_t *out_ip_be, uint32_t *out_mask_be, uint32_t *out_bcast_be)
 {
-    if (!g_soc_inited) {
+    if (!__atomic_load_n(&g_soc_inited, __ATOMIC_ACQUIRE)) {
         if (out_ip_be)    *out_ip_be = 0;
         if (out_mask_be)  *out_mask_be = 0;
         if (out_bcast_be) *out_bcast_be = 0;
@@ -257,13 +257,15 @@ bool nox_3ds_soc_get_ip_info(uint32_t *out_ip_be, uint32_t *out_mask_be, uint32_
 
 bool nox_3ds_soc_is_ready(void)
 {
-    return g_soc_inited;
+    return __atomic_load_n(&g_soc_inited, __ATOMIC_ACQUIRE);
 }
 
 bool nox_3ds_soc_ensure_ready(void)
 {
     if (nox_3ds_net_get_mode() != NOX_3DS_NET_MODE_WIFI)
         return false;
+    if (__atomic_load_n(&g_soc_inited, __ATOMIC_ACQUIRE))
+        return true;
     soc_lock();
     bool ok = soc_ensure_init_locked();
     soc_unlock();
@@ -272,7 +274,7 @@ bool nox_3ds_soc_ensure_ready(void)
 
 bool nox_3ds_soc_resolve_ipv4(const char *hostname, uint32_t *out_ip_be)
 {
-    if (!hostname || !*hostname || !out_ip_be || !g_soc_inited)
+    if (!hostname || !*hostname || !out_ip_be || !__atomic_load_n(&g_soc_inited, __ATOMIC_ACQUIRE))
         return false;
 
     RecursiveLock_Lock(&g_dns_lock);
@@ -298,7 +300,7 @@ static void sockets_init(void)
 
 static void sockets_shutdown(void)
 {
-    if (!g_soc_inited && !g_soc_buffer && !g_soc_mutex)
+    if (!__atomic_load_n(&g_soc_inited, __ATOMIC_ACQUIRE) && !g_soc_buffer && !g_soc_mutex)
         return;
 
     if (g_soc_mutex)
@@ -312,9 +314,9 @@ static void sockets_shutdown(void)
         g_soc_slots[i].real_fd = -1;
     }
 
-    if (g_soc_inited) {
+    if (__atomic_load_n(&g_soc_inited, __ATOMIC_ACQUIRE)) {
         socExit();
-        g_soc_inited = false;
+        __atomic_store_n(&g_soc_inited, false, __ATOMIC_RELEASE);
         nox_3ds_state_mut()->soc_ready = false;
         printf("[net3ds:soc] socExit() complete\n");
     }
