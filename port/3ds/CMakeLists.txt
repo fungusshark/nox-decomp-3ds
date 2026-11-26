@@ -40,6 +40,8 @@ add_compile_options(
     -fno-strict-overflow
     -fno-tree-vectorize
     -fno-aggressive-loop-optimizations
+    -fno-math-errno
+    -fno-trapping-math
     -U_FORTIFY_SOURCE
     -fcommon
     -Wno-error=int-conversion
@@ -86,9 +88,14 @@ add_executable(nox
     "${CMAKE_CURRENT_SOURCE_DIR}/stubs.c"
 )
 
-# Hand-written 3DS platform glue (audio/minimp3, video, input, fs) does not rely on
-# IDA-decompiled x86 idioms and benefits from -O3 + loop optimizations on ARM11.
+# Hand-written 3DS platform glue and non-IDA runtime/input sources do not rely on
+# IDA-decompiled x86 idioms and benefit from -O3 + loop vectorization on ARM11.
 set_source_files_properties(
+    "${NOX_SRC_DIR}/string.c"
+    "${NOX_SRC_DIR}/gamepad.c"
+    "${NOX_SRC_DIR}/compat.c"
+    "${NOX_SRC_DIR}/sm.c"
+    "${NOX_SRC_DIR}/main.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/platform_3ds.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/fs_3ds.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/audio_3ds.c"
