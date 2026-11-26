@@ -7989,17 +7989,20 @@ size_t __cdecl sub_409200(char *a1, int a2, int a3, FILE *a4)
     v14 = v13 / 8;
     if ( v13 / 8 > 0 )
     {
-      v15 = v13 / 8;
+      unsigned char crypt_batch[4096];
+      int rem = v13 / 8;
       v16 = &a1[v6];
-      do
+      while ( rem > 0 )
       {
-        sub_4097C0(v16, 8, &byte_5D4594[1276]);
-        v16 += 8;
-        --v15;
-        v7 = fwrite(&byte_5D4594[1276], 8u, 1u, a4);
-        *(_DWORD *)&byte_5D4594[1284] += 8;
+        int blk = (rem > 512) ? 512 : rem;
+        int nbytes = blk * 8;
+        sub_4097C0(v16, nbytes, crypt_batch);
+        memcpy(&byte_5D4594[1276], &crypt_batch[nbytes - 8], 8);
+        v7 = fwrite(crypt_batch, (size_t)nbytes, 1u, a4);
+        *(_DWORD *)&byte_5D4594[1284] += nbytes;
+        v16 += nbytes;
+        rem -= blk;
       }
-      while ( v15 );
       v13 = v20;
       v5 = v21;
     }
@@ -34817,12 +34820,11 @@ int __cdecl sub_426BD0(unsigned __int8 *a1, int a2)
   {
     v3 = *(_DWORD *)&byte_5D4594[739996];
     v4 = a1;
-    for ( i = a2; i; *(_DWORD *)&byte_5D4594[739996] = v3 )
+    for ( i = a2; i; --i )
     {
       v6 = *v4++;
       result = *(_DWORD *)&byte_581450[4 * (v6 ^ (unsigned __int8)v3) + 7288];
       v3 = result ^ (v3 >> 8);
-      --i;
     }
     *(_DWORD *)&byte_5D4594[739996] = ~v3;
   }

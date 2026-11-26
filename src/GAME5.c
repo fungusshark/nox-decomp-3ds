@@ -16957,19 +16957,19 @@ int __cdecl sub_57BC50(char *a1, char *a2)
       ;
   }
   sub_578C40(v9);
+  free(v6);
+  v6 = NULL;
   v10 = fopen(a2, (const char *)&byte_587000[313156]);
   if ( !v10 )
   {
 #ifdef __3DS__
     printf("[solo] sub_57BC50: fopen('%s','wb') FAILED\n", a2);
 #endif
-    free(v6);
     free(v8);
     return 0;
   }
   fwrite(v8, v12, 1u, v10);
   fclose(v10);
-  free(v6);
   free(v8);
 #ifdef __3DS__
   printf("[solo] sub_57BC50: extracted '%s' (%u bytes)\n", a2, (unsigned)v12);

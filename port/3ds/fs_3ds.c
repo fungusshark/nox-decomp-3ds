@@ -296,6 +296,33 @@ static bool raw_write_cache_take_for_rw(const char *resolved, uint8_t **out_data
     return false;
 }
 
+static bool raw_write_cache_copy_buf(const char *resolved, uint8_t **out_data, size_t *out_size)
+{
+    if (!resolved || !*resolved || !out_data || !out_size)
+        return false;
+    fs_lock();
+    for (int i = 0; i < NOX_3DS_RAW_CACHE_SLOTS; ++i) {
+        if (g_raw_write_cache[i].valid &&
+            strcasecmp(g_raw_write_cache[i].path, resolved) == 0 &&
+            g_raw_write_cache[i].data && g_raw_write_cache[i].size > 0) {
+            size_t sz = g_raw_write_cache[i].size;
+            uint8_t *copy = (uint8_t *)malloc(sz);
+            if (!copy) {
+                fs_unlock();
+                return false;
+            }
+            memcpy(copy, g_raw_write_cache[i].data, sz);
+            g_raw_write_cache[i].last_use = ++g_raw_write_clock;
+            fs_unlock();
+            *out_data = copy;
+            *out_size = sz;
+            return true;
+        }
+    }
+    fs_unlock();
+    return false;
+}
+
 static int raw_write_cache_copy_to_path(const char *src_resolved,
                                         const char *dst_resolved,
                                         size_t chunk_sz)
@@ -469,7 +496,7 @@ static int memfile_close(void *cookie)
     if (!mf)
         return 0;
 
-    int rc = memfile_flush_to_sd(mf);
+    int rc = mf->dirty ? memfile_flush_to_sd(mf) : 0;
     if (rc == 0 && mf->data && mf->size > 0) {
         raw_write_cache_store_take(mf->resolved, mf->data, mf->size, mf->cap);
         mf->data = NULL;
@@ -567,14 +594,15 @@ static FILE *memfile_open(const char *resolved, const char *mode, nox_3ds_memfil
     return fp;
 }
 
-/* Recursive helper to convert all Windows backslashes '\' to '/' */
-static void sanitize_slashes_recursive(char *p)
+/* Iterative helper to convert all Windows backslashes '\' to '/' */
+static void sanitize_slashes(char *p)
 {
-    if (!p || !*p)
+    if (!p)
         return;
-    if (*p == '\\')
-        *p = '/';
-    sanitize_slashes_recursive(p + 1);
+    for (; *p; ++p) {
+        if (*p == '\\')
+            *p = '/';
+    }
 }
 
 void nox_3ds_sanitize_path(char *path)
@@ -582,8 +610,8 @@ void nox_3ds_sanitize_path(char *path)
     if (!path || !*path)
         return;
 
-    /* 1. Recursively convert every '\' to '/' */
-    sanitize_slashes_recursive(path);
+    /* 1. Convert every '\' to '/' iteratively */
+    sanitize_slashes(path);
 
     /* 2. Collapse consecutive '/' separators while preserving device roots */
     size_t r = 0, w = 0;
@@ -1530,6 +1558,27 @@ bool nox_3ds_crypt_arm_raw(FILE *fp)
 {
     if (!fp || fp != g_crypt_open_fp || !g_crypt_open_is_virtual)
         return false;
+
+    uint8_t *cached_buf = NULL;
+    size_t cached_sz = 0;
+    if (raw_write_cache_copy_buf(g_crypt_open_path, &cached_buf, &cached_sz)) {
+        memset(&g_crypt_reader, 0, sizeof(g_crypt_reader));
+        g_crypt_reader.active = true;
+        g_crypt_reader.from_cache = true;
+        g_crypt_reader.from_prefix_cache = false;
+        g_crypt_reader.is_raw = true;
+        g_crypt_reader.owns_buf = true;
+        g_crypt_reader.cache_slot = -1;
+        g_crypt_reader.key_id = -1;
+        g_crypt_reader.fp = fp;
+        g_crypt_reader.real_fp = g_crypt_open_real_fp;
+        snprintf(g_crypt_reader.path, sizeof(g_crypt_reader.path), "%s", g_crypt_open_path);
+        g_crypt_reader.data = cached_buf;
+        g_crypt_reader.size = cached_sz;
+        g_crypt_reader.loaded = cached_sz;
+        g_crypt_reader.pos = 0;
+        return true;
+    }
 
     FILE *rfp = g_crypt_open_real_fp;
     if (!rfp) {
