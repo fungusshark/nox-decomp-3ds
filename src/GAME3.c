@@ -44063,8 +44063,6 @@ int __cdecl sub_4DBE10(int a1, int a2)
   struct _WIN32_FIND_DATAA FindFileData; // [esp+Ch] [ebp-24940h]
   CHAR PathName[1024]; // [esp+14Ch] [ebp-24800h]
   CHAR FileName[1024]; // [esp+54Ch] [ebp-24400h]
-  char v23[16384]; // [esp+94Ch] [ebp-24000h]
-  char v24[131072]; // [esp+494Ch] [ebp-20000h]
 
   result = a1;
   if ( a1 )
@@ -44074,6 +44072,14 @@ int __cdecl sub_4DBE10(int a1, int a2)
     result = _access(&PathName, 0);
     if ( result != -1 )
     {
+      char *v23 = (char *)malloc(16384);
+      char *v24 = (char *)malloc(131072);
+      if ( !v23 || !v24 )
+      {
+        free(v23);
+        free(v24);
+        return -1;
+      }
       nox_sprintf(&FileName, (const char *)&byte_587000[199664], &PathName);
       DeleteFileA(&FileName);
       SetCurrentDirectoryA(&PathName);
@@ -44171,6 +44177,8 @@ int __cdecl sub_4DBE10(int a1, int a2)
       result = a2;
       if ( a2 )
         result = RemoveDirectoryA(&PathName);
+      free(v23);
+      free(v24);
     }
   }
   return result;

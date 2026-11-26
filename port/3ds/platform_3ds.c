@@ -17,8 +17,8 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-/* Nox has functions with 75-144 KB stack frames; libctru's default 32 KB is insufficient. */
-u32 __stacksize__ = 1024 * 1024;
+/* Large stack buffers in sub_4DBE10/sub_51F230 are moved to heap; 256 KB gives safe headroom. */
+u32 __stacksize__ = 256 * 1024;
 
 static nox_3ds_state_t g_3ds_state;
 static PrintConsole g_boot_console;
