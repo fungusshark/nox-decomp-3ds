@@ -77,7 +77,11 @@ add_executable(nox
     "${CMAKE_CURRENT_SOURCE_DIR}/font_3ds.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/input_3ds.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/swkbd_3ds.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/net_3ds.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/net_loopback_3ds.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/net_sockets_3ds.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/lobby_3ds.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/cJSON.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/stubs.c"
 )
 
@@ -91,7 +95,11 @@ set_source_files_properties(
     "${CMAKE_CURRENT_SOURCE_DIR}/font_3ds.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/input_3ds.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/swkbd_3ds.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/net_3ds.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/net_loopback_3ds.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/net_sockets_3ds.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/lobby_3ds.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/cJSON.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/stubs.c"
     PROPERTIES COMPILE_OPTIONS "-O3;-faggressive-loop-optimizations"
 )
@@ -115,9 +123,9 @@ target_link_libraries(nox PRIVATE
 
 # Generate custom 3DS metadata & icon (nox.smdh)
 ctr_generate_smdh("${CMAKE_CURRENT_BINARY_DIR}/nox.smdh"
-    NAME "Nox (${NOX_3DS_VERSION})"
-    DESCRIPTION "${NOX_3DS_VERSION} - 3DS port by Fungus Shark & AlbertChen408 (Giraffepus) | Westwood Studios"
-    AUTHOR "Ported by Fungus Shark & AlbertChen408 (Westwood)"
+    NAME "Nox 3DS"
+    DESCRIPTION "Nox (Westwood Studios) source port"
+    AUTHOR "Fungus Shark / Giraffepus"
     ICON "${CMAKE_CURRENT_SOURCE_DIR}/icon.png"
 )
 

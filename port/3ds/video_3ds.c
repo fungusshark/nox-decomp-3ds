@@ -1,4 +1,5 @@
 #include "platform_3ds.h"
+#include "perf_3ds.h"
 
 #include <3ds.h>
 #include <citro2d.h>
@@ -28,8 +29,27 @@ static nox_3ds_tex_slot_t s_top_slot;
 static nox_3ds_tex_slot_t s_bot_slot;
 static float              s_gamma = 1.0f;
 
-static uint32_t          s_frame_count = 0;
-static uint32_t          s_fps_last_ms = 0;
+static uint32_t          s_perf_window_ms = 0;
+static uint32_t          s_perf_accum_frames = 0;
+
+static void perf_sample_before_sync(void)
+{
+    uint32_t now_ms = nox_3ds_get_ticks_ms();
+
+    if (s_perf_window_ms == 0)
+        s_perf_window_ms = now_ms;
+
+    s_perf_accum_frames++;
+
+    uint32_t elapsed = now_ms - s_perf_window_ms;
+    if (elapsed >= 500u && s_perf_accum_frames > 0) {
+        float fps = ((float)s_perf_accum_frames * 1000.0f) / (float)elapsed;
+        nox_3ds_perf_hud_update(fps);
+        nox_3ds_state_mut()->fps = (uint32_t)(fps + 0.5f);
+        s_perf_window_ms = now_ms;
+        s_perf_accum_frames = 0;
+    }
+}
 
 static GPU_TEXCOLOR gpu_fmt_for_sdl(uint32_t sdl_format)
 {
@@ -100,16 +120,7 @@ static bool prepare_frame_slot(nox_3ds_tex_slot_t *slot,
 
     const void *xfer_src = NULL;
     if (frame->is_linear && frame->pitch == NOX_3DS_TEX_W * 2) {
-        int fy = (frame->crop_h > 0) ? (frame->crop_y - 2) : 0;
-        int fe = (frame->crop_h > 0) ? (frame->crop_y + frame->crop_h + 2) : h;
-        if (fy < 0) fy = 0;
-        if (fe > h) fe = h;
-        if (fe > fy) {
-            GSPGPU_FlushDataCache(
-                (uint8_t *)frame->pixels + (size_t)fy * (size_t)frame->pitch,
-                (u32)(frame->pitch * (fe - fy))
-            );
-        }
+        GSPGPU_FlushDataCache((void *)frame->pixels, (u32)(frame->pitch * h));
         xfer_src = frame->pixels;
     } else {
         if (!slot->staging) {
@@ -273,6 +284,7 @@ bool nox_3ds_video_init(int logical_w, int logical_h)
         fprintf(stderr, "[video3ds] ERROR: C3D_Init failed\n");
         return false;
     }
+    C3D_FrameRate(30.0f);
     if (!C2D_Init(C2D_DEFAULT_MAX_OBJECTS)) {
         fprintf(stderr, "[video3ds] ERROR: C2D_Init failed\n");
         C3D_Fini();
@@ -303,8 +315,8 @@ bool nox_3ds_video_init(int logical_w, int logical_h)
 
     nox_3ds_font_init();
 
-    s_fps_last_ms = nox_3ds_get_ticks_ms();
-    s_frame_count = 0;
+    s_perf_window_ms = nox_3ds_get_ticks_ms();
+    s_perf_accum_frames = 0;
     s_video_inited = true;
 
     fprintf(stderr, "[video3ds] Dual-screen citro2d active: Top 400x240 + Bottom 320x240\n");
@@ -398,6 +410,8 @@ void nox_3ds_video_present_dual(const nox_3ds_screen_frame_t *top,
         : prepare_frame_slot(&s_bot_slot, bottom, "Bottom", &bot_src, &bot_gx_fmt);
     bool bot_draw = bot_reuse || bot_upload;
 
+    perf_sample_before_sync();
+
     if (C3D_FrameBegin(C3D_FRAME_SYNCDRAW)) {
         nox_3ds_font_upload_pending();
         if (top_ready)
@@ -422,16 +436,6 @@ void nox_3ds_video_present_dual(const nox_3ds_screen_frame_t *top,
         );
 
         C3D_FrameEnd(0);
-    }
-
-    s_frame_count++;
-    uint32_t now_ms = nox_3ds_get_ticks_ms();
-    if (now_ms - s_fps_last_ms >= 1000u) {
-        uint32_t elapsed = now_ms - s_fps_last_ms;
-        nox_3ds_state_t *st = nox_3ds_state_mut();
-        st->fps = (elapsed > 0) ? (s_frame_count * 1000u) / elapsed : 0;
-        s_frame_count = 0;
-        s_fps_last_ms = now_ms;
     }
 }
 
@@ -460,7 +464,7 @@ void nox_3ds_video_present(const void *pixels, int w, int h, int pitch,
  * 1024x512 PICA200 VRAM texture via GX/C3D_SyncDisplayTransfer (zero CPU scale
  * and zero CPU copy when pitch == 2048 & linearAlloc), then hardware-scales
  * the texture down to 400x240 on the Top Screen via citro2d GPU_LINEAR.
- * Bottom Screen is cleared to black with zero texture upload overhead.
+ * Bottom Screen is cleared to black (plus optional FPS HUD) with zero texture upload overhead.
  */
 void nox_3ds_video_present_movie(const void *pixels, int w, int h, int pitch,
                                  uint32_t sdl_format, bool is_linear,
@@ -493,7 +497,9 @@ void nox_3ds_video_present_movie(const void *pixels, int w, int h, int pitch,
     float prev_gamma = s_gamma;
     s_gamma = 1.0f;
 
-    if (C3D_FrameBegin(C3D_FRAME_SYNCDRAW)) {
+    perf_sample_before_sync();
+
+    if (C3D_FrameBegin(0)) {
         nox_3ds_font_upload_pending();
         if (top_ready)
             enqueue_frame_upload(&s_top_slot, top_src, top_gx_fmt);
@@ -508,21 +514,12 @@ void nox_3ds_video_present_movie(const void *pixels, int w, int h, int pitch,
 
         C2D_TargetClear(s_bot_target, C2D_Color32(0, 0, 0, 255));
         C2D_SceneBegin(s_bot_target);
+        nox_3ds_perf_hud_draw_bottom(NOX_3DS_BOT_W, NOX_3DS_BOT_H);
 
         C3D_FrameEnd(0);
     }
 
     s_gamma = prev_gamma;
-
-    s_frame_count++;
-    uint32_t now_ms = nox_3ds_get_ticks_ms();
-    if (now_ms - s_fps_last_ms >= 1000u) {
-        uint32_t elapsed = now_ms - s_fps_last_ms;
-        nox_3ds_state_t *st = nox_3ds_state_mut();
-        st->fps = (elapsed > 0) ? (s_frame_count * 1000u) / elapsed : 0;
-        s_frame_count = 0;
-        s_fps_last_ms = now_ms;
-    }
 }
 
 int nox_3ds_blit_scaled_16(const void *src_pixels, int sw_surf, int sh_surf, int spitch,
