@@ -31,8 +31,10 @@ static float              s_gamma = 1.0f;
 
 static uint32_t          s_perf_window_ms = 0;
 static uint32_t          s_perf_accum_frames = 0;
+static u32               s_last_vb0 = 0;
+static bool              s_have_last_vb0 = false;
 
-static void perf_sample_before_sync(void)
+static void perf_sample_top_frame(void)
 {
     uint32_t now_ms = nox_3ds_get_ticks_ms();
 
@@ -284,7 +286,6 @@ bool nox_3ds_video_init(int logical_w, int logical_h)
         fprintf(stderr, "[video3ds] ERROR: C3D_Init failed\n");
         return false;
     }
-    C3D_FrameRate(30.0f);
     if (!C2D_Init(C2D_DEFAULT_MAX_OBJECTS)) {
         fprintf(stderr, "[video3ds] ERROR: C2D_Init failed\n");
         C3D_Fini();
@@ -317,6 +318,8 @@ bool nox_3ds_video_init(int logical_w, int logical_h)
 
     s_perf_window_ms = nox_3ds_get_ticks_ms();
     s_perf_accum_frames = 0;
+    s_last_vb0 = 0;
+    s_have_last_vb0 = false;
     s_video_inited = true;
 
     fprintf(stderr, "[video3ds] Dual-screen citro2d active: Top 400x240 + Bottom 320x240\n");
@@ -352,6 +355,8 @@ void nox_3ds_video_shutdown(void)
     s_bot_target = NULL;
     C2D_Fini();
     C3D_Fini();
+    s_last_vb0 = 0;
+    s_have_last_vb0 = false;
     s_video_inited = false;
 }
 
@@ -410,9 +415,19 @@ void nox_3ds_video_present_dual(const nox_3ds_screen_frame_t *top,
         : prepare_frame_slot(&s_bot_slot, bottom, "Bottom", &bot_src, &bot_gx_fmt);
     bool bot_draw = bot_reuse || bot_upload;
 
-    perf_sample_before_sync();
+    if (s_have_last_vb0) {
+        int spins = 0;
+        while ((u32)(C3D_FrameCounter(0) - s_last_vb0) < 2u && aptMainLoop() && spins++ < 4) {
+            gspWaitForEvent(GSPGPU_EVENT_VBlank0, false);
+        }
+    }
+    s_last_vb0 = C3D_FrameCounter(0);
+    s_have_last_vb0 = true;
 
-    if (C3D_FrameBegin(C3D_FRAME_SYNCDRAW)) {
+    if (top_ready)
+        perf_sample_top_frame();
+
+    if (C3D_FrameBegin(0)) {
         nox_3ds_font_upload_pending();
         if (top_ready)
             enqueue_frame_upload(&s_top_slot, top_src, top_gx_fmt);
@@ -497,7 +512,9 @@ void nox_3ds_video_present_movie(const void *pixels, int w, int h, int pitch,
     float prev_gamma = s_gamma;
     s_gamma = 1.0f;
 
-    perf_sample_before_sync();
+    s_have_last_vb0 = false;
+    if (top_ready)
+        perf_sample_top_frame();
 
     if (C3D_FrameBegin(0)) {
         nox_3ds_font_upload_pending();
