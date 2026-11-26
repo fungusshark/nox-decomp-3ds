@@ -164,6 +164,16 @@ void nox_3ds_net_shutdown(void)
     g_net_inited = false;
 }
 
+static bool ensure_rx_ring(loopback_sock_t *s)
+{
+    if (!s)
+        return false;
+    if (s->rx_ring)
+        return true;
+    s->rx_ring = (loopback_pkt_t *)calloc(LOOPBACK_RING_CAP, sizeof(loopback_pkt_t));
+    return s->rx_ring != NULL;
+}
+
 int nox_3ds_net_socket(int domain, int type, int protocol)
 {
     net_lock();
@@ -181,21 +191,13 @@ int nox_3ds_net_socket(int domain, int type, int protocol)
         return -1;
     }
 
-    loopback_pkt_t *ring = (loopback_pkt_t *)calloc(LOOPBACK_RING_CAP, sizeof(loopback_pkt_t));
-    if (!ring) {
-        last_socket_error = NOX_WSAEMFILE;
-        errno = ENOMEM;
-        net_unlock();
-        return -1;
-    }
-
     loopback_sock_t *s = &g_socks[slot];
     memset(s, 0, sizeof(*s));
     s->in_use = true;
     s->domain = domain;
     s->type = type;
     s->protocol = protocol;
-    s->rx_ring = ring;
+    s->rx_ring = NULL;
 
     last_socket_error = 0;
     net_unlock();
@@ -252,6 +254,13 @@ int nox_3ds_net_bind(int fd, const void *addr, unsigned int addrlen)
     } else if (port_in_use(s->type, ip_nbo, port_hbo, s)) {
         last_socket_error = NOX_WSAEADDRINUSE;
         errno = EADDRINUSE;
+        net_unlock();
+        return -1;
+    }
+
+    if (!ensure_rx_ring(s)) {
+        last_socket_error = NOX_WSAEMFILE;
+        errno = ENOMEM;
         net_unlock();
         return -1;
     }
@@ -337,7 +346,7 @@ static void enqueue_datagram(loopback_sock_t *dst,
                              uint32_t src_ip_nbo, uint16_t src_port_nbo,
                              const void *buf, uint16_t copy_len)
 {
-    if (!dst || !dst->rx_ring)
+    if (!ensure_rx_ring(dst))
         return;
 
     /* Drop oldest datagram if ring is saturated so latest game state always delivers. */

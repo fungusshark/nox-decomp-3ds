@@ -34918,8 +34918,14 @@ int __cdecl sub_51F230(int a1, FILE *a2)
   int v57; // [esp+3Ch] [ebp-12C0Ch]
   int v58; // [esp+40h] [ebp-12C08h]
   int i; // [esp+44h] [ebp-12C04h]
-  char v60[15360]; // [esp+48h] [ebp-12C00h]
-  char v61[61440]; // [esp+3C48h] [ebp-F000h]
+  char *v60 = (char *)malloc(15360);
+  char *v61 = (char *)malloc(61440);
+  if ( !v60 || !v61 )
+  {
+    free(v60);
+    free(v61);
+    return 0;
+  }
 
   v55 = 0;
   v56 = 0;
@@ -34927,7 +34933,11 @@ int __cdecl sub_51F230(int a1, FILE *a2)
   v58 = 0;
 LABEL_2:
   if ( !sub_51E540(a2, &byte_5D4594[2487264]) )
+  {
+    free(v60);
+    free(v61);
     return 0;
+  }
   if ( !_strcmpi((const char *)&byte_587000[254092], (const char *)&byte_5D4594[2487264]) )
   {
     v50 = v61;
@@ -35070,7 +35080,11 @@ LABEL_49:
         v36 = calloc(v9, 0x3Cu);
         *v49 = v36;
         if ( !v36 )
+        {
+          free(v60);
+          free(v61);
           return 0;
+        }
         if ( v9 > 0 )
         {
           v37 = 0;
@@ -35098,7 +35112,11 @@ LABEL_49:
       v49 = v4;
       v50 = v44 + 15360;
       if ( (int)(v42 + 1) >= 4 )
+      {
+        free(v60);
+        free(v61);
         return 1;
+      }
       v5 = v54;
     }
   }
@@ -35135,6 +35153,8 @@ LABEL_13:
       *(&v55 + v2) = v3 + 1;
     }
   }
+  free(v60);
+  free(v61);
   return 0;
 }
 // 51F230: using guessed type char var_F000[61440];
