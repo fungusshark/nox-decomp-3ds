@@ -46256,7 +46256,7 @@ BOOL __cdecl sub_4899C0(int a1)
         return 0;
       }
 LABEL_26:
-      if ( *((_DWORD *)v4 + 10) && *(_DWORD *)(v6 + 48) != 66458 )
+      if ( *((_DWORD *)v4 + 10) && !NOX_IS_COMPAT_PROTO_VER(nox_read_u32((const void *)(v6 + 48))) )
         return 0;
     }
     return 1;
@@ -46266,7 +46266,7 @@ LABEL_26:
     return 0;
   if ( v12 & 0x20 )
     return 0;
-  return *(_DWORD *)(a1 + 48) == 66458;
+  return NOX_IS_COMPAT_PROTO_VER(nox_read_u32((const void *)(a1 + 48)));
 }
 
 //----- (00489B80) --------------------------------------------------------
@@ -51424,7 +51424,7 @@ LABEL_1099:
         goto LABEL_1183;
       case 0xAFu:
         *(_DWORD *)&byte_5D4594[1200768] = 0;
-        v34 = *(_DWORD *)(v3 + 1);
+        v34 = (int)nox_read_u32(v3 + 1);
         if ( sub_40A350() < v34 )
         {
           sub_40A340(v34);
@@ -51435,9 +51435,9 @@ LABEL_1099:
           if ( !sub_40A5C0(1) )
           {
             sub_40A540(524272);
-            sub_40A4D0(*(_DWORD *)(v3 + 9));
-            sub_409E40(*(_DWORD *)(v3 + 13));
-            sub_409AE0(*(_DWORD *)(v3 + 5));
+            sub_40A4D0((int)nox_read_u32(v3 + 9));
+            sub_409E40((int)nox_read_u32(v3 + 13));
+            sub_409AE0((int)nox_read_u32(v3 + 5));
             sub_409F80(*(unsigned __int8 *)(v3 + 17));
             v35 = sub_416590(0);
             if ( v35[56] != *(_BYTE *)(v3 + 19) || *((_WORD *)v35 + 27) != *(unsigned __int8 *)(v3 + 18) )
@@ -51446,7 +51446,7 @@ LABEL_1099:
             v35[56] = *(_BYTE *)(v3 + 19);
             if ( (signed char)*(_BYTE *)(v3 + 9) >= 0 )
             {
-              *((_WORD *)v35 + 26) = *(_WORD *)(v3 + 9);
+              *((_WORD *)v35 + 26) = nox_read_u16(v3 + 9);
               strcpy(v35, sub_409B40());
             }
             if ( v355 || !sub_40A5C0(32) )
@@ -51484,23 +51484,26 @@ LABEL_1099:
       case 0xB0u:
         if ( !sub_40A5C0(1) )
         {
+          uint32_t b0_f1 = nox_read_u32(v3 + 37);
+          uint32_t b0_f2 = nox_read_u32(v3 + 41);
+          uint32_t b0_f3 = nox_read_u32(v3 + 45);
           v37 = sub_416590(0);
           strncpy(v37 + 9, (const char *)(v3 + 1), 0xFu);
           if ( memcmp(&byte_5D4594[1200732], (const void *)(v3 + 17), 0x14u) )
             *(_DWORD *)&byte_5D4594[1200768] = 1;
-          if ( *(_DWORD *)&byte_5D4594[1200752] != *(_DWORD *)(v3 + 37)
-            || *(_DWORD *)&byte_5D4594[1200756] != *(_DWORD *)(v3 + 41) )
+          if ( *(_DWORD *)&byte_5D4594[1200752] != (int)b0_f1
+            || *(_DWORD *)&byte_5D4594[1200756] != (int)b0_f2 )
           {
             *(_DWORD *)&byte_5D4594[1200768] = 1;
           }
           qmemcpy(v37 + 24, (const void *)(v3 + 17), 0x14u);
           sub_4540E0((int)(v37 + 24));
-          *((_DWORD *)v37 + 11) = *(_DWORD *)(v3 + 37);
-          *((_DWORD *)v37 + 12) = *(_DWORD *)(v3 + 41);
-          if ( *(_DWORD *)(v3 + 45) )
+          *((_DWORD *)v37 + 11) = b0_f1;
+          *((_DWORD *)v37 + 12) = b0_f2;
+          if ( b0_f3 )
           {
             sub_40A1F0(1);
-            sub_40A310(*(_DWORD *)(v3 + 45));
+            sub_40A310((int)b0_f3);
           }
           else
           {

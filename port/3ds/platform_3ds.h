@@ -328,6 +328,8 @@ void nox_3ds_swkbd_request(void *entry_win, bool auto_submit);
 void nox_3ds_swkbd_cancel_pending(void *entry_win);
 bool nox_3ds_swkbd_pump(void);
 bool nox_3ds_swkbd_is_active(void);
+bool nox_3ds_consume_direct_ip_request(void);
+bool nox_3ds_swkbd_prompt_direct_ip(char *out_entry, size_t out_sz);
 
 /* =========================================================================
  * 5. Audio Bridge: Miles AIL -> libctru 24-ch ndsp (audio_3ds.c)
@@ -396,6 +398,11 @@ typedef struct {
 extern const nox_3ds_net_ops_t g_nox_3ds_loopback_ops;
 extern const nox_3ds_net_ops_t g_nox_3ds_sockets_ops;
 
+#define NOX_PROTO_VER_LEGACY   0x0001039Au /* 66458: Nox 1.2b / nox-decomp / opennox-ivan */
+#define NOX_PROTO_VER_HIGHRES  0x000F039Au /* 983962: OpenNox HD (highres) */
+#define NOX_IS_COMPAT_PROTO_VER(v) \
+    (((uint32_t)(v) == NOX_PROTO_VER_LEGACY) || ((uint32_t)(v) == NOX_PROTO_VER_HIGHRES))
+
 void               nox_3ds_net_init(void);
 void               nox_3ds_net_shutdown(void);
 void               nox_3ds_net_log(const char *fmt, ...);
@@ -403,6 +410,7 @@ void               nox_3ds_net_set_mode(nox_3ds_net_mode_t mode);
 nox_3ds_net_mode_t nox_3ds_net_get_mode(void);
 bool               nox_3ds_soc_is_ready(void);
 bool               nox_3ds_soc_ensure_ready(void);
+bool               nox_3ds_soc_get_ip_info(uint32_t *out_ip_be, uint32_t *out_mask_be, uint32_t *out_bcast_be);
 bool               nox_3ds_soc_resolve_ipv4(const char *hostname, uint32_t *out_ip_be);
 void               nox_3ds_net_on_apt_suspend(bool suspended);
 void               nox_3ds_lobby_init(void);

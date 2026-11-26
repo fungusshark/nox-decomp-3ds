@@ -880,7 +880,7 @@ void nox_3ds_font_set_show_version(bool show)
 
 static void draw_crisp_pill_overlay(int target_w, int target_h,
                                     const char *msg, bool bottom_right,
-                                    u32 bg, u32 fg)
+                                    bool align_left, u32 bg, u32 fg)
 {
     if (!s_atlas_inited || !msg || !*msg)
         return;
@@ -894,7 +894,7 @@ static void draw_crisp_pill_overlay(int target_w, int target_h,
     int pad_x = 4, pad_y = 3;
     int box_w = total_w + pad_x * 2;
     int box_h = 6 + pad_y * 2;
-    int bx = target_w - box_w - 4;
+    int bx = align_left ? 4 : (target_w - box_w - 4);
     int by = bottom_right ? (target_h - box_h - 4) : 4;
 
     C2D_DrawRectSolid((float)bx, (float)by, 0.0f, (float)box_w, (float)box_h, bg);
@@ -922,7 +922,7 @@ static void draw_toast_overlay(int target_w, int target_h)
 
     const char *msg = s_native_enabled ? "NATIVE FONT: AUTO" : "NATIVE FONT: OFF";
     u32 fg = s_native_enabled ? C2D_Color32(120, 255, 140, 255) : C2D_Color32(255, 210, 110, 255);
-    draw_crisp_pill_overlay(target_w, target_h, msg, false,
+    draw_crisp_pill_overlay(target_w, target_h, msg, false, false,
                             C2D_Color32(10, 10, 16, 210), fg);
 }
 
@@ -930,9 +930,23 @@ static void draw_version_overlay(int target_w, int target_h)
 {
     if (!s_show_version_overlay)
         return;
-    draw_crisp_pill_overlay(target_w, target_h, NOX_3DS_VERSION_STR, true,
+    draw_crisp_pill_overlay(target_w, target_h, NOX_3DS_VERSION_STR, true, false,
                             C2D_Color32(8, 8, 14, 195),
                             C2D_Color32(235, 205, 130, 245));
+    if (nox_3ds_net_get_mode() == NOX_3DS_NET_MODE_WIFI) {
+        char lan_msg[64];
+        uint32_t ip = 0, mask = 0, bcast = 0;
+        if (nox_3ds_soc_is_ready() && nox_3ds_soc_get_ip_info(&ip, &mask, &bcast)) {
+            snprintf(lan_msg, sizeof(lan_msg), "LAN %u.%u.%u.%u:18590 | SELECT: Direct IP",
+                     (unsigned)(ip & 0xFFu), (unsigned)((ip >> 8) & 0xFFu),
+                     (unsigned)((ip >> 16) & 0xFFu), (unsigned)((ip >> 24) & 0xFFu));
+        } else {
+            snprintf(lan_msg, sizeof(lan_msg), "Wi-Fi | SELECT: Direct IP");
+        }
+        draw_crisp_pill_overlay(target_w, target_h, lan_msg, false, true,
+                                C2D_Color32(8, 16, 14, 195),
+                                C2D_Color32(140, 240, 190, 245));
+    }
 }
 
 void nox_3ds_font_render_screen(int screen,

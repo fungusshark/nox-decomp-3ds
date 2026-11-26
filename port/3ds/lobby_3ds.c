@@ -134,6 +134,7 @@ typedef struct {
     nox_server_row row;
     struct in_addr resolved_ip;
     uint16_t       access_flags;
+    uint32_t       proto_ver;
 } lobby_cached_row_t;
 
 /* Discovery fetch state & server cache */
@@ -321,12 +322,14 @@ static bool lobby_should_register_host(void)
     if (s_cached >= 0)
         return s_cached != 0;
 
-    if (nox_env_truthy(getenv("NOX_LOBBY_REGISTER_ENABLE"))) {
-        s_cached = 1;
-        return true;
+    const char *env_reg = getenv("NOX_LOBBY_REGISTER_ENABLE");
+    if (env_reg && *env_reg) {
+        s_cached = (nox_env_truthy(env_reg) != 0) ? 1 : 0;
+        return s_cached != 0;
     }
 
-    /* Opt-in via presence of sdmc:/3ds/nox/lobby_host.txt (OFF by default). */
+    /* Enabled by default when hosting over Wi-Fi; create sdmc:/3ds/nox/lobby_host.txt
+     * with "0" / "off" to keep a LAN host private. */
     FILE *f = fopen(NOX_3DS_DATA_ROOT "/lobby_host.txt", "r");
     if (f) {
         char buf[32] = {0};
@@ -336,8 +339,8 @@ static bool lobby_should_register_host(void)
         s_cached = (n == 0 || nox_env_truthy(buf) != 0) ? 1 : 0;
         return s_cached != 0;
     }
-    s_cached = 0;
-    return false;
+    s_cached = 1;
+    return true;
 }
 
 /* =========================================================================
@@ -384,6 +387,7 @@ static size_t lobby_parse_games_json(const char *json_text, lobby_cached_row_t *
             memset(&item, 0, sizeof(item));
             item.row.port = (uint16_t)NOX_3DS_LOBBY_DEFAULT_PORT;
             item.row.players_max = 31;
+            item.proto_ver = NOX_PROTO_VER_LEGACY;
 
             copy_json_str(elem, "name", item.row.name, sizeof(item.row.name));
             copy_json_str(elem, "addr", item.row.addr, sizeof(item.row.addr));
@@ -391,6 +395,18 @@ static size_t lobby_parse_games_json(const char *json_text, lobby_cached_row_t *
                 copy_json_str(elem, "ip", item.row.addr, sizeof(item.row.addr));
             copy_json_str(elem, "map", item.row.map, sizeof(item.row.map));
             copy_json_str(elem, "mode", item.row.mode, sizeof(item.row.mode));
+
+            const cJSON *jres = cJSON_GetObjectItemCaseSensitive(elem, "res");
+            if (cJSON_IsObject(jres)) {
+                const cJSON *jhires = cJSON_GetObjectItemCaseSensitive(jres, "high_res");
+                const cJSON *jw     = cJSON_GetObjectItemCaseSensitive(jres, "width");
+                const cJSON *jh     = cJSON_GetObjectItemCaseSensitive(jres, "height");
+                if (cJSON_IsTrue(jhires) ||
+                    (cJSON_IsNumber(jw) && jw->valueint > 1024) ||
+                    (cJSON_IsNumber(jh) && jh->valueint > 768)) {
+                    item.proto_ver = NOX_PROTO_VER_HIGHRES;
+                }
+            }
 
             char access_str[32] = {0};
             copy_json_str(elem, "access", access_str, sizeof(access_str));
@@ -542,10 +558,11 @@ static size_t queue_cached_rows_locked(void)
         out[20] = (uint8_t)(g_srv_cache[i].access_flags & 0xFFu);
         out[21] = (uint8_t)((g_srv_cache[i].access_flags >> 8) & 0xFFu);
 
-        /* Protocol/Game Version @ offset 24..27 (66458 = 0x0001039A = Nox 1.2b).
-         * Required by GAME2.c:sub_4899C0() when Compatible Version filter is enabled. */
+        /* Protocol/Game Version @ offset 24..27 (0x0001039A = 1.2b, 0x000F039A = OpenNox HD). */
         {
-            uint32_t ver = 0x0001039Au;
+            uint32_t ver = NOX_IS_COMPAT_PROTO_VER(g_srv_cache[i].proto_ver)
+                         ? g_srv_cache[i].proto_ver
+                         : NOX_PROTO_VER_LEGACY;
             memcpy(&out[24], &ver, sizeof(ver));
         }
 
@@ -1500,7 +1517,8 @@ static void worker_do_host_register(const host_reg_job_t *job)
     if (last_good[0] != '\0') {
         snprintf(url, sizeof(url), "%s/api/v0/games/register", last_good);
         if (http_post_json(url, body) == 0) {
-            printf("[lobby3ds] Registered host '%s' on %s\n", job->name, last_good);
+            nox_3ds_net_log("[lobby3ds] Registered host '%s' (port=%u) on %s",
+                            job->name, port, last_good);
             return;
         }
     }
@@ -1516,10 +1534,12 @@ static void worker_do_host_register(const host_reg_job_t *job)
             RecursiveLock_Lock(&g_lobby_lock);
             snprintf(g_last_good_base_url, sizeof(g_last_good_base_url), "%s", endpoints[i].base_url);
             RecursiveLock_Unlock(&g_lobby_lock);
-            printf("[lobby3ds] Registered host '%s' on %s\n", job->name, endpoints[i].base_url);
+            nox_3ds_net_log("[lobby3ds] Registered host '%s' (port=%u) on %s",
+                            job->name, port, endpoints[i].base_url);
             return;
         }
     }
+    nox_3ds_net_log("[lobby3ds] Host registration failed for '%s'", job->name);
 }
 
 static void lobby_worker_main(void *arg)
