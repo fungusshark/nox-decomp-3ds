@@ -46,10 +46,6 @@ add_compile_options(
     -Wno-error=incompatible-pointer-types
 )
 
-# ABI wrapper library for ARM32 AAPCS-VFP pointer-in-float slots
-add_library(abi_wrappers STATIC "${NOX_ROOT}/abi_wrappers.c")
-set_target_properties(abi_wrappers PROPERTIES C_STANDARD 99)
-
 add_executable(nox
     "${NOX_SRC_DIR}/GAME1.c"
     "${NOX_SRC_DIR}/GAME2.c"
@@ -109,7 +105,6 @@ target_link_libraries(nox PRIVATE
     citro3d
     ctru
     z
-    abi_wrappers
     m
 )
 

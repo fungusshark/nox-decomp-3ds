@@ -77,18 +77,15 @@ static bool is_loopback_or_local_ip(uint32_t ip_nbo)
     return false;
 }
 
-static void net_lock(void)
+/* Loopback sockets execute solely on the main thread; skip RecursiveLock/dmb overhead. */
+static inline void net_lock(void)
 {
     if (!g_net_inited)
         nox_3ds_net_init();
-    if (g_net_mutex)
-        nox_3ds_mutex_lock(g_net_mutex);
 }
 
-static void net_unlock(void)
+static inline void net_unlock(void)
 {
-    if (g_net_mutex)
-        nox_3ds_mutex_unlock(g_net_mutex);
 }
 
 static loopback_sock_t *lookup_sock(int fd)

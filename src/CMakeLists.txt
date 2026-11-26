@@ -155,10 +155,6 @@ if (CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|i[3-6]86)$")
     target_link_options(out PRIVATE -m32)
 endif()
 
-# ---- ABI wrapper integration ----
-add_library(abi_wrappers STATIC ${PROJECT_SOURCE_DIR}/abi_wrappers.c)
-set_target_properties(abi_wrappers PROPERTIES C_STANDARD 99)
-
 # SDL2 include/link dirs (from pkg-config when available)
 if (SDL2_INCLUDE_DIRS)
     target_include_directories(out PRIVATE ${SDL2_INCLUDE_DIRS})
@@ -189,7 +185,6 @@ target_link_libraries(out PRIVATE
     ${OPENGL_LIBRARIES}
     ${PTHREAD_LIBRARIES}
     ${WIN32_LIBRARIES}
-    abi_wrappers
 )
 
 if (SDL2_LDFLAGS)
