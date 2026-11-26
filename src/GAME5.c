@@ -15841,11 +15841,11 @@ int __cdecl sub_57A950(char *a1)
 int __cdecl sub_57A9F0(const char *a1, const char *a2)
 {
   CHAR FileName[256]; // [esp+Ch] [ebp-100h]
+  int path_len;
 
-  strcpy(FileName, "maps\\");
-  strcat(FileName, a1);
-  *(_WORD *)&FileName[strlen(FileName)] = *(_WORD *)&byte_587000[312576];
-  strcat(FileName, a2);
+  path_len = snprintf(FileName, sizeof(FileName), "maps\\%s\\%s", a1 ? a1 : "", a2 ? a2 : "");
+  if ( path_len < 0 || path_len >= (int)sizeof(FileName) )
+    return -1;
   return remove(FileName);
 }
 
@@ -15867,20 +15867,20 @@ char __cdecl sub_57AAA0(const char *a1, char *a2, int *a3)
   char *v15; // edi
   char *v16; // eax
   int v18; // [esp+10h] [ebp-27Ch]
-  char v19[24]; // [esp+14h] [ebp-278h]
-  char v20[36]; // [esp+2Ch] [ebp-260h]
-  char v21[24]; // [esp+50h] [ebp-23Ch]
-  char v22[36]; // [esp+68h] [ebp-224h]
+  NOX_ALIGN4 char v19[60]; // [esp+14h] [ebp-278h]
+  NOX_ALIGN4 char v21[60]; // [esp+50h] [ebp-23Ch]
   CHAR v23[256]; // [esp+8Ch] [ebp-200h]
   CHAR FileName[256]; // [esp+18Ch] [ebp-100h]
+  int path_len;
 
+  memset(v19, 0, sizeof(v19));
+  memset(v21, 0, sizeof(v21));
   LOBYTE(v3) = a2[52];
   if ( (char)v3 >= 0 )
   {
-    strcpy(FileName, "maps\\");
-    strncat(FileName, a2, 8u);
-    *(_WORD *)&FileName[strlen(FileName)] = *(_WORD *)&byte_587000[312588];
-    strcat(FileName, a1);
+    path_len = snprintf(FileName, sizeof(FileName), "maps\\%.8s\\%s", a2, a1 ? a1 : "");
+    if ( path_len < 0 || path_len >= (int)sizeof(FileName) )
+      return 0;
     _chmod(FileName, 128);
     v3 = fopen(FileName, (const char *)&byte_587000[312592]);
     v4 = v3;
@@ -15888,8 +15888,8 @@ char __cdecl sub_57AAA0(const char *a1, char *a2, int *a3)
     {
       if ( *(_DWORD *)&byte_5D4594[2650652] )
       {
-        strcpy(v21, a2);
-        strcpy(v19, a2);
+        snprintf(v21, 24, "%s", a2);
+        snprintf(v19, 24, "%s", a2);
         sub_57A1E0((int *)v21, 0, 0, 4, *((_WORD *)a2 + 26));
         sub_57A1E0((int *)v19, 0, 0, 3, *((_WORD *)a2 + 26));
       }
@@ -15911,7 +15911,7 @@ char __cdecl sub_57AAA0(const char *a1, char *a2, int *a3)
         if ( sub_424B50(v7)
           && !sub_454000((int)(a2 + 24), v7)
           && sub_424A70(v7) & 0x7000000
-          && (!*(_DWORD *)&byte_5D4594[2650652] || sub_454000((int)v22, v7) || !sub_454000((int)v20, v7)) )
+          && (!*(_DWORD *)&byte_5D4594[2650652] || sub_454000((int)(v21 + 24), v7) || !sub_454000((int)(v19 + 24), v7)) )
         {
           v9 = sub_424870(v7);
           nox_sprintf(
