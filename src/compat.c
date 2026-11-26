@@ -333,7 +333,7 @@ char *_strrev(char *str)
 {
     char *begin, *end;
 
-    if (!str[0])
+    if (!str || !str[0])
         return str;
 
     begin = str;
@@ -342,8 +342,8 @@ char *_strrev(char *str)
     while (begin < end)
     {
         char tmp = *end;
-        *end = *begin;
-        *begin = tmp;
+        *end-- = *begin;
+        *begin++ = tmp;
     }
 
     return str;
@@ -2261,6 +2261,11 @@ static int casepath(char const *path, char *r)
     (void)r;
     return 0;
 #else
+    if (access(path, F_OK) == 0)
+    {
+        strcpy(r, path);
+        return 1;
+    }
     size_t l = strlen(path);
     char *p = alloca(l + 1);
     strcpy(p, path);

@@ -145,7 +145,13 @@ static bool compute_cstick_curved(float *out_nx, float *out_ny, float *out_mag)
     if (u < 0.0f) u = 0.0f;
     if (u > 1.0f) u = 1.0f;
 
-    float curved = powf(u, g_in.cstick_cfg.curve_exp) * g_in.cstick_cfg.sensitivity;
+    float curved;
+    if (fabsf(g_in.cstick_cfg.curve_exp - 1.75f) < 1e-4f) {
+        float s = sqrtf(u);
+        curved = u * s * sqrtf(s) * g_in.cstick_cfg.sensitivity;
+    } else {
+        curved = powf(u, g_in.cstick_cfg.curve_exp) * g_in.cstick_cfg.sensitivity;
+    }
     if (curved > 1.0f) curved = 1.0f;
 
     *out_nx = fx / mag;
@@ -195,9 +201,23 @@ static bool is_creature_cage_hit(int x, int y)
     return false;
 }
 
+static int g_last_injected_mx = -1;
+static int g_last_injected_my = -1;
+
+static inline void inject_mouse_abs_dedup(int x, int y)
+{
+    if (x != g_last_injected_mx || y != g_last_injected_my) {
+        g_last_injected_mx = x;
+        g_last_injected_my = y;
+        nox_ctrl_inject_mouse_abs(x, y);
+    }
+}
+
 void nox_3ds_input_init(void)
 {
     memset(&g_in, 0, sizeof(g_in));
+    g_last_injected_mx = -1;
+    g_last_injected_my = -1;
     g_in.cstick_cfg.deadzone     = read_env_float("NOX_3DS_CSTICK_DEADZONE", 0.14f, 0.02f, 0.85f);
     g_in.cstick_cfg.curve_exp    = read_env_float("NOX_3DS_CSTICK_CURVE",    1.75f, 1.0f,  4.0f);
     g_in.cstick_cfg.sensitivity  = read_env_float("NOX_3DS_CSTICK_SENS",     1.0f,  0.2f,  4.0f);
@@ -687,7 +707,7 @@ void nox_3ds_input_process_hybrid(void)
         /* We explicitly DO NOT clear g_touch_mode here. If you are running
            via the touch screen, we want that to continue seamlessly in the background. */
 
-        nox_ctrl_inject_mouse_abs(g_in.world_aim_x, g_in.world_aim_y);
+        inject_mouse_abs_dedup(g_in.world_aim_x, g_in.world_aim_y);
 
         if (r_held && g_lmb_owner != LMB_OWNER_WORLD_R) {
             nox_ctrl_inject_mouse_button(0, 1);
@@ -705,7 +725,7 @@ void nox_3ds_input_process_hybrid(void)
         release_lmb_if_owned(LMB_OWNER_WORLD_R);
 
         if (g_in.touch_active) {
-            nox_ctrl_inject_mouse_abs(g_in.bottom_touch_x, g_in.bottom_touch_y);
+            inject_mouse_abs_dedup(g_in.bottom_touch_x, g_in.bottom_touch_y);
 
             if (g_in.touch_down && world_mode &&
                 is_creature_cage_hit(g_in.bottom_touch_x, g_in.bottom_touch_y)) {
@@ -725,7 +745,7 @@ void nox_3ds_input_process_hybrid(void)
                 g_lmb_owner = LMB_OWNER_TOUCH;
             }
         } else if (g_in.touch_up) {
-            nox_ctrl_inject_mouse_abs(g_in.bottom_touch_x, g_in.bottom_touch_y);
+            inject_mouse_abs_dedup(g_in.bottom_touch_x, g_in.bottom_touch_y);
 
             if (g_touch_mode == TOUCH_MODE_CTX_MENU) {
                 /* Drag-and-Release State 3 (Stylus Up):
@@ -756,8 +776,8 @@ void nox_3ds_input_process_hybrid(void)
         g_touch_mode = TOUCH_MODE_NONE;
         nox_ctrl_set_touch_move(0, 0, 0);
 
-        nox_ctrl_inject_mouse_abs(g_in.world_aim_x, g_in.world_aim_y);
-        
+        inject_mouse_abs_dedup(g_in.world_aim_x, g_in.world_aim_y);
+
         if (g_lmb_owner == LMB_OWNER_WORLD_R) {
             nox_ctrl_inject_mouse_button(0, 0);
             g_lmb_owner = LMB_OWNER_NONE;
