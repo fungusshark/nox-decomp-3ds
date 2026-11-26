@@ -31,8 +31,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define ATLAS_W           256
-#define ATLAS_H           256
+#define ATLAS_W           128
+#define ATLAS_H           64
 #define ATLAS_COLS        16
 #define FONT_SLOTS        4
 #define FONT_GLYPH_COUNT  95   /* ASCII 0x20..0x7E */
@@ -40,10 +40,8 @@
 #define FONT_MAX_GLYPHS   1800
 #define TOAST_MS          2000u
 
-/* Atlas layout inside 256x256 GPU_RGBA8 (256 KB VRAM):
+/* Atlas layout inside 128x64 GPU_RGBA8 (32 KB VRAM):
  *   y =   0.. 47, x = 0..127 : crisp 3x5 proportional pixel font (8x8 cells)
- *   y =  64..147, x = 0..255 : authentic large.fnt Bottom 0.5x   (16x14 cells)
- *   y = 152..247, x = 0..255 : authentic large.fnt Top    0.625x (16x16 cells)
  */
 #define CRISP_BASE_X      0
 #define CRISP_BASE_Y      0
@@ -185,12 +183,14 @@ static const crisp_glyph_t s_crisp_font[FONT_GLYPH_COUNT] = {
     /* 0x7E '~' */ { 4, { 0x00, 0x50, 0xA0, 0x00, 0x00, 0x00 } }
 };
 
-static C3D_Tex        s_atlas_tex;
-static uint32_t      *s_atlas_staging = NULL;
-static bool           s_staging_baked = false;
-static bool           s_atlas_inited = false;
-static bool           s_atlas_uploaded = false;
-static bool           s_native_enabled = false;
+static C3D_Tex          s_atlas_tex;
+static uint32_t        *s_atlas_staging = NULL;
+static bool             s_staging_baked = false;
+static bool             s_atlas_inited = false;
+static bool             s_atlas_uploaded = false;
+static int              s_atlas_upload_age = 0;
+static Tex3DS_SubTexture s_crisp_subtex[FONT_GLYPH_COUNT];
+static bool             s_native_enabled = false;
 static int            s_fallback_depth = 0;
 static int            s_shadow_depth = 0;
 static uint32_t       s_font_generation = 1;
@@ -344,6 +344,22 @@ bool nox_3ds_font_init(void)
     size_t staging_bytes = (size_t)ATLAS_W * (size_t)ATLAS_H * 4u;
     GSPGPU_FlushDataCache(s_atlas_staging, (u32)staging_bytes);
     s_atlas_uploaded = false;
+    s_atlas_upload_age = 0;
+
+    for (int i = 0; i < FONT_GLYPH_COUNT; ++i) {
+        int col = i % ATLAS_COLS;
+        int row = i / ATLAS_COLS;
+        int ax = CRISP_BASE_X + col * CRISP_CELL_W;
+        int ay = CRISP_BASE_Y + row * CRISP_CELL_H;
+        int gw = (int)s_crisp_font[i].w;
+        int gh = 6;
+        s_crisp_subtex[i].width  = (u16)gw;
+        s_crisp_subtex[i].height = (u16)gh;
+        s_crisp_subtex[i].left   = (float)ax / (float)ATLAS_W;
+        s_crisp_subtex[i].right  = (float)(ax + gw) / (float)ATLAS_W;
+        s_crisp_subtex[i].top    = (float)(ATLAS_H - ay) / (float)ATLAS_H;
+        s_crisp_subtex[i].bottom = (float)(ATLAS_H - (ay + gh)) / (float)ATLAS_H;
+    }
 
     C3D_TexSetFilter(&s_atlas_tex, GPU_NEAREST, GPU_NEAREST);
     C3D_TexSetWrap(&s_atlas_tex, GPU_CLAMP_TO_EDGE, GPU_CLAMP_TO_EDGE);
@@ -358,7 +374,19 @@ bool nox_3ds_font_init(void)
 
 void nox_3ds_font_upload_pending(void)
 {
-    if (!s_atlas_inited || s_atlas_uploaded || !s_atlas_staging)
+    if (!s_atlas_inited)
+        return;
+
+    if (s_atlas_uploaded) {
+        if (s_atlas_staging && ++s_atlas_upload_age >= 2) {
+            linearFree(s_atlas_staging);
+            s_atlas_staging = NULL;
+            s_staging_baked = false;
+        }
+        return;
+    }
+
+    if (!s_atlas_staging)
         return;
 
     const u32 xfer_flags =
@@ -377,6 +405,7 @@ void nox_3ds_font_upload_pending(void)
         xfer_flags
     );
     s_atlas_uploaded = true;
+    s_atlas_upload_age = 0;
 }
 
 void nox_3ds_font_shutdown(void)
@@ -824,12 +853,25 @@ static void draw_tier_glyph_clipped(font_tier_t tier, uint16_t ch,
     if (ch < 0x20 || ch > 0x7E)
         return;
     int idx = (int)(ch - 0x20);
+    int gw = (int)s_crisp_font[idx].w;
+    int gh = 6;
+    if (gw <= 0)
+        return;
+
+    if (px >= clip_x0 && (px + gw) <= clip_x1 && py >= clip_y0 && (py + gh) <= clip_y1) {
+        C2D_Image img;
+        img.tex = &s_atlas_tex;
+        img.subtex = &s_crisp_subtex[idx];
+        C2D_ImageTint tint;
+        C2D_PlainImageTint(&tint, rgba32, 1.0f);
+        C2D_DrawImageAt(img, (float)px, (float)py, 0.0f, &tint, 1.0f, 1.0f);
+        return;
+    }
+
     int col = idx % ATLAS_COLS;
     int row = idx / ATLAS_COLS;
     int ax = CRISP_BASE_X + col * CRISP_CELL_W;
     int ay = CRISP_BASE_Y + row * CRISP_CELL_H;
-    int gw = (int)s_crisp_font[idx].w;
-    int gh = 6;
 
     draw_subrect_clipped(ax, ay, gw, gh, px, py, clip_x0, clip_y0, clip_x1, clip_y1, rgba32);
 }
@@ -933,6 +975,9 @@ void nox_3ds_font_render_screen(int screen,
 
         int cnt = s_counts[screen];
         const queued_glyph_t *arr = s_queues[screen];
+        uint8_t prev_clip_en = 2;
+        int16_t prev_cl = 0, prev_ct = 0, prev_cr = 0, prev_cb = 0;
+        int cached_cx0 = 0, cached_cy0 = 0, cached_cx1 = target_w, cached_cy1 = target_h;
 
         /* Pass 1: crisp 1px physical black drop-shadow behind explicitly shadowed / top glyphs */
         u32 shadow_rgba = C2D_Color32(0, 0, 0, (u8)(180.0f * g_mul));
@@ -953,24 +998,34 @@ void nox_3ds_font_render_screen(int screen,
             int px = (int)floorf(draw_x + (float)(q->x - crop_x) * scale_x + 0.5f);
             int py = (int)floorf(draw_y + (float)(q->y - crop_y) * scale_y + 0.5f);
 
-            int cx0 = 0, cy0 = 0, cx1 = target_w, cy1 = target_h;
-            if (q->clip_en) {
-                cx0 = (int)floorf(draw_x + (float)(q->clip_l - crop_x) * scale_x);
-                cy0 = (int)floorf(draw_y + (float)(q->clip_t - crop_y) * scale_y);
-                cx1 = (int)ceilf(draw_x + (float)(q->clip_r - crop_x) * scale_x);
-                cy1 = (int)ceilf(draw_y + (float)(q->clip_b - crop_y) * scale_y);
-                if (cx0 < 0) cx0 = 0;
-                if (cy0 < 0) cy0 = 0;
-                if (cx1 > target_w) cx1 = target_w;
-                if (cy1 > target_h) cy1 = target_h;
+            if (q->clip_en != prev_clip_en ||
+                (q->clip_en && (q->clip_l != prev_cl || q->clip_t != prev_ct ||
+                                q->clip_r != prev_cr || q->clip_b != prev_cb))) {
+                prev_clip_en = q->clip_en;
+                prev_cl = q->clip_l; prev_ct = q->clip_t;
+                prev_cr = q->clip_r; prev_cb = q->clip_b;
+                if (q->clip_en) {
+                    cached_cx0 = (int)floorf(draw_x + (float)(q->clip_l - crop_x) * scale_x);
+                    cached_cy0 = (int)floorf(draw_y + (float)(q->clip_t - crop_y) * scale_y);
+                    cached_cx1 = (int)ceilf(draw_x + (float)(q->clip_r - crop_x) * scale_x);
+                    cached_cy1 = (int)ceilf(draw_y + (float)(q->clip_b - crop_y) * scale_y);
+                    if (cached_cx0 < 0) cached_cx0 = 0;
+                    if (cached_cy0 < 0) cached_cy0 = 0;
+                    if (cached_cx1 > target_w) cached_cx1 = target_w;
+                    if (cached_cy1 > target_h) cached_cy1 = target_h;
+                } else {
+                    cached_cx0 = 0; cached_cy0 = 0;
+                    cached_cx1 = target_w; cached_cy1 = target_h;
+                }
             }
 
             draw_tier_glyph_clipped((font_tier_t)q->tier, q->ch,
                                     px + 1, py + 1,
-                                    cx0, cy0, cx1, cy1, shadow_rgba);
+                                    cached_cx0, cached_cy0, cached_cx1, cached_cy1, shadow_rgba);
         }
 
         /* Pass 2: crisp 1:1 foreground glyphs */
+        prev_clip_en = 2;
         for (int i = 0; i < cnt; ++i) {
             const queued_glyph_t *q = &arr[i];
             if (!q->visible)
@@ -987,21 +1042,30 @@ void nox_3ds_font_render_screen(int screen,
             int px = (int)floorf(draw_x + (float)(q->x - crop_x) * scale_x + 0.5f);
             int py = (int)floorf(draw_y + (float)(q->y - crop_y) * scale_y + 0.5f);
 
-            int cx0 = 0, cy0 = 0, cx1 = target_w, cy1 = target_h;
-            if (q->clip_en) {
-                cx0 = (int)floorf(draw_x + (float)(q->clip_l - crop_x) * scale_x);
-                cy0 = (int)floorf(draw_y + (float)(q->clip_t - crop_y) * scale_y);
-                cx1 = (int)ceilf(draw_x + (float)(q->clip_r - crop_x) * scale_x);
-                cy1 = (int)ceilf(draw_y + (float)(q->clip_b - crop_y) * scale_y);
-                if (cx0 < 0) cx0 = 0;
-                if (cy0 < 0) cy0 = 0;
-                if (cx1 > target_w) cx1 = target_w;
-                if (cy1 > target_h) cy1 = target_h;
+            if (q->clip_en != prev_clip_en ||
+                (q->clip_en && (q->clip_l != prev_cl || q->clip_t != prev_ct ||
+                                q->clip_r != prev_cr || q->clip_b != prev_cb))) {
+                prev_clip_en = q->clip_en;
+                prev_cl = q->clip_l; prev_ct = q->clip_t;
+                prev_cr = q->clip_r; prev_cb = q->clip_b;
+                if (q->clip_en) {
+                    cached_cx0 = (int)floorf(draw_x + (float)(q->clip_l - crop_x) * scale_x);
+                    cached_cy0 = (int)floorf(draw_y + (float)(q->clip_t - crop_y) * scale_y);
+                    cached_cx1 = (int)ceilf(draw_x + (float)(q->clip_r - crop_x) * scale_x);
+                    cached_cy1 = (int)ceilf(draw_y + (float)(q->clip_b - crop_y) * scale_y);
+                    if (cached_cx0 < 0) cached_cx0 = 0;
+                    if (cached_cy0 < 0) cached_cy0 = 0;
+                    if (cached_cx1 > target_w) cached_cx1 = target_w;
+                    if (cached_cy1 > target_h) cached_cy1 = target_h;
+                } else {
+                    cached_cx0 = 0; cached_cy0 = 0;
+                    cached_cx1 = target_w; cached_cy1 = target_h;
+                }
             }
 
             draw_tier_glyph_clipped((font_tier_t)q->tier, q->ch,
                                     px, py,
-                                    cx0, cy0, cx1, cy1, fg);
+                                    cached_cx0, cached_cy0, cached_cx1, cached_cy1, fg);
         }
     }
 

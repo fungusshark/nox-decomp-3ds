@@ -28270,6 +28270,10 @@ int __cdecl sub_472600(int a1, int a2)
   sub_434560(0);
   sub_49F6F0(0, yTop, v3, v3);
   v6 = *(_DWORD *)&byte_587000[149232];
+  int zoom = v6;
+  int64_t inv_zoom_q20 = (zoom > 0) ? (((int64_t)100 << 20) / zoom) : 0;
+  int wall_step = (zoom > 0) ? (2300 / zoom) : 0;
+#define MM_SCALE_Q20(d) ((int)(((int64_t)(d) * inv_zoom_q20) >> 20))
   v7 = v3 * v6 / 100;
   sub_435670(&v84);
   v8 = v84.field_0 - v7 / 2;
@@ -28284,6 +28288,7 @@ int __cdecl sub_472600(int a1, int a2)
   v10 = v9 / 23;
   for ( i = v9 / 23; i <= v78; ++i )
   {
+    int row_screen_y = yTop + MM_SCALE_Q20(v80 - v9);
     v11 = sub_4106A0(v10);
     while ( v11 )
     {
@@ -28327,12 +28332,11 @@ int __cdecl sub_472600(int a1, int a2)
 LABEL_28:
               if ( v69 < 4 )
               {
-                v20 = *(_DWORD *)&byte_587000[149232];
                 v21 = 8 * *(unsigned __int8 *)(v15 + 299);
-                v22 = 100 * (*(int *)(v15 + 12) - xLeft.field_0) / v20;
-                v85 = 100 * (*(int *)(v15 + 16) - xLeft.field_4) / v20;
-                v23 = 100 * *(int *)&byte_587000[v21 + 196184] / v20;
-                v24 = 100 * *(int *)&byte_587000[v21 + 196188] / v20;
+                v22 = MM_SCALE_Q20(*(int *)(v15 + 12) - xLeft.field_0);
+                v85 = MM_SCALE_Q20(*(int *)(v15 + 16) - xLeft.field_4);
+                v23 = MM_SCALE_Q20(*(int *)&byte_587000[v21 + 196184]);
+                v24 = MM_SCALE_Q20(*(int *)&byte_587000[v21 + 196188]);
                 sub_434460(*(int *)&byte_5D4594[2650644]);
                 sub_49F500(v22, yTop + v85);
                 sub_49F570(v23, v24);
@@ -28350,15 +28354,13 @@ LABEL_28:
       }
       if ( sub_40A5C0(0x10000) || *(_DWORD *)(v11 + 12) )
       {
-        v26 = *(_DWORD *)&byte_587000[149232];
-        v25 = v26;
-        v76.field_0 = 100 * (v14 - v8) / v26;
-        v76.field_4 = yTop + 100 * (v80 - v9) / v26;
+        v76.field_0 = MM_SCALE_Q20(v14 - v8);
+        v76.field_4 = row_screen_y;
         v27 = *(_BYTE *)(v11 + 4);
         if ( !(v27 & 4) || (v28 = *(_BYTE *)(*(_DWORD *)(v11 + 28) + 21), v28 != 3) && v28 != 2 )
         {
           if ( !(v27 & 0x20) )
-            sub_4730D0(&v76, *(_BYTE *)v11, 2300 / v25);
+            sub_4730D0(&v76, *(_BYTE *)v11, wall_step);
         }
       }
 LABEL_37:
@@ -28381,14 +28383,12 @@ LABEL_37:
         v72 = v29 - 1;
         do
         {
-          v32 = *(_DWORD *)&byte_587000[149232];
           v33 = *(v31 - 1);
-          xLeft.field_0 = (int)(100 * ((unsigned __int64)(__int64)*(v31 - 2) - v8)) / v32;
-          sub_49F500(xLeft.field_0, yTop + (int)(100 * ((unsigned __int64)(__int64)v33 - v9)) / v32);
-          v34 = *(_DWORD *)&byte_587000[149232];
+          xLeft.field_0 = MM_SCALE_Q20((int)*(v31 - 2) - v8);
+          sub_49F500(xLeft.field_0, yTop + MM_SCALE_Q20((int)v33 - v9));
           v35 = v31[1];
-          xLeft.field_0 = (int)(100 * ((unsigned __int64)(__int64)*v31 - v8)) / v34;
-          sub_49F500(xLeft.field_0, yTop + (int)(100 * ((unsigned __int64)(__int64)v35 - v9)) / v34);
+          xLeft.field_0 = MM_SCALE_Q20((int)*v31 - v8);
+          sub_49F500(xLeft.field_0, yTop + MM_SCALE_Q20((int)v35 - v9));
           sub_49E4B0();
           v31 += 2;
           --v72;
@@ -28399,10 +28399,9 @@ LABEL_37:
     for ( j = (float *)sub_50AAE0(); j; j = (float *)sub_50AB10() )
     {
       sub_434460(*(int *)&byte_5D4594[2650644]);
-      v37 = *(_DWORD *)&byte_587000[149232];
       v38 = j[1];
-      xLeft.field_0 = (int)(100 * ((unsigned __int64)(__int64)*j - v8)) / v37;
-      sub_473570(xLeft.field_0, yTop + (int)(100 * ((unsigned __int64)(__int64)v38 - v9)) / v37);
+      xLeft.field_0 = MM_SCALE_Q20((int)*j - v8);
+      sub_473570(xLeft.field_0, yTop + MM_SCALE_Q20((int)v38 - v9));
     }
   }
   v73 = 0;
@@ -28417,6 +28416,9 @@ LABEL_37:
     v73 = 1;
   for ( k = sub_459EB0(); k; k = sub_459EC0(k) )
   {
+    if ( (unsigned int)(*(int *)(k + 12) - v8 + 46) > (unsigned int)(v7 + 92)
+      || (unsigned int)(*(int *)(k + 16) - v9 + 46) > (unsigned int)(v7 + 92) )
+      continue;
     v41 = sub_4217B0((int2 *)(k + 12), 0);
     if ( v41 )
     {
@@ -28427,9 +28429,8 @@ LABEL_37:
     {
       continue;
     }
-    v42 = *(_DWORD *)&byte_587000[149232];
-    xLeft.field_0 = 100 * (*(int *)(k + 12) - v8) / v42;
-    xLeft.field_4 = yTop + 100 * (*(int *)(k + 16) - v9) / v42;
+    xLeft.field_0 = MM_SCALE_Q20(*(int *)(k + 12) - v8);
+    xLeft.field_4 = yTop + MM_SCALE_Q20(*(int *)(k + 16) - v9);
     if ( !(*(_DWORD *)(k + 112) & 0x400000) || (v43 = *(_DWORD *)&byte_5D4594[2650684], !(*(_BYTE *)(k + 116) & 8)) )
       v43 = *(_DWORD *)&byte_5D4594[2650644];
     sub_434460(v43);
@@ -28539,6 +28540,9 @@ LABEL_89:
   v79 = *(_DWORD *)&byte_5D4594[2618904];
   for ( l = sub_45A000(); l; l = sub_45A010(l) )
   {
+    if ( (unsigned int)(*(int *)(l + 12) - v8 + 46) > (unsigned int)(v7 + 92)
+      || (unsigned int)(*(int *)(l + 16) - v9 + 46) > (unsigned int)(v7 + 92) )
+      continue;
     v60 = sub_4356C0(l, 30);
     v61 = *(_DWORD *)(l + 128);
     v77 = v60;
@@ -28562,9 +28566,8 @@ LABEL_103:
       v63 = sub_4217B0((int2 *)(l + 12), 0);
       if ( (!v63 || BYTE2(v63->field_0[32]) == a2) && v75 && (v75[3680] & 1) != 1 )
       {
-        v64 = *(_DWORD *)&byte_587000[149232];
-        xLeft.field_0 = 100 * (*(int *)(l + 12) - v8) / v64;
-        xLeft.field_4 = yTop + 100 * (*(int *)(l + 16) - v9) / v64;
+        xLeft.field_0 = MM_SCALE_Q20(*(int *)(l + 12) - v8);
+        xLeft.field_4 = yTop + MM_SCALE_Q20(*(int *)(l + 16) - v9);
         if ( l == *(_DWORD *)&byte_5D4594[2614252] || v76.field_0 )
           sub_434460(v79);
         else
@@ -28589,6 +28592,7 @@ LABEL_103:
       }
     }
   }
+#undef MM_SCALE_Q20
   return sub_49F860();
 }
 
@@ -33071,6 +33075,7 @@ int sub_478C80()
     v7 = v2;
   }
   while ( (int)v2 < (int)&byte_5D4594[1100040] );
+#undef MM_SCALE_Q20
   return sub_49F860();
 }
 
