@@ -218,7 +218,9 @@ static void draw_screen_pass(C3D_RenderTarget *target,
 
     float dst_w = (float)target_w;
     float dst_h = (float)target_h;
-    if (!frame->fill_screen && subtex.height > 0) {
+    const nox_3ds_state_t *st = nox_3ds_state_mut();
+    bool fill_screen = frame->fill_screen && (target != s_top_target || st->wide_stretch);
+    if (!fill_screen && subtex.height > 0) {
         float src_aspect = (float)subtex.width / (float)subtex.height;
         float dst_aspect = dst_w / dst_h;
         if (src_aspect < dst_aspect) {

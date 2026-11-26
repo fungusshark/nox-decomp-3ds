@@ -444,6 +444,7 @@ static int g_3ds_bot_sw_h = 0;
 static void *g_3ds_saved_swbuf = NULL;
 static void *g_3ds_saved_swrows = NULL;
 static int g_3ds_bot_sw_active = 0;   /* 1 = Bottom buffer is the CURRENT software render target */
+static int g_3ds_top_render_active = 0; /* 1 = Top-screen gameplay/chat/world draw pass active */
 static int g_3ds_bot_pass_open = 0;   /* 1 = between nox_3ds_swbuf_begin_bottom() / _end_bottom() */
 static int g_3ds_bot_frame_ready = 0; /* 0 = none, 1 = upload fresh, 2 = reuse VRAM tex */
 static int g_3ds_bot_has_frame = 0;   /* 1 = at least one bottom frame uploaded since init/movie */
@@ -602,6 +603,21 @@ int nox_3ds_swbuf_select(int target)
 bool nox_3ds_is_bottom_swbuf_active(void)
 {
     return (g_3ds_bot_sw_active != 0);
+}
+
+void nox_3ds_set_top_render_active(bool active)
+{
+    g_3ds_top_render_active = active ? 1 : 0;
+}
+
+bool nox_3ds_is_top_render_active(void)
+{
+    return (g_3ds_top_render_active != 0);
+}
+
+bool nox_3ds_font_metrics_use_bottom(void)
+{
+    return (g_3ds_bot_sw_active != 0) || (g_3ds_top_render_active == 0);
 }
 
 void nox_3ds_swbuf_begin_bottom(uint16_t clear_rgb555)
