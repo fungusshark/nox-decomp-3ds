@@ -11,7 +11,7 @@
 #define __thiscall __cdecl // Test compile in C mode
 
 extern char byte_563002[4];
-extern char byte_563006[26];
+extern char byte_563006[16];
 extern unsigned __int8 byte_581450[23472];
 extern unsigned __int8 byte_587000[316820];
 extern unsigned __int8 byte_5D4594[3844309];
