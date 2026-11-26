@@ -404,6 +404,7 @@ extern const nox_3ds_net_ops_t g_nox_3ds_sockets_ops;
 
 void               nox_3ds_net_init(void);
 void               nox_3ds_net_shutdown(void);
+void               nox_3ds_net_log(const char *fmt, ...);
 void               nox_3ds_net_set_mode(nox_3ds_net_mode_t mode);
 nox_3ds_net_mode_t nox_3ds_net_get_mode(void);
 bool               nox_3ds_soc_is_ready(void);

@@ -47993,7 +47993,7 @@ int sub_438770()
       }
 #ifdef __3DS__
       {
-        uint64_t wait_ms = nox_3ds_lobby_has_pending_work() ? 0x1388ULL : 0x3E8ULL;
+        uint64_t wait_ms = nox_3ds_lobby_has_pending_work() ? 0x1F40ULL : 0x3E8ULL;
         if ( (unsigned __int64)(sub_416BB0() - *(_QWORD *)&byte_5D4594[815076]) > wait_ms
           && !*(_DWORD *)&byte_5D4594[815060]
           && !*(_DWORD *)&byte_587000[87404] )
