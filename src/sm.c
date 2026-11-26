@@ -280,6 +280,9 @@ void NET_CONNECT (sm_args_t *args)
   v5[3] = 0;
   v5[4] = 0;
   v10 = sub_40A420();
+#ifdef __3DS__
+  nox_3ds_net_log("[sm] NET_CONNECT id=%d host=%s port=%d local_port=%d", a1, cp, hostshort, v10);
+#endif
   memset(&name, 0, sizeof(name));
   name.sin_family = 2;
   name.sin_port = htons(v10);
@@ -393,8 +396,14 @@ void CONNECT_WAIT_THEN (sm_args_t *args)
 {
   if (!args->connect_wait_then.result)
     GOTO_CONNECT_RESULT(-19);
-  if ( sub_409AD0() != 66458 )
-    GOTO_CONNECT_RESULT(-20);
+  {
+    uint32_t srv_ver = (uint32_t)sub_409AD0();
+#ifdef __3DS__
+    nox_3ds_net_log("[sm] CONNECT_WAIT_THEN server ver=0x%X", (unsigned)srv_ver);
+#endif
+    if ( !NOX_IS_COMPAT_PROTO_VER(srv_ver) )
+      GOTO_CONNECT_RESULT(-20);
+  }
   *(_DWORD *)&byte_5D4594[811372] = 2;
   if ( !sub_40A5C0(1) )
     sub_417C60();
@@ -409,6 +418,9 @@ void CONNECT_RESULT (sm_args_t *args)
   int result = args->connect_result.result;
 
 #ifdef __3DS__
+  nox_3ds_net_log("[sm] CONNECT_RESULT result=%d flags=(1:%d,2:%d,2048:%d,0x2000:%d)",
+                  result, sub_40A5C0(1) != 0, sub_40A5C0(2) != 0,
+                  sub_40A5C0(2048) != 0, sub_40A5C0(0x2000) != 0);
   printf("[sm] CONNECT_RESULT result=%d flags=(1:%d,2:%d,2048:%d,0x2000:%d)\n",
          result, sub_40A5C0(1) != 0, sub_40A5C0(2) != 0,
          sub_40A5C0(2048) != 0, sub_40A5C0(0x2000) != 0);

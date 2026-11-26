@@ -187,15 +187,49 @@ static bool soc_ensure_init_locked(void)
     g_soc_suspended = false;
     nox_3ds_state_mut()->soc_ready = true;
 
-    long hid = gethostid();
-    uint32_t ip = (uint32_t)hid;
-    nox_3ds_net_log("[net3ds:soc] socInit OK (%u KB memalign buf, local IP=%u.%u.%u.%u)",
+    uint32_t ip = 0, mask = 0, bcast = 0;
+    nox_3ds_soc_get_ip_info(&ip, &mask, &bcast);
+    nox_3ds_net_log("[net3ds:soc] socInit OK (%u KB memalign buf, IP=%u.%u.%u.%u mask=%u.%u.%u.%u bcast=%u.%u.%u.%u)",
                     (unsigned)(SOC_BUFFERSIZE / 1024u),
-                    (unsigned)(ip & 0xFFu),
-                    (unsigned)((ip >> 8) & 0xFFu),
-                    (unsigned)((ip >> 16) & 0xFFu),
-                    (unsigned)((ip >> 24) & 0xFFu));
+                    (unsigned)(ip & 0xFFu), (unsigned)((ip >> 8) & 0xFFu),
+                    (unsigned)((ip >> 16) & 0xFFu), (unsigned)((ip >> 24) & 0xFFu),
+                    (unsigned)(mask & 0xFFu), (unsigned)((mask >> 8) & 0xFFu),
+                    (unsigned)((mask >> 16) & 0xFFu), (unsigned)((mask >> 24) & 0xFFu),
+                    (unsigned)(bcast & 0xFFu), (unsigned)((bcast >> 8) & 0xFFu),
+                    (unsigned)((bcast >> 16) & 0xFFu), (unsigned)((bcast >> 24) & 0xFFu));
     return true;
+}
+
+bool nox_3ds_soc_get_ip_info(uint32_t *out_ip_be, uint32_t *out_mask_be, uint32_t *out_bcast_be)
+{
+    if (!g_soc_inited) {
+        if (out_ip_be)    *out_ip_be = 0;
+        if (out_mask_be)  *out_mask_be = 0;
+        if (out_bcast_be) *out_bcast_be = 0;
+        return false;
+    }
+
+    struct in_addr ip_a = {0}, mask_a = {0}, bcast_a = {0};
+    int rc = SOCU_GetIPInfo(&ip_a, &mask_a, &bcast_a);
+    uint32_t ip = (uint32_t)ip_a.s_addr;
+    uint32_t mask = (uint32_t)mask_a.s_addr;
+    uint32_t bcast = (uint32_t)bcast_a.s_addr;
+
+    if (rc != 0 || ip == 0u) {
+        ip = (uint32_t)gethostid();
+        mask = htonl(0xFFFFFF00u);
+        bcast = (ip != 0u) ? ((ip & mask) | ~mask) : htonl(INADDR_BROADCAST);
+    } else {
+        if (mask == 0u)
+            mask = htonl(0xFFFFFF00u);
+        if (bcast == 0u)
+            bcast = (ip & mask) | ~mask;
+    }
+
+    if (out_ip_be)    *out_ip_be = ip;
+    if (out_mask_be)  *out_mask_be = mask;
+    if (out_bcast_be) *out_bcast_be = bcast;
+    return ip != 0u;
 }
 
 bool nox_3ds_soc_is_ready(void)
@@ -406,13 +440,18 @@ static int sockets_bind(int vfd, const void *addr, unsigned int addrlen)
 
     soc_lock();
     s = lookup_slot(vfd);
+    uint16_t bport = ntohs(sin.sin_port);
     if (s)
-        s->bound_port = ntohs(sin.sin_port);
+        s->bound_port = bport;
     soc_unlock();
 
     last_socket_error = 0;
+    if (bport == 18590u || bport < 49152u) {
+        nox_3ds_net_log("[net3ds:soc] bind(vfd=%d, rfd=%d, port=%u) OK",
+                        vfd, rfd, (unsigned)bport);
+    }
     printf("[net3ds:soc] bind(vfd=%d, rfd=%d, port=%u) -> ok\n",
-           vfd, rfd, (unsigned)ntohs(sin.sin_port));
+           vfd, rfd, (unsigned)bport);
     return 0;
 }
 
@@ -589,12 +628,41 @@ static int sockets_sendto(int vfd, const void *buf, unsigned int len, int flags,
         return -1;
     }
     int rfd = s->real_fd;
+    int stype = s->type;
     soc_unlock();
 
     struct sockaddr_in dst_sin;
     memcpy(&dst_sin, to, sizeof(dst_sin));
     dst_sin.sin_family = AF_INET;
     memset(dst_sin.sin_zero, 0, sizeof(dst_sin.sin_zero));
+
+    if (stype == SOCK_DGRAM && dst_sin.sin_addr.s_addr == htonl(INADDR_BROADCAST)) {
+        uint32_t ip_be = 0, mask_be = 0, bcast_be = 0;
+        ssize_t r_dir = -1;
+        int err_dir = 0;
+        if (nox_3ds_soc_get_ip_info(&ip_be, &mask_be, &bcast_be) &&
+            bcast_be != 0u && bcast_be != htonl(INADDR_BROADCAST)) {
+            struct sockaddr_in dir_sin = dst_sin;
+            dir_sin.sin_addr.s_addr = bcast_be;
+            r_dir = sendto(rfd, buf, (size_t)len, SOC_SAFE_MSG_FLAGS(flags),
+                           (const struct sockaddr *)&dir_sin, (socklen_t)sizeof(dir_sin));
+            err_dir = errno;
+            nox_3ds_net_log("[net3ds:soc] Directed LAN bcast -> %u.%u.%u.%u:%u rc=%d errno=%d",
+                            (unsigned)(bcast_be & 0xFFu), (unsigned)((bcast_be >> 8) & 0xFFu),
+                            (unsigned)((bcast_be >> 16) & 0xFFu), (unsigned)((bcast_be >> 24) & 0xFFu),
+                            (unsigned)ntohs(dst_sin.sin_port), (int)r_dir,
+                            (r_dir < 0) ? err_dir : 0);
+        }
+
+        ssize_t r_lim = sendto(rfd, buf, (size_t)len, SOC_SAFE_MSG_FLAGS(flags),
+                               (const struct sockaddr *)&dst_sin, (socklen_t)sizeof(dst_sin));
+        if (r_dir >= 0 || r_lim >= 0) {
+            last_socket_error = 0;
+            return (int)((r_dir >= 0) ? r_dir : r_lim);
+        }
+        last_socket_error = wsa_from_errno(errno ? errno : err_dir);
+        return -1;
+    }
 
     ssize_t r = sendto(rfd, buf, (size_t)len, SOC_SAFE_MSG_FLAGS(flags),
                        (const struct sockaddr *)&dst_sin, (socklen_t)sizeof(dst_sin));

@@ -11057,24 +11057,31 @@ LABEL_9:
     }
     while ( v45 );
 LABEL_50:
-    if ( *((_DWORD *)a2 + 20) != 66458 )
     {
-      *(_BYTE *)(v4 + 2) = 19;
-      *(_BYTE *)(v4 + 3) = 13;
-      return 4;
+      uint32_t cli_ver = nox_read_u32(a2 + 80);
+#ifdef __3DS__
+      nox_3ds_net_log("[host3ds] 0x0E join req ver=0x%X", (unsigned)cli_ver);
+#endif
+      if ( !NOX_IS_COMPAT_PROTO_VER(cli_ver) )
+      {
+        *(_BYTE *)(v4 + 2) = 19;
+        *(_BYTE *)(v4 + 3) = 13;
+        return 4;
+      }
     }
     if ( *(_DWORD *)(v7 + 84) >= (unsigned int)(sub_409FA0() - 1) )
       a4 = 1;
     if ( !sub_40A740() )
       goto LABEL_67;
     v46 = sub_425BF0();
-    if ( !*((_DWORD *)a2 + 21) )
+    uint32_t cli_team = nox_read_u32(a2 + 84);
+    if ( !cli_team )
     {
       if ( v46 >= (unsigned __int8)v78[53] )
         goto LABEL_80;
       goto LABEL_67;
     }
-    if ( sub_418AE0(*((_DWORD *)a2 + 21)) )
+    if ( sub_418AE0((int)cli_team) )
     {
       if ( v46 > 0 )
       {
@@ -12404,6 +12411,18 @@ LABEL_8:
         qmemcpy(in, &from, fromlen);
         if ( v3 == 13 || (unsigned int)sub_43B300() == from.sin_addr.s_addr )
         {
+#ifdef __3DS__
+          if ( (unsigned __int8)v12 != 0xDu )
+          {
+            uint32_t sip = (uint32_t)from.sin_addr.s_addr;
+            nox_3ds_net_log("[join3ds] rx op=0x%02X aux=%u from %u.%u.%u.%u:%u",
+                            (unsigned)(unsigned __int8)v12,
+                            (unsigned)(unsigned __int8)buf[3],
+                            (unsigned)(sip & 0xFFu), (unsigned)((sip >> 8) & 0xFFu),
+                            (unsigned)((sip >> 16) & 0xFFu), (unsigned)((sip >> 24) & 0xFFu),
+                            (unsigned)ntohs(from.sin_port));
+          }
+#endif
           switch ( (unsigned __int8)v12 )
           {
             case 0xDu:
