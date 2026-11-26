@@ -57852,6 +57852,9 @@ int __cdecl sub_4ECC70(int a1)
 }
 
 //----- (004ECCB0) --------------------------------------------------------
+static int s_netcode_cache[4096];
+static int s_extent_cache[4096];
+
 int __cdecl sub_4ECCB0(int a1)
 {
   int result; // eax
@@ -57859,9 +57862,18 @@ int __cdecl sub_4ECCB0(int a1)
   int v3; // esi
   char *v4; // eax
   int v5; // ecx
+  uint32_t slot = ((uint32_t)a1 ^ ((uint32_t)a1 >> 12)) & 4095u;
+  int cached = s_netcode_cache[slot];
+  if ( cached && (*(_DWORD *)(cached + 16) & 4) && !(*(_BYTE *)(cached + 16) & 0x20) && *(_DWORD *)(cached + 36) == a1 )
+    return cached;
 
   result = sub_4ECD90(a1);
-  if ( !result )
+  if ( result )
+  {
+    if ( (*(_DWORD *)(result + 16) & 4) )
+      s_netcode_cache[slot] = result;
+    return result;
+  }
   {
     v2 = sub_4DA790();
     if ( v2 )
@@ -57870,6 +57882,8 @@ int __cdecl sub_4ECCB0(int a1)
       {
         if ( !(*(_BYTE *)(v2 + 16) & 0x20) && *(_DWORD *)(v2 + 36) == a1 )
         {
+          if ( (*(_DWORD *)(v2 + 16) & 4) )
+            s_netcode_cache[slot] = v2;
           sub_4ECEA0(v2);
           return v2;
         }
@@ -57900,6 +57914,8 @@ LABEL_10:
           goto LABEL_17;
       }
 LABEL_16:
+      if ( (*(_DWORD *)(v3 + 16) & 4) )
+        s_netcode_cache[slot] = v3;
       sub_4ECEA0(v3);
       return v3;
     }
@@ -57920,6 +57936,8 @@ LABEL_17:
           goto LABEL_22;
       }
       result = *((_DWORD *)v4 + 514);
+      if ( result && (*(_DWORD *)(result + 16) & 4) )
+        s_netcode_cache[slot] = result;
     }
     else
     {
@@ -57999,6 +58017,8 @@ int sub_4ECE50()
   unsigned __int8 *v0; // esi
   int result; // eax
 
+  memset(s_netcode_cache, 0, sizeof(s_netcode_cache));
+  memset(s_extent_cache, 0, sizeof(s_extent_cache));
   v0 = &byte_5D4594[1568044];
   *(_DWORD *)&byte_5D4594[1568236] = 0;
   *(_DWORD *)&byte_5D4594[1568240] = 0;
@@ -58121,6 +58141,17 @@ int __cdecl sub_4ECFA0(int a1)
   int result; // eax
   _DWORD *v2; // esi
 
+  if ( a1 )
+  {
+    int nc = *(_DWORD *)(a1 + 36);
+    int ex = *(_DWORD *)(a1 + 40);
+    uint32_t nslot = ((uint32_t)nc ^ ((uint32_t)nc >> 12)) & 4095u;
+    uint32_t eslot = ((uint32_t)ex ^ ((uint32_t)ex >> 12)) & 4095u;
+    if ( s_netcode_cache[nslot] == a1 )
+      s_netcode_cache[nslot] = 0;
+    if ( s_extent_cache[eslot] == a1 )
+      s_extent_cache[eslot] = 0;
+  }
   result = *(_DWORD *)&byte_587000[205696];
   if ( !*(_DWORD *)&byte_587000[205696] )
   {
@@ -58148,6 +58179,8 @@ int sub_4ECFE0()
   int v1; // esi
   int v2; // edi
 
+  memset(s_netcode_cache, 0, sizeof(s_netcode_cache));
+  memset(s_extent_cache, 0, sizeof(s_extent_cache));
   result = *(_DWORD *)&byte_587000[205696];
   if ( !*(_DWORD *)&byte_587000[205696] )
   {
@@ -58171,6 +58204,10 @@ int sub_4ECFE0()
 int __cdecl sub_4ED020(int a1)
 {
   int result; // eax
+  uint32_t slot = ((uint32_t)a1 ^ ((uint32_t)a1 >> 12)) & 4095u;
+  int cached = s_extent_cache[slot];
+  if ( cached && (*(_DWORD *)(cached + 16) & 4) && !(*(_BYTE *)(cached + 16) & 0x20) && *(_DWORD *)(cached + 40) == a1 )
+    return cached;
 
   result = sub_4DA790();
   if ( !result )
@@ -58181,6 +58218,8 @@ int __cdecl sub_4ED020(int a1)
     if ( !result )
       return 0;
   }
+  if ( (*(_DWORD *)(result + 16) & 4) )
+    s_extent_cache[slot] = result;
   return result;
 }
 

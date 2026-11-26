@@ -17049,6 +17049,8 @@ int __cdecl sub_50AEA0(int a1, float2 *a2, _DWORD *a3)
 }
 
 //----- (0050AFA0) --------------------------------------------------------
+static signed char s_floor_walk_cache[256][256];
+
 float *sub_50AFA0()
 {
   int i; // edi
@@ -17099,6 +17101,7 @@ float *sub_50AFA0()
 
   *(_DWORD *)&byte_5D4594[2386160] = 0;
   memset(&byte_5D4594[1599716], 0, 0xC0000u);
+  memset(s_floor_walk_cache, 0, sizeof(s_floor_walk_cache));
   *(_DWORD *)&byte_5D4594[2386164] = 0;
   for ( i = sub_4DA790(); i; i = sub_4DA7A0(i) )
   {
@@ -18231,6 +18234,12 @@ int __cdecl sub_50C830(int a1, int a2, int a3)
   v3 = *(_DWORD *)(a1 + 16);
   if ( v3 & 0x4000 || sub_534020(a1) )
     return 1;
+  if ( (unsigned int)a2 < 256u && (unsigned int)a3 < 256u )
+  {
+    signed char cached = s_floor_walk_cache[a2][a3];
+    if ( cached != 0 )
+      return (cached > 0) ? 1 : 0;
+  }
   v4 = (float *)&byte_587000[234188];
   v8 = (double)(23 * a2);
   while ( 1 )
@@ -18242,8 +18251,14 @@ int __cdecl sub_50C830(int a1, int a2, int a3)
       break;
     v4 += 2;
     if ( (int)v4 >= (int)&byte_587000[234220] )
+    {
+      if ( (unsigned int)a2 < 256u && (unsigned int)a3 < 256u )
+        s_floor_walk_cache[a2][a3] = 1;
       return 1;
+    }
   }
+  if ( (unsigned int)a2 < 256u && (unsigned int)a3 < 256u )
+    s_floor_walk_cache[a2][a3] = -1;
   return 0;
 }
 
@@ -22706,6 +22721,8 @@ LABEL_20:
 }
 
 //----- (00511B60) --------------------------------------------------------
+static int s_scriptid_cache[4096];
+
 int __cdecl sub_511B60(int a1)
 {
   int result; // eax
@@ -22721,9 +22738,17 @@ int __cdecl sub_511B60(int a1)
   }
   if ( a1 != -2 )
   {
+    uint32_t slot = ((uint32_t)a1 ^ ((uint32_t)a1 >> 12)) & 4095u;
+    int cached = s_scriptid_cache[slot];
+    if ( cached && (*(_DWORD *)(cached + 16) & 4) && !(*(_BYTE *)(cached + 16) & 0x20) && *(_DWORD *)(cached + 44) == a1 )
+      return cached;
     result = sub_511C50(a1);
     if ( result )
+    {
+      if ( (*(_DWORD *)(result + 16) & 4) )
+        s_scriptid_cache[slot] = result;
       return result;
+    }
     v2 = sub_4DA790();
     if ( v2 )
     {
@@ -22731,6 +22756,8 @@ int __cdecl sub_511B60(int a1)
       {
         if ( !(*(_BYTE *)(v2 + 16) & 0x20) && *(_DWORD *)(v2 + 44) == a1 )
         {
+          if ( (*(_DWORD *)(v2 + 16) & 4) )
+            s_scriptid_cache[slot] = v2;
           sub_511D70(v2);
           return v2;
         }
@@ -22763,6 +22790,8 @@ LABEL_18:
           return result;
       }
     }
+    if ( (*(_DWORD *)(v3 + 16) & 4) )
+      s_scriptid_cache[slot] = v3;
     sub_511D70(v3);
     return v3;
   }
@@ -22841,6 +22870,7 @@ int sub_511D20()
   unsigned __int8 *v0; // esi
   int result; // eax
 
+  memset(s_scriptid_cache, 0, sizeof(s_scriptid_cache));
   v0 = &byte_5D4594[2386628];
   *(_DWORD *)&byte_5D4594[2386820] = 0;
   *(_DWORD *)&byte_5D4594[2386824] = 0;
@@ -22899,6 +22929,13 @@ int __cdecl sub_511DE0(int a1)
   int result; // eax
   _DWORD *v2; // esi
 
+  if ( a1 )
+  {
+    int sid = *(_DWORD *)(a1 + 44);
+    uint32_t slot = ((uint32_t)sid ^ ((uint32_t)sid >> 12)) & 4095u;
+    if ( s_scriptid_cache[slot] == a1 )
+      s_scriptid_cache[slot] = 0;
+  }
   result = *(_DWORD *)&byte_587000[237036];
   if ( !*(_DWORD *)&byte_587000[237036] )
   {
@@ -22926,6 +22963,7 @@ int sub_511E20()
   int v1; // esi
   int v2; // edi
 
+  memset(s_scriptid_cache, 0, sizeof(s_scriptid_cache));
   result = *(_DWORD *)&byte_587000[237036];
   if ( !*(_DWORD *)&byte_587000[237036] )
   {
