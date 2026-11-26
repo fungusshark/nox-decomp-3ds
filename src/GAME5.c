@@ -17494,13 +17494,13 @@ void __cdecl sub_57C650(float *a1, float *a2, float *a3)
   v4 = a1[2] - *a1;
   v13 = v4;
   v5 = v3[3] - v3[1];
-  v6 = sqrt(v5 * v5 + v4 * v4);
-  if ( v6 < 0.0099999998 )
-    v6 = 0.0099999998;
+  float dist_sq = (float)v5 * (float)v5 + (float)v4 * (float)v4;
+  if ( dist_sq < 0.0001f )
+    dist_sq = 0.0001f;
   v12 = v5;
   v7 = a3;
   v10 = v5;
-  v8 = (v10 * (a2[1] - v3[1]) + v13 * (*a2 - *v3)) / (v6 * v6);
+  v8 = (v10 * (a2[1] - v3[1]) + v13 * (*a2 - *v3)) / dist_sq;
   v11 = v8 * v13;
   *a3 = v11 + *v3;
   a3[1] = v8 * v12 + v3[1];

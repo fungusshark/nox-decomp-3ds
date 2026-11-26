@@ -18880,16 +18880,16 @@ LABEL_14:
     {
       v23.field_8 = *v5;
       v23.field_C = v5[1];
-      if ( sub_535250(&v23, 0, 0, 132) )
+      float dx = v23.field_8 - a1[14];
+      float dy = v23.field_C - a1[15];
+      float dist_sq = dy * dy + dx * dx;
+      if ( !(dist_sq > 64.0f && v16 && v17 <= dist_sq) && sub_535250(&v23, 0, 0, 132) )
       {
-        v6 = v23.field_8 - a1[14];
-        v7 = v23.field_C - a1[15];
-        v8 = v7 * v7 + v6 * v6;
-        if ( v8 > 64.0 )
+        if ( dist_sq > 64.0f )
         {
-          if ( !v16 || v17 > v8 )
+          if ( !v16 || v17 > dist_sq )
           {
-            v17 = v8;
+            v17 = dist_sq;
             v16 = v5;
             v2 = v4;
           }
@@ -18921,7 +18921,7 @@ LABEL_14:
     v20 = *(float *)(v1 + 8 * v2 + 12) - a1[14];
     v11 = *(float *)(v1 + 8 * v2 + 16) - a1[15];
     v21 = v11;
-    v24 = sqrt(v11 * v21 + v20 * v20) + *(double *)&byte_581450[10288];
+    v24 = sqrtf((float)(v11 * v21) + v20 * v20) + *(double *)&byte_581450[10288];
     if ( v2 <= 0 )
     {
       v22.field_0 = *(float *)(v1 + 20) - *(float *)(v1 + 12);
@@ -53266,6 +53266,7 @@ LABEL_14:
     }
     else
     {
+      float cell_sz = *(float *)&byte_587000[264364];
       a1c = v11 - a1->field_0;
       v14 = a1->field_C - a1->field_4;
       v56 = v14;
@@ -53274,62 +53275,60 @@ LABEL_14:
       v66 = sub_419A10(a1c);
       if ( sub_419A10(v56) >= v66 )
       {
-        if ( a1->field_0 >= (double)a1->field_8 )
+        int dir_x;
+        if ( a1->field_0 >= a1->field_8 )
         {
           v58 = a1->field_8;
           v55 = a1->field_0;
-          v51 = -1.0;
+          v51 = -1.0f;
+          dir_x = -1;
         }
         else
         {
           v58 = a1->field_0;
           v55 = a1->field_8;
-          v51 = 1.0;
+          v51 = 1.0f;
+          dir_x = 1;
         }
-        v49 = 1.0;
-        if ( a1->field_4 >= (double)a1->field_C )
-          v49 = -1.0;
-        v30 = a1->field_0;
-        if ( v30 <= v55 )
+        int dir_y = 1;
+        v49 = 1.0f;
+        if ( a1->field_4 >= a1->field_C )
         {
-          while ( v30 >= v58 )
+          v49 = -1.0f;
+          dir_y = -1;
+        }
+        float v30_f = a1->field_0;
+        if ( v30_f <= v55 )
+        {
+          while ( v30_f >= v58 )
           {
-            v31 = *(float *)&byte_587000[264364];
-            modf(v30 / v31, &v73);
-            v32 = *(float *)&byte_587000[264364];
-            v33 = sub_419AF0(v32 * v73);
-            if ( v51 <= *(double *)&byte_581450[9568] )
+            int icell = (int)(v30_f / cell_sz);
+            v33 = (float)icell * cell_sz;
+            if ( dir_x <= 0 )
             {
               v70 = v33;
-              v35 = *(float *)&byte_587000[264364];
-              v74 = v33 + v35;
+              v74 = v33 + cell_sz;
             }
             else
             {
               v74 = v33;
-              v34 = *(float *)&byte_587000[264364];
-              v70 = v33 + v34;
+              v70 = v33 + cell_sz;
             }
-            a1b = sub_419B10(v73);
-            v36 = v74 * v62 + v63;
-            if ( v49 > *(double *)&byte_581450[9568] && v36 < a1->field_4
-              || v49 < *(double *)&byte_581450[9568] && v36 > a1->field_4 )
+            a1b = icell;
+            float v36_f = v74 * v62 + v63;
+            if ( (dir_y > 0 && v36_f < a1->field_4)
+              || (dir_y < 0 && v36_f > a1->field_4) )
             {
-              v36 = a1->field_4;
+              v36_f = a1->field_4;
             }
             v72 = v70 * v62 + v63;
-            if ( v49 > *(double *)&byte_581450[9568] && v72 > (double)a1->field_C
-              || v49 < *(double *)&byte_581450[9568] && v72 < (double)a1->field_C )
+            if ( (dir_y > 0 && v72 > a1->field_C)
+              || (dir_y < 0 && v72 < a1->field_C) )
             {
               v72 = a1->field_C;
             }
-            v37 = *(float *)&byte_587000[264364];
-            modf(v36 / v37, &v73);
-            v38 = sub_419B10(v73 - v49);
-            v39 = *(float *)&byte_587000[264364];
-            v40 = v38;
-            modf(v72 / v39, &v73);
-            v41 = sub_419B10(v49 + v73);
+            v40 = (int)(v36_f / cell_sz) - dir_y;
+            v41 = (int)(v72 / cell_sz) + dir_y;
             v42 = v40 >= v41 ? -1 : 1;
             v68 = v42 + v41;
             if ( v40 != v42 + v41 )
@@ -53355,71 +53354,68 @@ LABEL_14:
               return 0;
             }
 LABEL_80:
-            v30 = v51 * 0.1 + v70;
-            if ( v30 > v55 )
+            v30_f = v51 * 0.1f + v70;
+            if ( v30_f > v55 )
               return 1;
           }
         }
       }
       else
       {
-        if ( a1->field_4 >= (double)a1->field_C )
+        int dir_y;
+        if ( a1->field_4 >= a1->field_C )
         {
           v57 = a1->field_C;
           v54 = a1->field_4;
-          v50 = -1.0;
+          v50 = -1.0f;
+          dir_y = -1;
         }
         else
         {
           v57 = a1->field_4;
           v54 = a1->field_C;
-          v50 = 1.0;
+          v50 = 1.0f;
+          dir_y = 1;
         }
-        v48 = 1.0;
-        if ( a1->field_0 >= (double)a1->field_8 )
-          v48 = -1.0;
-        v15 = a1->field_4;
-        if ( v15 <= v54 )
+        int dir_x = 1;
+        v48 = 1.0f;
+        if ( a1->field_0 >= a1->field_8 )
         {
-          while ( v15 >= v57 )
+          v48 = -1.0f;
+          dir_x = -1;
+        }
+        float v15_f = a1->field_4;
+        if ( v15_f <= v54 )
+        {
+          while ( v15_f >= v57 )
           {
-            v16 = *(float *)&byte_587000[264364];
-            modf(v15 / v16, &v73);
-            v17 = *(float *)&byte_587000[264364];
-            v18 = v17 * v73;
-            if ( v50 <= *(double *)&byte_581450[9568] )
+            int icell = (int)(v15_f / cell_sz);
+            float v18_f = (float)icell * cell_sz;
+            if ( dir_y <= 0 )
             {
-              v20 = sub_419AF0(v18);
-              v71 = v20;
-              v21 = *(float *)&byte_587000[264364];
-              v75 = v20 + v21;
+              v71 = v18_f;
+              v75 = v18_f + cell_sz;
             }
             else
             {
-              v75 = sub_419AF0(v18);
-              v19 = *(float *)&byte_587000[264364];
-              v71 = v19 + v75;
+              v75 = v18_f;
+              v71 = v18_f + cell_sz;
             }
-            a1a = sub_419B10(v73);
-            v22 = (v75 - v63) / v62;
-            if ( v48 > *(double *)&byte_581450[9568] && v22 < a1->field_0
-              || v48 < *(double *)&byte_581450[9568] && v22 > a1->field_0 )
+            a1a = icell;
+            float v22_f = (v75 - v63) / v62;
+            if ( (dir_x > 0 && v22_f < a1->field_0)
+              || (dir_x < 0 && v22_f > a1->field_0) )
             {
-              v22 = a1->field_0;
+              v22_f = a1->field_0;
             }
             v69 = (v71 - v63) / v62;
-            if ( v48 > *(double *)&byte_581450[9568] && v69 > (double)a1->field_8
-              || v48 < *(double *)&byte_581450[9568] && v69 < (double)a1->field_8 )
+            if ( (dir_x > 0 && v69 > a1->field_8)
+              || (dir_x < 0 && v69 < a1->field_8) )
             {
               v69 = a1->field_8;
             }
-            v23 = *(float *)&byte_587000[264364];
-            modf(v22 / v23, &v73);
-            v24 = sub_419B10(v73 - v48);
-            v25 = *(float *)&byte_587000[264364];
-            v26 = v24;
-            modf(v69 / v25, &v73);
-            v27 = sub_419B10(v48 + v73);
+            v26 = (int)(v22_f / cell_sz) - dir_x;
+            v27 = (int)(v69 / cell_sz) + dir_x;
             v28 = v26 >= v27 ? -1 : 1;
             v67 = v28 + v27;
             if ( v26 != v28 + v27 )
@@ -53445,8 +53441,8 @@ LABEL_80:
               return 0;
             }
 LABEL_51:
-            v15 = v50 * 0.1 + v71;
-            if ( v15 > v54 )
+            v15_f = v50 * 0.1f + v71;
+            if ( v15_f > v54 )
               return 1;
           }
         }
