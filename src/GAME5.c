@@ -3314,9 +3314,10 @@ void __cdecl sub_549270(int a1, int a2)
 }
 
 //----- (00549380) --------------------------------------------------------
-int __cdecl sub_549380__abi_raw(float a1)
+int __cdecl sub_549380(void *p)
 {
-  float v1; // edi
+  int a1 = (int)(uintptr_t)p;
+  int v1; // edi
   int v2; // ebp
   int v3; // esi
   float v4; // eax
@@ -3327,13 +3328,13 @@ int __cdecl sub_549380__abi_raw(float a1)
   float v9; // [esp+24h] [ebp+4h]
 
   v1 = a1;
-  v2 = *(_DWORD *)(LODWORD(a1) + 748);
-  v3 = sub_549440(SLODWORD(a1), 0);
+  v2 = *(_DWORD *)(a1 + 748);
+  v3 = sub_549440(a1, 0);
   if ( v3 )
   {
-    v4 = *(float *)(LODWORD(a1) + 56);
+    v4 = *(float *)(a1 + 56);
     v5 = *(float *)(v3 + 56);
-    v8.field_4 = *(float *)(LODWORD(a1) + 60);
+    v8.field_4 = *(float *)(a1 + 60);
     v8.field_0 = v4;
     v6 = *(float *)(v3 + 60);
     v8.field_8 = v5;
@@ -3343,13 +3344,13 @@ int __cdecl sub_549380__abi_raw(float a1)
       return result;
     (*(void (__cdecl **)(int, _DWORD, _DWORD, _DWORD, _DWORD))(v3 + 716))(
       v3,
-      LODWORD(a1),
-      LODWORD(a1),
+      a1,
+      a1,
       *(_DWORD *)(*(_DWORD *)(v2 + 484) + 116),
       *(_DWORD *)(*(_DWORD *)(v2 + 484) + 124));
     v9 = *(float *)(*(_DWORD *)(v2 + 484) + 120);
     if ( v9 > 0.0 )
-      sub_52DF80(LODWORD(v1) + 56, v3, v9);
+      sub_52DF80(v1 + 56, v3, v9);
   }
   return 1;
 }

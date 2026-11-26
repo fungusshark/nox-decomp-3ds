@@ -98,6 +98,7 @@ uint64_t nox_3ds_get_perf_counter(void); /* svcGetSystemTick() */
 uint64_t nox_3ds_get_perf_freq(void);    /* SYSCLOCK_ARM11 (268111856ULL) */
 void     nox_3ds_sleep_ms(uint32_t ms);  /* svcSleepThread */
 const nox_3ds_state_t *nox_3ds_get_state(void);
+void                   nox_3ds_refresh_mem_stats(void);
 nox_3ds_state_t       *nox_3ds_state_mut(void);
 
 /* =========================================================================

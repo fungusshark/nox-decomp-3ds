@@ -261,7 +261,7 @@
  * sub_4F4E50__abi_raw
  * (special: original uses a1 as a byte-buffer; use locals)
  * ============================================================ */
-int __cdecl sub_4F4E50__abi_raw(nox_abi_ptrslot_t a1)
+int __cdecl sub_4F4E50(nox_abi_ptrslot_t a1)
 {
   int v1; // edi
   _BYTE *v2; // esi
@@ -549,7 +549,7 @@ int __cdecl sub_4F4E50__abi_raw(nox_abi_ptrslot_t a1)
 //  }
 //  return result;
 //}
-int __cdecl sub_50A5C0__abi_raw(nox_abi_ptrslot_t a1)
+int __cdecl sub_50A5C0(nox_abi_ptrslot_t a1)
 {
   int v1; // esi
   int v2; // edi
@@ -830,7 +830,7 @@ LABEL_31:
 //    }
 //  }
 // nox_xxx_unitUpdateSightMB_5281F0
-void __cdecl sub_5281F0__abi_raw(nox_abi_ptrslot_t a1)
+void __cdecl sub_5281F0(nox_abi_ptrslot_t a1)
 {
   int v2; // eax
   int v3; // ebp
@@ -1029,7 +1029,7 @@ LABEL_31:
 //   sub_501960(v13, v14, 0, 0);
 //   return 1;
 // }
-int __cdecl sub_52DD50__abi_raw(int a1, int a2, int a3, int a4, nox_abi_ptrslot_t a5)
+int __cdecl sub_52DD50(int a1, int a2, int a3, int a4, nox_abi_ptrslot_t a5)
 {
   int v6; // esi
   __int16 v8; // bx
@@ -1200,7 +1200,7 @@ LABEL_14:
 //  return 0;
 //}
 //nox_xxx_spellDrainMana_52E210
-int __cdecl sub_52E210__abi_raw(nox_abi_ptrslot_t a1)
+int __cdecl sub_52E210(nox_abi_ptrslot_t a1)
 {
   int v2; // eax
   int v3; // eax
@@ -1511,7 +1511,7 @@ int __cdecl sub_52E210__abi_raw(nox_abi_ptrslot_t a1)
 //   }
 //   return 1;
 // }
-int __cdecl sub_52E850__abi_raw(nox_abi_ptrslot_t a1)
+int __cdecl sub_52E850(nox_abi_ptrslot_t a1)
 {
   int v2; // eax
   int result; // eax
@@ -1778,7 +1778,7 @@ LABEL_32:
 //   sub_4EEBF0(*(_DWORD *)(LODWORD(v1) + 16), 1);
 //   return 0;
 // }
-int __cdecl sub_52F2E0__abi_raw(nox_abi_ptrslot_t a1)
+int __cdecl sub_52F2E0(nox_abi_ptrslot_t a1)
 {
   int v2; // eax
   int v4; // eax
@@ -1918,7 +1918,7 @@ LABEL_27:
 //   }
 //   return result;
 // }
-int __cdecl sub_52F460__abi_raw(nox_abi_ptrslot_t a1)
+int __cdecl sub_52F460(nox_abi_ptrslot_t a1)
 {
   int v2; // eax
   int result; // eax
@@ -2288,7 +2288,7 @@ int __cdecl sub_52F460__abi_raw(nox_abi_ptrslot_t a1)
 //   *(_DWORD *)(v1 + 68) = *(_DWORD *)&byte_5D4594[2598000] + sub_419A70(v39);
 //   return 0;
 // }
-int __cdecl sub_52F8A0__abi_raw(nox_abi_ptrslot_t a1)
+int __cdecl sub_52F8A0(nox_abi_ptrslot_t a1)
 {
   int v2; // eax
   int v4; // eax
@@ -2638,8 +2638,8 @@ LABEL_55:
 //   sub_5281F0(a1);
 //   return sub_534750(SLODWORD(a1));
 // }
-void __cdecl sub_5281F0__abi_raw(nox_abi_ptrslot_t a1);
-int __cdecl sub_531E20__abi_raw(nox_abi_ptrslot_t a1)
+void __cdecl sub_5281F0(nox_abi_ptrslot_t a1);
+int __cdecl sub_531E20(nox_abi_ptrslot_t a1)
 {
   int *v1; // edi
   int v2; // eax
@@ -2656,7 +2656,7 @@ int __cdecl sub_531E20__abi_raw(nox_abi_ptrslot_t a1)
   BYTE1(v3) |= 1u;
   v1[360] = v3;
   sub_5281E0();
-  sub_5281F0__abi_raw(a1);
+  sub_5281F0(a1);
   return sub_534750(self);
 }
 
@@ -2678,7 +2678,7 @@ int __cdecl sub_531E20__abi_raw(nox_abi_ptrslot_t a1)
 //   sub_517F90(v1, v5, (int)sub_549270, v4);
 //   return *(_DWORD *)&byte_5D4594[2491556];
 // }
-int __cdecl sub_549220__abi_raw(nox_abi_ptrslot_t a1)
+int __cdecl sub_549220(nox_abi_ptrslot_t a1)
 {
   float2 *v1; // eax
   double v2; // st7
@@ -2740,7 +2740,7 @@ int __cdecl sub_549220__abi_raw(nox_abi_ptrslot_t a1)
 //  }
 //  return 1;
 //}
-int __cdecl sub_5495B0__abi_raw(nox_abi_ptrslot_t a1)
+int __cdecl sub_5495B0(nox_abi_ptrslot_t a1)
 {
   int v2; // ebp
   int v3; // esi
@@ -2826,7 +2826,7 @@ int __cdecl sub_5495B0__abi_raw(nox_abi_ptrslot_t a1)
 //   }
 //   return 1;
 // }
-int __cdecl sub_549700__abi_raw(nox_abi_ptrslot_t a1)
+int __cdecl sub_549700(nox_abi_ptrslot_t a1)
 {
   int v2; // ebp
   int v3; // esi
@@ -2871,7 +2871,7 @@ int __cdecl sub_549700__abi_raw(nox_abi_ptrslot_t a1)
 /* ============================================================
  * sub_5497E0__abi_raw / sub_549800__abi_raw / sub_549860__abi_raw / sub_549960__abi_raw
  * ============================================================ */
-int __cdecl sub_549800__abi_raw(nox_abi_ptrslot_t a1);
+int __cdecl sub_549800(nox_abi_ptrslot_t a1);
 // int __cdecl sub_549800__abi_raw(float a1);
 
 //   int __cdecl sub_5497E0__abi_raw(float a1)
@@ -2880,10 +2880,10 @@ int __cdecl sub_549800__abi_raw(nox_abi_ptrslot_t a1);
 //     return sub_549800__abi_raw(a1);
 //   }
 
-int __cdecl sub_5497E0__abi_raw(nox_abi_ptrslot_t a1)
+int __cdecl sub_5497E0(nox_abi_ptrslot_t a1)
 {
   *(_DWORD *)&byte_5D4594[2491560] = 0;
-  return sub_549800__abi_raw(a1);
+  return sub_549800(a1);
 }
 
 //int __cdecl sub_549800__abi_raw(float a1)
@@ -2902,8 +2902,8 @@ int __cdecl sub_5497E0__abi_raw(nox_abi_ptrslot_t a1)
 //  sub_4D9110(&v1->field_0, 30);
 //  return *(_DWORD *)&byte_5D4594[2491576];
 //}
-void __cdecl sub_549860__abi_raw(int a1, int a2);
-int __cdecl sub_549800__abi_raw(nox_abi_ptrslot_t a1)
+void __cdecl sub_549860(int a1, void *p2);
+int __cdecl sub_549800(nox_abi_ptrslot_t a1)
 {
   float2 *v1; // esi
   double v2; // st7
@@ -2917,7 +2917,7 @@ int __cdecl sub_549800__abi_raw(nox_abi_ptrslot_t a1)
   v2 = *(float *)(*(_DWORD *)(*(_DWORD *)(self + 748) + 484) + 112) + *(float *)(self + 176);
   *(_DWORD *)&byte_5D4594[2491576] = 0;
   v5 = (float)(v2 + *(float *)&byte_587000[287328]);
-  sub_517F90(v1, v5, (void *)sub_549860__abi_raw, v4);
+  sub_517F90(v1, v5, (void *)sub_549860, v4);
   sub_4D9110(&v1->field_0, 30);
   return *(_DWORD *)&byte_5D4594[2491576];
 }
@@ -2967,7 +2967,7 @@ int __cdecl sub_549800__abi_raw(nox_abi_ptrslot_t a1)
 //    }
 //  }
 //}
-void __cdecl sub_549860__abi_raw(int a1, int a2)
+void __cdecl sub_549860(int a1, void *p2)
 {
   int v2; // esi
   bool v3; // zf
@@ -2978,7 +2978,7 @@ void __cdecl sub_549860__abi_raw(int a1, int a2)
   int v8; // [esp+28h] [ebp+8h]
   float v9; // [esp+28h] [ebp+8h]
 
-  v2 = a2;
+  v2 = (int)(uintptr_t)p2;
   v3 = (v2 == a1);
   v8 = *(_DWORD *)(v2 + 748); // line 2979
   if ( !v3 )
@@ -3014,10 +3014,10 @@ void __cdecl sub_549860__abi_raw(int a1, int a2)
 }
 
 
-int __cdecl sub_549960__abi_raw(nox_abi_ptrslot_t a1)
+int __cdecl sub_549960(nox_abi_ptrslot_t a1)
 {
   *(_DWORD *)&byte_5D4594[2491560] = 1;
-  return sub_549800__abi_raw(a1);
+  return sub_549800(a1);
 }
 
 /* ============================================================
@@ -3061,7 +3061,7 @@ int __cdecl sub_549960__abi_raw(nox_abi_ptrslot_t a1)
 //    sub_52DF80(LODWORD(v1) + 56, v3, v9);
 //  return 1;
 //}
-int __cdecl sub_549980__abi_raw(nox_abi_ptrslot_t a1)
+int __cdecl sub_549980(nox_abi_ptrslot_t a1)
 {
   int v2; // ebp
   int v3; // esi
@@ -3170,7 +3170,7 @@ int __cdecl sub_549980__abi_raw(nox_abi_ptrslot_t a1)
 //  return 1;
 //}
 
-int __cdecl sub_549A60__abi_raw(nox_abi_ptrslot_t a1)
+int __cdecl sub_549A60(nox_abi_ptrslot_t a1)
 {
   int v2; // ebp
   int v3; // esi
@@ -3278,7 +3278,7 @@ int __cdecl sub_549A60__abi_raw(nox_abi_ptrslot_t a1)
 //    sub_4DA2C0(v3, (const char *)&byte_587000[287936], 0);
 //  return 1;
 //}
-int __cdecl sub_549BC0__abi_raw(nox_abi_ptrslot_t a1)
+int __cdecl sub_549BC0(nox_abi_ptrslot_t a1)
 {
   int v2; // ebp
   int v3; // esi
@@ -3364,7 +3364,7 @@ int __cdecl sub_549BC0__abi_raw(nox_abi_ptrslot_t a1)
 //       sub_4DA2C0(v3, (const char *)&byte_587000[287956], 0);
 //     return 1;
 //   }
-int __cdecl sub_549CA0__abi_raw(nox_abi_ptrslot_t a1)
+int __cdecl sub_549CA0(nox_abi_ptrslot_t a1)
 {
   int v2; // ebp
   int v3; // esi
@@ -3496,18 +3496,10 @@ int __cdecl sub_549CA0__abi_raw(nox_abi_ptrslot_t a1)
 //  }
 //  return result;
 //}
-int __cdecl sub_500F40__abi_raw(
-#if defined(__arm__) && defined(__ARM_PCS_VFP)
-    nox_abi_ptrslot_t a1,
-    nox_abi_ptrslot_t a2
-#else
-    int a1,
-    void *a2
-#endif
-)
+int __cdecl sub_500F40(int a1, void *a2)
 {
 #if defined(__arm__) && defined(__ARM_PCS_VFP)
-  /* ---- ARM hard-float path: your current ABI-fixed version ---- */
+  /* ---- ARM hard-float path (native pointer/int args, no VFP ping-pong) ---- */
 
   _DWORD *v2; // esi
   int v3; // eax
@@ -3526,10 +3518,10 @@ int __cdecl sub_500F40__abi_raw(
   int v18; // edx
   float4 v19; // [esp+8h] [ebp-10h]
 
-  const int self = NOX_PTR(a1);
+  const int self = a1;
 
   /* a2 is pointer to out float2 (x,y) */
-  uint32_t *out = (uint32_t *)(uintptr_t)nox_from_ptrslot(a2);
+  uint32_t *out = (uint32_t *)a2;
 
   v2 = (_DWORD *)self;
 
