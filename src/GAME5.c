@@ -12460,7 +12460,13 @@ LABEL_8:
               break;
             case 0x13u:
               if ( sub_43B6D0() )
+              {
+#ifdef __3DS__
+                if ( (unsigned __int8)buf[3] == 13u && nox_3ds_try_flip_join_proto_ver() )
+                  break;
+#endif
                 sub_43AFA0((unsigned __int8)buf[3]);
+              }
               break;
             case 0x14u:
               if ( sub_43B6D0() && sub_43AF80() == 3 )

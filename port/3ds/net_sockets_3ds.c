@@ -214,16 +214,39 @@ bool nox_3ds_soc_get_ip_info(uint32_t *out_ip_be, uint32_t *out_mask_be, uint32_
     uint32_t ip = (uint32_t)ip_a.s_addr;
     uint32_t mask = (uint32_t)mask_a.s_addr;
     uint32_t bcast = (uint32_t)bcast_a.s_addr;
+    uint32_t hid_be = (uint32_t)gethostid();
 
     if (rc != 0 || ip == 0u) {
-        ip = (uint32_t)gethostid();
+        ip = hid_be;
         mask = htonl(0xFFFFFF00u);
         bcast = (ip != 0u) ? ((ip & mask) | ~mask) : htonl(INADDR_BROADCAST);
     } else {
-        if (mask == 0u)
+        /* Horizon soc:u SOCU_GetIPInfo returns IPv4/mask/bcast in host (little-endian)
+         * byte order whereas libctru gethostid() is guaranteed network byte order. */
+        bool host_order = false;
+        if (hid_be != 0u) {
+            if (ip != hid_be && htonl(ip) == hid_be)
+                host_order = true;
+        } else {
+            uint8_t b0 = (uint8_t)(ip & 0xFFu);
+            uint8_t b3 = (uint8_t)((ip >> 24) & 0xFFu);
+            if (b0 != 10u && b0 != 172u && b0 != 192u &&
+                (b3 == 10u || b3 == 172u || b3 == 192u)) {
+                host_order = true;
+            }
+        }
+        if (host_order) {
+            ip    = htonl(ip);
+            mask  = htonl(mask);
+            bcast = htonl(bcast);
+        }
+
+        if (mask == 0u || mask == 0xFFFFFFFFu)
             mask = htonl(0xFFFFFF00u);
-        if (bcast == 0u)
-            bcast = (ip & mask) | ~mask;
+
+        uint32_t calc_bcast = (ip & mask) | ~mask;
+        if (bcast == 0u || bcast == htonl(INADDR_BROADCAST) || (bcast & mask) != (ip & mask))
+            bcast = calc_bcast;
     }
 
     if (out_ip_be)    *out_ip_be = ip;
@@ -698,6 +721,7 @@ static int sockets_recvfrom(int vfd, void *buf, unsigned int len, int flags,
         return -1;
     }
     int rfd = s->real_fd;
+    int stype = s->type;
     soc_unlock();
 
     struct sockaddr_in src_sin;
@@ -706,6 +730,19 @@ static int sockets_recvfrom(int vfd, void *buf, unsigned int len, int flags,
     ssize_t r = recvfrom(rfd, buf, (size_t)len, SOC_SAFE_MSG_FLAGS(flags),
                          from ? (struct sockaddr *)&src_sin : NULL,
                          from ? &src_len : NULL);
+    if (r < 0 && stype == SOCK_DGRAM && (errno == ECONNRESET || errno == ECONNREFUSED)) {
+        /* Unconnected UDP sockets may receive ICMP Port Unreachable during LAN scans;
+         * retry once and otherwise report EWOULDBLOCK so the drain loop does not abort. */
+        src_len = (socklen_t)sizeof(src_sin);
+        r = recvfrom(rfd, buf, (size_t)len, SOC_SAFE_MSG_FLAGS(flags),
+                     from ? (struct sockaddr *)&src_sin : NULL,
+                     from ? &src_len : NULL);
+        if (r < 0 && (errno == ECONNRESET || errno == ECONNREFUSED)) {
+            last_socket_error = NOX_WSAEWOULDBLOCK;
+            errno = EWOULDBLOCK;
+            return -1;
+        }
+    }
     if (r < 0) {
         last_socket_error = wsa_from_errno(errno);
         return -1;

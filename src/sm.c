@@ -281,6 +281,7 @@ void NET_CONNECT (sm_args_t *args)
   v5[4] = 0;
   v10 = sub_40A420();
 #ifdef __3DS__
+  nox_3ds_reset_join_ver_retry();
   nox_3ds_net_log("[sm] NET_CONNECT id=%d host=%s port=%d local_port=%d", a1, cp, hostshort, v10);
 #endif
   memset(&name, 0, sizeof(name));
