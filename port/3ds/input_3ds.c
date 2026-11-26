@@ -1,4 +1,5 @@
 #include "platform_3ds.h"
+#include "../../src/fov_scaler.h"
 
 #include <3ds.h>
 #include <SDL2/SDL.h>
@@ -89,6 +90,7 @@ static void get_top_viewport_bounds(int *out_l, int *out_t, int *out_r, int *out
     int t = NOX_3DS_VP_TOP;
     int r = NOX_3DS_VP_RIGHT;
     int b = NOX_3DS_VP_BOTTOM;
+    nox_fov_scaler_get_world_viewport(&l, &t, &r, &b, NULL, NULL);
 
     int *vp = (int *)(void *)sub_437250();
     if (vp && (vp[2] - vp[0]) >= 64 && (vp[3] - vp[1]) >= 64) {
@@ -368,14 +370,35 @@ void nox_3ds_input_poll(nox_3ds_input_t *out)
     g_in.keys_down = hidKeysDown();
     g_in.keys_up   = hidKeysUp();
 
-    /* Live A/B toggle for Native GPU Font: hold L + R, tap SELECT.
-     * Swallow SELECT until released so minimap / movie skip do not fire. */
+    /* Live A/B toggles while holding L + R:
+     *   L + R + SELECT         : Native GPU Font
+     *   L + R + X / Up / Down  : Cycle FOV Viewport Preset (skips no-op sizes)
+     *   L + R + Y / Left/Right : Toggle Top Screen Aspect Ratio (5:3 <-> 4:3) */
     {
         static bool s_swallow_select = false;
-        if (((g_in.keys_held & (NOX_3DS_KEY_L | NOX_3DS_KEY_R)) == (NOX_3DS_KEY_L | NOX_3DS_KEY_R)) &&
-            (g_in.keys_down & NOX_3DS_KEY_SELECT)) {
+        static bool s_swallow_x = false;
+        static bool s_swallow_y = false;
+        static uint32_t s_swallow_dpad = 0;
+        const uint32_t dpad_v = NOX_3DS_KEY_DUP | NOX_3DS_KEY_DDOWN;
+        const uint32_t dpad_h = NOX_3DS_KEY_DLEFT | NOX_3DS_KEY_DRIGHT;
+        bool lr_held = (g_in.keys_held & (NOX_3DS_KEY_L | NOX_3DS_KEY_R)) == (NOX_3DS_KEY_L | NOX_3DS_KEY_R);
+        if (lr_held && (g_in.keys_down & NOX_3DS_KEY_SELECT)) {
             nox_3ds_font_toggle();
             s_swallow_select = true;
+        }
+        if (lr_held && (g_in.keys_down & (NOX_3DS_KEY_X | dpad_v))) {
+            char msg[64];
+            nox_fov_scaler_cycle_preset();
+            nox_3ds_font_show_toast(nox_fov_scaler_status_label(msg, sizeof(msg)), true);
+            if (g_in.keys_down & NOX_3DS_KEY_X) s_swallow_x = true;
+            s_swallow_dpad |= (g_in.keys_down & dpad_v);
+        }
+        if (lr_held && (g_in.keys_down & (NOX_3DS_KEY_Y | dpad_h))) {
+            char msg[64];
+            nox_3ds_video_toggle_wide();
+            nox_3ds_font_show_toast(nox_fov_scaler_status_label(msg, sizeof(msg)), true);
+            if (g_in.keys_down & NOX_3DS_KEY_Y) s_swallow_y = true;
+            s_swallow_dpad |= (g_in.keys_down & dpad_h);
         }
         if (s_swallow_select) {
             bool raw_sel = (g_in.keys_held & NOX_3DS_KEY_SELECT) != 0;
@@ -385,6 +408,31 @@ void nox_3ds_input_poll(nox_3ds_input_t *out)
             if (!raw_sel) {
                 s_swallow_select = false;
             }
+        }
+        if (s_swallow_x) {
+            bool raw_x = (g_in.keys_held & NOX_3DS_KEY_X) != 0;
+            g_in.keys_held &= ~NOX_3DS_KEY_X;
+            g_in.keys_down &= ~NOX_3DS_KEY_X;
+            g_in.keys_up   &= ~NOX_3DS_KEY_X;
+            if (!raw_x) {
+                s_swallow_x = false;
+            }
+        }
+        if (s_swallow_y) {
+            bool raw_y = (g_in.keys_held & NOX_3DS_KEY_Y) != 0;
+            g_in.keys_held &= ~NOX_3DS_KEY_Y;
+            g_in.keys_down &= ~NOX_3DS_KEY_Y;
+            g_in.keys_up   &= ~NOX_3DS_KEY_Y;
+            if (!raw_y) {
+                s_swallow_y = false;
+            }
+        }
+        if (s_swallow_dpad) {
+            uint32_t still_held = g_in.keys_held & s_swallow_dpad;
+            g_in.keys_held &= ~s_swallow_dpad;
+            g_in.keys_down &= ~s_swallow_dpad;
+            g_in.keys_up   &= ~s_swallow_dpad;
+            s_swallow_dpad = still_held;
         }
     }
 
@@ -508,9 +556,17 @@ void nox_3ds_input_process_hybrid(void)
 
         if (l_held) {
             if (g_in.touch_active) {
-                /* TRACKPAD MODE: Match exact bottom touch scaled location directly */
-                g_in.world_aim_x = g_in.bottom_touch_x;
-                g_in.world_aim_y = g_in.bottom_touch_y;
+                /* TRACKPAD MODE: Map physical Bottom touch directly into active Top viewport */
+                int vp_w = vp_r - vp_l + 1;
+                int vp_h = vp_b - vp_t + 1;
+                int tx = vp_l + ((int)g_in.touch_x * vp_w) / NOX_3DS_BOT_W;
+                int ty = vp_t + ((int)g_in.touch_y * vp_h) / NOX_3DS_BOT_H;
+                if (tx < vp_l) tx = vp_l;
+                if (tx > vp_r) tx = vp_r;
+                if (ty < vp_t) ty = vp_t;
+                if (ty > vp_b) ty = vp_b;
+                g_in.world_aim_x = tx;
+                g_in.world_aim_y = ty;
                 g_free_aim_x = (float)g_in.world_aim_x;
                 g_free_aim_y = (float)g_in.world_aim_y;
                 

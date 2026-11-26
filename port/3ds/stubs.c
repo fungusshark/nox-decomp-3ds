@@ -133,10 +133,13 @@ static SDL_Surface *stub_create_surface(int w, int h, int bpp, Uint32 format)
     s->h = h;
     s->format = pf;
 
-    if (w >= NOX_3DS_LOGICAL_W && h >= NOX_3DS_LOGICAL_H && bytes_pp == 2) {
-        /* Backbuffer: pitch=1024*2 in linearAlloc so C3D_SyncDisplayTransfer is zero-copy. */
-        int alloc_w = (w <= NOX_3DS_TEX_W) ? NOX_3DS_TEX_W : w;
-        int alloc_h = (h <= NOX_3DS_TEX_H) ? NOX_3DS_TEX_H : h;
+    if (bytes_pp == 2 &&
+        ((w == NOX_3DS_LOGICAL_W && h == NOX_3DS_LOGICAL_H) ||
+         (w == NOX_3DS_BOT_W && h == NOX_3DS_BOT_H))) {
+        /* Backbuffer: POT pitch in linearAlloc so C3D_SyncDisplayTransfer is zero-copy.
+         * Top 640x480 -> 1024x512 (1 MB); Bottom 320x240 -> 512x256 (256 KB). */
+        int alloc_w = (w <= 512) ? 512 : NOX_3DS_TEX_W;
+        int alloc_h = (h <= 256) ? 256 : NOX_3DS_TEX_H;
         s->pitch = alloc_w * bytes_pp;
         s->pixels = nox_3ds_linear_alloc((size_t)s->pitch * (size_t)alloc_h);
         if (s->pixels) {
