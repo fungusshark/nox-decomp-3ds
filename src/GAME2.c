@@ -20822,7 +20822,12 @@ void __cdecl sub_469140(int arg0)
           v39 = 23 * v8;
           if ( v8 <= v9 )
           {
-            v11 = *(_DWORD *)&byte_587000[142328];
+            int thresh = *(int *)&byte_587000[142328];
+            unsigned int c_scale = *(_DWORD *)&byte_587000[142324];
+            int *light_rgb = (int *)(v1 + 152);
+            int light_neg = *(_DWORD *)(v1 + 172);
+            float num_f = (float)(v33 + thresh) * 65536.0f;
+            float step_f = (v36 > 0) ? ((66.0f * (float)c_scale) / (float)v36) : 0.0f;
             v12 = 23 * v43;
             while ( 1 )
             {
@@ -20831,36 +20836,16 @@ void __cdecl sub_469140(int arg0)
               if ( v43 <= v30 )
               {
                 v14 = v13 * v13;
-                for ( i = v13 * v13; ; v14 = i )
+                for ( ; ; )
                 {
                   v15 = v14 + (v5 - v12) * (v5 - v12);
                   if ( v15 <= v35 )
                   {
-                    v16 = sub_4C1C70(v33 + v11, 66 * v15 * *(_DWORD *)&byte_587000[142324] / v36 + 0x10000);
-                    v11 = *(_DWORD *)&byte_587000[142328];
-                    if ( v16 > *(int *)&byte_587000[142328] )
-                    {
-                      sub_4695E0(
-                        v29,
-                        v31,
-                        (int *)(v1 + 152),
-                        8 * (v16 - *(_DWORD *)&byte_587000[142328]),
-                        *(_DWORD *)(v1 + 172));
-                      v7 = a4.field_4;
-                      v5 = a4.field_0;
-                      v11 = *(_DWORD *)&byte_587000[142328];
-                    }
-                    else
-                    {
-                      v7 = a4.field_4;
-                      v5 = a4.field_0;
-                    }
-                    v12 += 23;
+                    int v16 = (v36 > 0) ? (int)(num_f / ((float)v15 * step_f + 65536.0f)) : 0;
+                    if ( v16 > thresh )
+                      sub_4695E0(v29, v31, light_rgb, 8 * (v16 - thresh), light_neg);
                   }
-                  else
-                  {
-                    v12 += 23;
-                  }
+                  v12 += 23;
                   if ( ++v29 > v30 )
                     break;
                 }
@@ -20922,9 +20907,9 @@ int __cdecl sub_4695E0(int a1, int a2, int *a3, int a4, int a5)
   v5 = a4;
   if ( a5 )
     v5 = -a4;
-  v6 = sub_4C1C60(v5, *a3) << 8;
-  v7 = sub_4C1C60(v5, a3[1]) << 8;
-  v8 = sub_4C1C60(v5, a3[2]);
+  v6 = ((int)(((int64_t)v5 * a3[0]) >> 16)) << 8;
+  v7 = ((int)(((int64_t)v5 * a3[1]) >> 16)) << 8;
+  v8 = (int)(((int64_t)v5 * a3[2]) >> 16);
   v9 = &byte_5D4594[12 * (a2 + 40 * a1 + 5 * a1) + 2618924];
   v10 = *(_DWORD *)&byte_5D4594[12 * (a2 + 40 * a1 + 5 * a1) + 2618924] + v6;
   v11 = *(_DWORD *)&byte_5D4594[12 * (a2 + 40 * a1 + 5 * a1) + 2618928] + v7;
@@ -21075,7 +21060,10 @@ int __cdecl sub_4697C0(int *a1, int *a2, int2 *a3, signed int a4, int *a5)
     {
       v10 = &v6[result + 2];
       v11 = (char *)((char *)a1 - (char *)v6);
-      v12 = *(_DWORD *)&byte_587000[142316];
+      int thresh = *(int *)&byte_587000[142316];
+      unsigned int c_scale = *(_DWORD *)&byte_587000[142312];
+      float num_f = (float)(v23 + thresh) * 65536.0f;
+      float step_f = (v21 > 0) ? ((66.0f * (float)c_scale) / (float)v21) : 0.0f;
       v22 = v10;
       for ( i = v11; ; v11 = i )
       {
@@ -21085,15 +21073,12 @@ int __cdecl sub_4697C0(int *a1, int *a2, int2 *a3, signed int a4, int *a5)
         if ( v13 < *v10 )
         {
           v16 = v8 * v8;
-          for ( j = v8 * v8; ; v16 = j )
+          for ( ; ; )
           {
-            v17 = sub_4C1C70(v12 + v23, 66 * *(_DWORD *)&byte_587000[142312] * (v16 + v14 * v14) / v21 + 0x10000);
-            v12 = *(_DWORD *)&byte_587000[142316];
-            if ( v17 > *(int *)&byte_587000[142316] )
-            {
-              sub_4695E0(v15, v9, a5, 8 * (v17 - *(_DWORD *)&byte_587000[142316]), 0);
-              v12 = *(_DWORD *)&byte_587000[142316];
-            }
+            unsigned int dist2 = (unsigned int)(v16 + v14 * v14);
+            int v17 = (v21 > 0) ? (int)(num_f / ((float)dist2 * step_f + 65536.0f)) : 0;
+            if ( v17 > thresh )
+              sub_4695E0(v15, v9, a5, 8 * (v17 - thresh), 0);
             v14 += 23;
             if ( ++v15 >= *v22 )
               break;
@@ -38739,15 +38724,33 @@ void __cdecl sub_480BE0(_DWORD *a1, int *a2, int a3, int a4, int a5)
 
             v26 -= n;
 
+            if ( (v22 | v23 | v24) == 0 )
+            {
+              if ( (v11 | v12 | v13) == 0 )
+              {
+                memset(dst16, 0, (size_t)n * 2u);
+                src16 += n;
+                dst16 += n;
+                continue;
+              }
+              if ( v11 == 0x10000 && v12 == 0x10000 && v13 == 0x10000 )
+              {
+                memcpy(dst16, src16, (size_t)n * 2u);
+                src16 += n;
+                dst16 += n;
+                continue;
+              }
+            }
+
             for ( ; n; --n )
             {
               unsigned int x = (unsigned int)*src16++;
 
-              unsigned int r = ((unsigned int)v13 * (x & 0x1Fu)) >> 13;
+              unsigned int r = ((unsigned int)v13 * (x & 0x1Fu)) >> 16;
               unsigned int g = ((unsigned int)v12 * ((x >> 2) & 0xF8u)) >> 16;
               unsigned int b = ((unsigned int)v11 * ((x >> 7) & 0xF8u)) >> 16;
 
-              *dst16++ = (WORD)((r >> 3) | ((g & 0xF8u) << 2) | ((b & 0xF8u) << 7));
+              *dst16++ = (WORD)(r | ((g & 0xF8u) << 2) | ((b & 0xF8u) << 7));
 
               v11 += v22;
               v12 += v23;
@@ -38956,9 +38959,19 @@ int *__cdecl sub_480EF0(int a1, int a2, int a3, int *a4, int *a5, int a6, int a7
                 v48 = v22 << 8;
                 v25 = a5[1] << 8;
                 v26 = a5[2] << 8;
-                v50[0] = v24 / v43;
-                v50[1] = (v25 - v48) / v43;
-                v50[2] = (v26 - v49) / v43;
+                if ( v43 > 0 )
+                {
+                  float inv_w = 1.0f / (float)v43;
+                  v50[0] = (int)((float)v24 * inv_w);
+                  v50[1] = (int)((float)(v25 - v48) * inv_w);
+                  v50[2] = (int)((float)(v26 - v49) * inv_w);
+                }
+                else
+                {
+                  v50[0] = 0;
+                  v50[1] = 0;
+                  v50[2] = 0;
+                }
                 if ( v44 > 0 )
                 {
                   v27 = v44;
@@ -60078,6 +60091,72 @@ void __cdecl sub_49D370(int a1, int a2, int a3, int a4)
   int v19; // [esp+44h] [ebp+10h]
 
   v4 = *(_DWORD *)(*(_DWORD *)&byte_5D4594[3799572] + 244) & 0xFFFF;
+  if ( *(_DWORD *)&byte_5D4594[3799624] == 1 && a3 > 0 && a4 > 0 )
+  {
+    uint16_t c16 = (uint16_t)(v4 & 0x7FFFu);
+    uint32_t c32 = ((uint32_t)c16 << 16) | (uint32_t)c16;
+    uintptr_t row_base_ptr = *(_DWORD *)&byte_5D4594[3798784] + 4 * a2;
+    int off_bytes = 2 * a1;
+    for ( int y = 0; y < a4; ++y )
+    {
+      uint16_t *dst = (uint16_t *)(*(_DWORD *)row_base_ptr + off_bytes);
+      row_base_ptr += 4;
+      int rem = a3;
+      if ( ((uintptr_t)dst & 2u) && rem > 0 )
+      {
+        uint16_t d = *dst;
+        uint16_t d7 = (uint16_t)(d & 0x7FFFu);
+        uint16_t b = (c16 == 0) ? (uint16_t)((d7 & 0x7BDEu) >> 1)
+                                : (uint16_t)((d7 & c16) + (((d7 ^ c16) & 0x7BDEu) >> 1));
+#ifdef __3DS__
+        b |= (uint16_t)(d & 0x8000u);
+#endif
+        *dst++ = b;
+        --rem;
+      }
+      uint32_t *dst32 = (uint32_t *)dst;
+      if ( c16 == 0 )
+      {
+        while ( rem >= 2 )
+        {
+          uint32_t d = *dst32;
+          uint32_t b = ((d & 0x7BDE7BDEu) >> 1);
+#ifdef __3DS__
+          b |= (d & 0x80008000u);
+#endif
+          *dst32++ = b;
+          rem -= 2;
+        }
+      }
+      else
+      {
+        while ( rem >= 2 )
+        {
+          uint32_t d = *dst32;
+          uint32_t d7 = d & 0x7FFF7FFFu;
+          uint32_t b = (d7 & c32) + (((d7 ^ c32) & 0x7BDE7BDEu) >> 1);
+#ifdef __3DS__
+          b |= (d & 0x80008000u);
+#endif
+          *dst32++ = b;
+          rem -= 2;
+        }
+      }
+      dst = (uint16_t *)dst32;
+      if ( rem > 0 )
+      {
+        uint16_t d = *dst;
+        uint16_t d7 = (uint16_t)(d & 0x7FFFu);
+        uint16_t b = (c16 == 0) ? (uint16_t)((d7 & 0x7BDEu) >> 1)
+                                : (uint16_t)((d7 & c16) + (((d7 ^ c16) & 0x7BDEu) >> 1));
+#ifdef __3DS__
+        b |= (uint16_t)(d & 0x8000u);
+#endif
+        *dst = b;
+      }
+    }
+    return;
+  }
   v17 = 2 * a1;
   v5 = byte_5D4594[3804372];
   v16 = (*(_DWORD *)&byte_5D4594[3804364] & (unsigned int)v4) >> byte_5D4594[3804376];
@@ -61757,7 +61836,73 @@ int __cdecl sub_49EAB0(int a1)
         v21 = v6;
         v22 = v5;
         v29 *= 2;
-        if ( v3 < v5 )
+        if ( *(_DWORD *)&byte_5D4594[3799624] == 1 && *(_WORD *)&byte_5D4594[3800960] == 0 )
+        {
+          unsigned int alpha = (unsigned __int16)*(_WORD *)&byte_5D4594[3801752];
+          unsigned int inv = (alpha >= 256u) ? 0u : (256u - alpha);
+          if ( v3 < v5 )
+          {
+            int err = 2 * v3 - v5;
+            int inc_y = 2 * v3;
+            int inc_xy = 2 * (v3 - v5);
+            for ( int step = v22; ; --step )
+            {
+              uint16_t *p = (uint16_t *)(v29 + *(_DWORD *)(v2 + 4 * v30));
+              uint32_t d = *p;
+              uint32_t rb = (((d & 0x7C1Fu) * inv) >> 8) & 0x7C1Fu;
+              uint32_t g  = (((d & 0x03E0u) * inv) >> 8) & 0x03E0u;
+#ifdef __3DS__
+              *p = (uint16_t)(rb | g | (d & 0x8000u));
+#else
+              *p = (uint16_t)(rb | g);
+#endif
+              if ( step < 1 )
+                break;
+              v30 += v21;
+              if ( err >= 0 )
+              {
+                err += inc_xy;
+                v29 += v19;
+              }
+              else
+              {
+                err += inc_y;
+              }
+            }
+          }
+          else
+          {
+            int err = 2 * v5 - v3;
+            int inc_x = 2 * v5;
+            int inc_xy = 2 * (v5 - v3);
+            for ( int step = v20; ; --step )
+            {
+              uint16_t *p = (uint16_t *)(v29 + *(_DWORD *)(v2 + 4 * v30));
+              uint32_t d = *p;
+              uint32_t rb = (((d & 0x7C1Fu) * inv) >> 8) & 0x7C1Fu;
+              uint32_t g  = (((d & 0x03E0u) * inv) >> 8) & 0x03E0u;
+#ifdef __3DS__
+              *p = (uint16_t)(rb | g | (d & 0x8000u));
+#else
+              *p = (uint16_t)(rb | g);
+#endif
+              if ( step < 1 )
+                break;
+              v29 += v19;
+              if ( err >= 0 )
+              {
+                err += inc_xy;
+                v30 += v21;
+              }
+              else
+              {
+                err += inc_x;
+              }
+            }
+          }
+          result = 1;
+        }
+        else if ( v3 < v5 )
         {
           v12 = v3;
           v24 = 2 * v3;
