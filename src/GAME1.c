@@ -41599,23 +41599,77 @@ LABEL_15:
 // 42F660: using guessed type char var_10[16];
 
 //----- (0042F970) --------------------------------------------------------
+static int lookup_videoidx_entry(const char *name)
+{
+  enum { VID_HT_SIZE = 16384 };
+  static int32_t s_ht[VID_HT_SIZE];
+  static const char *s_cached_base = NULL;
+  static int s_cached_count = -1;
+
+  if ( !name )
+    return -1;
+  const char *base = *(const char **)&byte_5D4594[787156];
+  int count = *(int *)&byte_5D4594[787164];
+  if ( !base || count <= 0 )
+    return -1;
+
+  if ( count > 12288 )
+  {
+    const char *p = base;
+    for ( int i = 0; i < count; ++i, p += 104 )
+    {
+      if ( !strcmp(name, p) )
+        return i;
+    }
+    return -1;
+  }
+
+  if ( base != s_cached_base || count != s_cached_count )
+  {
+    memset(s_ht, 0xFF, sizeof(s_ht));
+    const char *p = base;
+    for ( int i = 0; i < count; ++i, p += 104 )
+    {
+      uint32_t h = 2166136261u;
+      for ( const unsigned char *s = (const unsigned char *)p; *s; ++s )
+        h = (h ^ *s) * 16777619u;
+      uint32_t slot = h & (VID_HT_SIZE - 1u);
+      while ( s_ht[slot] >= 0 )
+      {
+        if ( strcmp(base + 104 * s_ht[slot], p) == 0 )
+          break;
+        slot = (slot + 1u) & (VID_HT_SIZE - 1u);
+      }
+      if ( s_ht[slot] < 0 )
+        s_ht[slot] = i;
+    }
+    s_cached_base = base;
+    s_cached_count = count;
+  }
+
+  uint32_t h = 2166136261u;
+  for ( const unsigned char *s = (const unsigned char *)name; *s; ++s )
+    h = (h ^ *s) * 16777619u;
+  uint32_t slot = h & (VID_HT_SIZE - 1u);
+  while ( s_ht[slot] >= 0 )
+  {
+    int idx = s_ht[slot];
+    if ( strcmp(name, base + 104 * idx) == 0 )
+      return idx;
+    slot = (slot + 1u) & (VID_HT_SIZE - 1u);
+  }
+  return -1;
+}
+
 char *__cdecl sub_42F970(const char *a1)
 {
   int v1; // edi
-  const char *i; // ebp
   int v4; // eax
   const char *v5; // ecx
 
-  if ( !a1 )
+  v1 = lookup_videoidx_entry(a1);
+  if ( v1 < 0 )
     return 0;
-  v1 = 0;
-  if ( *(int *)&byte_5D4594[787164] <= 0 )
-    return 0;
-  for ( i = *(const char **)&byte_5D4594[787156]; strcmp(a1, i); i += 104 )
-  {
-    if ( ++v1 >= *(int *)&byte_5D4594[787164] )
-      return 0;
-  }
   v4 = *(_DWORD *)&byte_5D4594[787156] + 104 * v1;
   v5 = *(const char **)(v4 + 96);
   if ( v5 == (const char *)-1 )
@@ -41631,19 +41685,9 @@ char *__cdecl sub_42F970(const char *a1)
 //----- (0042FA20) --------------------------------------------------------
 char *__cdecl sub_42FA20(const char *a1)
 {
-  int v1; // edi
-  const char *i; // ebp
-
-  if ( !a1 )
+  int v1 = lookup_videoidx_entry(a1);
+  if ( v1 < 0 )
     return 0;
-  v1 = 0;
-  if ( *(int *)&byte_5D4594[787164] <= 0 )
-    return 0;
-  for ( i = *(const char **)&byte_5D4594[787156]; strcmp(a1, i); i += 104 )
-  {
-    if ( ++v1 >= *(int *)&byte_5D4594[787164] )
-      return 0;
-  }
   return (char *)(*(_DWORD *)&byte_5D4594[787156] + 104 * v1);
 }
 
