@@ -1,4 +1,5 @@
 #include "platform_3ds.h"
+#include "perf_3ds.h"
 #include "nox_3ds_version.h"
 
 #ifndef NOX_3DS_VERSION_STR
@@ -35,9 +36,14 @@ static void nox_3ds_apt_hook_cb(APT_HookType hook, void *param)
     case APTHOOK_ONSUSPEND:
     case APTHOOK_ONSLEEP:
     case APTHOOK_ONEXIT:
-        /* Force a full fflush() and fsync() on open file descriptors when
-         * the user presses HOME, closes the lid, or exits. */
+        /* Mark Wi-Fi sockets suspended (lid close / HOME disconnects 3DS Wi-Fi)
+         * and force a full fflush()/fsync() on open file descriptors. */
+        nox_3ds_net_on_apt_suspend(true);
         nox_3ds_commit_save();
+        break;
+    case APTHOOK_ONRESTORE:
+    case APTHOOK_ONWAKEUP:
+        nox_3ds_net_on_apt_suspend(false);
         break;
     default:
         break;
@@ -86,7 +92,7 @@ bool nox_3ds_init(void)
     g_3ds_state.heap_used_bytes = (uint32_t)mallinfo().uordblks;
 
     printf("=== Nox New 3DS Port [%s] ===\n", NOX_3DS_VERSION_STR);
-    printf("[3ds] Ported by Fungus Shark & AlbertChen408 (Giraffepus) | Orig: Westwood Studios\n");
+    printf("[3ds] Ported by Fungus Shark / Giraffepus | Orig: Westwood Studios\n");
     printf("[3ds] Model: %s\n", g_3ds_state.is_new_3ds ? "New 3DS (804MHz + L2)" : "WARNING: Old 3DS (268MHz)");
     printf("[3ds] Stack: %u KB | linearFree: %u KB\n",
            (unsigned)(__stacksize__ / 1024u),
@@ -230,8 +236,6 @@ void nox_3ds_sleep_ms(uint32_t ms)
 
 const nox_3ds_state_t *nox_3ds_get_state(void)
 {
-    g_3ds_state.linear_free_bytes = (uint32_t)linearSpaceFree();
-    g_3ds_state.heap_used_bytes = (uint32_t)mallinfo().uordblks;
     return &g_3ds_state;
 }
 

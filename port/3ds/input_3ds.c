@@ -1,4 +1,5 @@
 #include "platform_3ds.h"
+#include "perf_3ds.h"
 
 #include <3ds.h>
 #include <SDL2/SDL.h>
@@ -50,6 +51,7 @@ static bool  g_wait_touch_release  = false;
 static bool  g_prev_l_held         = false;
 static bool  g_cstick_or_r_active  = false;
 static bool  g_pending_chat        = false;
+static bool  g_pending_direct_ip   = false;
 static int   g_lmb_owner           = LMB_OWNER_NONE;
 static int   g_touch_mode          = TOUCH_MODE_NONE;
 
@@ -349,6 +351,13 @@ void nox_3ds_input_get_bottom_touch(int *out_x, int *out_y)
     if (out_y) *out_y = g_in.bottom_touch_y;
 }
 
+bool nox_3ds_consume_direct_ip_request(void)
+{
+    bool v = g_pending_direct_ip;
+    g_pending_direct_ip = false;
+    return v;
+}
+
 void nox_3ds_input_poll(nox_3ds_input_t *out)
 {
     circlePosition cpad;
@@ -380,11 +389,55 @@ void nox_3ds_input_poll(nox_3ds_input_t *out)
         }
     }
 
+    /* Live toggle for Bottom-Screen top-right FPS HUD: hold L + R, tap START.
+     * Swallow START until released so the Pause/ESC menu or chat does not fire. */
+    {
+        static bool s_swallow_perf_start = false;
+        if (((g_in.keys_held & (NOX_3DS_KEY_L | NOX_3DS_KEY_R)) == (NOX_3DS_KEY_L | NOX_3DS_KEY_R)) &&
+            (g_in.keys_down & NOX_3DS_KEY_START)) {
+            nox_3ds_perf_hud_toggle();
+            s_swallow_perf_start = true;
+        }
+        if (s_swallow_perf_start) {
+            bool raw_start = (g_in.keys_held & NOX_3DS_KEY_START) != 0;
+            g_in.keys_held &= ~NOX_3DS_KEY_START;
+            g_in.keys_down &= ~NOX_3DS_KEY_START;
+            g_in.keys_up   &= ~NOX_3DS_KEY_START;
+            if (!raw_start) {
+                s_swallow_perf_start = false;
+            }
+        }
+    }
+
+    /* Direct IPv4 prompt in Multiplayer Server Browser: plain SELECT when
+     * SelServ.wnd (+814980) is open outside gameplay. */
+    {
+        static bool s_swallow_direct_ip_sel = false;
+        if (!(g_in.keys_held & (NOX_3DS_KEY_L | NOX_3DS_KEY_R)) &&
+            (g_in.keys_down & NOX_3DS_KEY_SELECT) &&
+            nox_read_u32(&byte_5D4594[814980]) != 0 &&
+            !sub_43C700()) {
+            g_pending_direct_ip = true;
+            s_swallow_direct_ip_sel = true;
+        }
+        if (s_swallow_direct_ip_sel) {
+            bool raw_sel = (g_in.keys_held & NOX_3DS_KEY_SELECT) != 0;
+            g_in.keys_held &= ~NOX_3DS_KEY_SELECT;
+            g_in.keys_down &= ~NOX_3DS_KEY_SELECT;
+            g_in.keys_up   &= ~NOX_3DS_KEY_SELECT;
+            if (!raw_sel) {
+                s_swallow_direct_ip_sel = false;
+            }
+        }
+    }
+
     /* Initiate multiplayer chat + virtual keyboard: hold L, tap START.
      * Swallow START until released so the Pause/ESC menu does not fire. */
     {
         static bool s_swallow_start = false;
-        if ((g_in.keys_held & NOX_3DS_KEY_L) && (g_in.keys_down & NOX_3DS_KEY_START)) {
+        if (!(g_in.keys_held & NOX_3DS_KEY_R) &&
+            (g_in.keys_held & NOX_3DS_KEY_L) &&
+            (g_in.keys_down & NOX_3DS_KEY_START)) {
             g_pending_chat = true;
             s_swallow_start = true;
         }
@@ -691,6 +744,7 @@ void nox_3ds_input_reset_after_applet(void)
     release_lmb_if_owned(LMB_OWNER_WORLD_R);
     g_touch_mode = TOUCH_MODE_NONE;
     g_pending_chat = false;
+    g_pending_direct_ip = false;
     nox_ctrl_set_touch_move(0, 0, 0);
 
     /* Drain stale HID state and ignore touch until stylus is lifted so tapping

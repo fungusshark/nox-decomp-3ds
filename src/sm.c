@@ -245,6 +245,10 @@ void NET_CONNECT (sm_args_t *args)
     GOTO_NET_CONNECT_THEN(-4);
   if ( hostshort < 1024 || hostshort > 0x10000 )
     GOTO_NET_CONNECT_THEN(-15);
+#ifdef __3DS__
+  if ( !sub_40A5C0(1) )
+    nox_3ds_net_set_mode(NOX_3DS_NET_MODE_WIFI);
+#endif
   if ( WSAStartup(0x101u, &WSAData) != 0 )
     GOTO_NET_CONNECT_THEN(-21);
   v7 = socket(2, 2, 0);
@@ -276,6 +280,10 @@ void NET_CONNECT (sm_args_t *args)
   v5[3] = 0;
   v5[4] = 0;
   v10 = sub_40A420();
+#ifdef __3DS__
+  nox_3ds_reset_join_ver_retry();
+  nox_3ds_net_log("[sm] NET_CONNECT id=%d host=%s port=%d local_port=%d", a1, cp, hostshort, v10);
+#endif
   memset(&name, 0, sizeof(name));
   name.sin_family = 2;
   name.sin_port = htons(v10);
@@ -310,11 +318,19 @@ void NET_CONNECT_WAIT_LOOP (sm_args_t *args)
     GOTO_NET_CONNECT_WAIT_THEN(args->net_connect_wait_loop.data, a1, -3);
   if ( !v4 )
     GOTO_NET_CONNECT_WAIT_THEN(args->net_connect_wait_loop.data, a1, -3);
-  v6 = 0;
   if ( 20 * a3 < ++v6 )
     GOTO_NET_CONNECT_WAIT_THEN(args->net_connect_wait_loop.data, a1, -23);
+#ifndef __EMSCRIPTEN__
+  /* Match original sub_5525B0 (GAME5.c) 50 ms polling cadence; mainloop()
+   * returns immediately while mainloop_enter is active, so without Sleep(50)
+   * 1200 iterations expire in ~15 ms and spuriously fail with -23 timeout. */
+  Sleep(0x32u);
+#endif
   sub_552A80(a1, a4 | 1);
   sub_552460();
+#ifdef __3DS__
+  sub_4453A0();
+#endif
   if ( *(char *)(v4 + 113) >= a2 )
     GOTO_NET_CONNECT_WAIT_THEN(args->net_connect_wait_loop.data, a1, 0);
 
@@ -357,7 +373,11 @@ void NET_CONNECT_THEN (sm_args_t *args)
   sub_40ED10(31, 0);
   sub_40A340(0);
   sub_40A360(0);
+#ifdef __3DS__
+  GOTO_CONNECT_WAIT_LOOP(sub_416BB0() + 20000);
+#else
   GOTO_CONNECT_WAIT_LOOP(sub_416BB0() + 10000);
+#endif
 }
 
 void CONNECT_WAIT_LOOP (sm_args_t *args)
@@ -369,6 +389,10 @@ void CONNECT_WAIT_LOOP (sm_args_t *args)
   sub_40EE10(*(unsigned int *)&byte_5D4594[815700], 31, 0);
   sub_40ED10(31, 0);
   sub_552460();
+#ifdef __3DS__
+  sub_4453A0();
+  nox_3ds_sleep_ms(1);
+#endif
   if ( sub_40A370() )
     GOTO_CONNECT_WAIT_THEN(1);
 }
@@ -377,8 +401,14 @@ void CONNECT_WAIT_THEN (sm_args_t *args)
 {
   if (!args->connect_wait_then.result)
     GOTO_CONNECT_RESULT(-19);
-  if ( sub_409AD0() != 66458 )
-    GOTO_CONNECT_RESULT(-20);
+  {
+    uint32_t srv_ver = (uint32_t)sub_409AD0();
+#ifdef __3DS__
+    nox_3ds_net_log("[sm] CONNECT_WAIT_THEN server ver=0x%X", (unsigned)srv_ver);
+#endif
+    if ( !NOX_IS_COMPAT_PROTO_VER(srv_ver) )
+      GOTO_CONNECT_RESULT(-20);
+  }
   *(_DWORD *)&byte_5D4594[811372] = 2;
   if ( !sub_40A5C0(1) )
     sub_417C60();
@@ -393,6 +423,9 @@ void CONNECT_RESULT (sm_args_t *args)
   int result = args->connect_result.result;
 
 #ifdef __3DS__
+  nox_3ds_net_log("[sm] CONNECT_RESULT result=%d flags=(1:%d,2:%d,2048:%d,0x2000:%d)",
+                  result, sub_40A5C0(1) != 0, sub_40A5C0(2) != 0,
+                  sub_40A5C0(2048) != 0, sub_40A5C0(0x2000) != 0);
   printf("[sm] CONNECT_RESULT result=%d flags=(1:%d,2:%d,2048:%d,0x2000:%d)\n",
          result, sub_40A5C0(1) != 0, sub_40A5C0(2) != 0,
          sub_40A5C0(2048) != 0, sub_40A5C0(0x2000) != 0);
