@@ -3207,6 +3207,11 @@ int __cdecl sub_451850(int a2, int a3)
   *(_DWORD *)&byte_5D4594[1045428] = a2;
   if ( a3 )
   {
+#ifdef __3DS__
+    if ( nox_3ds_get_state()->is_new_3ds )
+      *(_DWORD *)&byte_5D4594[1045424] = sub_4BD340(a3, 0x400000, 512, 0x4000);
+    else
+#endif
     *(_DWORD *)&byte_5D4594[1045424] = sub_4BD340(a3, 0x100000, 200, 0x2000);
     *(_DWORD *)&byte_5D4594[1045436] = sub_4BD280(200, 576);
   }
@@ -43820,7 +43825,7 @@ char *__cdecl sub_4866F0(const char *a1, const char *a2)
   *((_DWORD *)v2 + 67) = v10;
 #ifdef __3DS__
   if ( v10 )
-    setvbuf(v10, NULL, _IOFBF, 65536);
+    setvbuf(v10, NULL, _IOFBF, 4096);
 #endif
   if ( !v10 || sub_40ADD0(v17, 0xCu, 1u, v6) != 1 )
     goto LABEL_27;

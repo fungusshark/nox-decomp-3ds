@@ -62,6 +62,7 @@ bool nox_3ds_init(void)
         return true;
 
     osSetSpeedupEnable(true);
+    APT_SetAppCpuTimeLimit(30);
     g_start_ms = osGetTime();
 
     gfxInitDefault();
