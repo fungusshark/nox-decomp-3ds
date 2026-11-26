@@ -76,6 +76,8 @@ typedef struct {
     bool     romfs_mounted;
     bool     sdmc_root_ready;
     bool     dsp_audio_ready;     /* true if sdmc:/3ds/dspfirm.cdc present and ndspInit() OK */
+    bool     soc_ready;           /* true once lazy socInit() succeeded on Multiplayer entry */
+    bool     httpc_ready;         /* true once lazy httpcInit() succeeded for OpenNox lobby */
     bool     wide_stretch;        /* top screen: true = fill 400x240, false = preserve aspect (4:3 320x240) */
     bool     bottom_console_mode; /* true during boot before citro2d takes GFX_BOTTOM */
     bool     touch_to_aim;        /* false in dual-screen mode (touch is strict bottom UI) */
@@ -332,6 +334,8 @@ void nox_3ds_swkbd_request(void *entry_win, bool auto_submit);
 void nox_3ds_swkbd_cancel_pending(void *entry_win);
 bool nox_3ds_swkbd_pump(void);
 bool nox_3ds_swkbd_is_active(void);
+bool nox_3ds_consume_direct_ip_request(void);
+bool nox_3ds_swkbd_prompt_direct_ip(char *out_entry, size_t out_sz);
 
 /* =========================================================================
  * 5. Audio Bridge: Miles AIL -> libctru 24-ch ndsp (audio_3ds.c)
@@ -362,20 +366,79 @@ bool     nox_3ds_movie_audio_is_active(void);
 void     nox_3ds_movie_log(const char *fmt, ...);
 
 /* =========================================================================
- * 6. In-Memory UDP Loopback Transport (net_loopback_3ds.c, NO socInit)
+ * 6. Dual-Transport Networking (net_3ds.c -> net_loopback_3ds.c / net_sockets_3ds.c)
  * ========================================================================= */
-void nox_3ds_net_init(void);
-void nox_3ds_net_shutdown(void);
-int  nox_3ds_net_socket(int domain, int type, int protocol);
-int  nox_3ds_net_closesocket(int fd);
-int  nox_3ds_net_bind(int fd, const void *addr, unsigned int addrlen);
-int  nox_3ds_net_setsockopt(int fd, int level, int opt, const void *val, unsigned int len);
-int  nox_3ds_net_ioctlsocket(int fd, long cmd, unsigned long *argp);
-int  nox_3ds_net_sendto(int fd, const void *buf, unsigned int len, int flags,
-                        const void *to, unsigned int tolen);
-int  nox_3ds_net_recvfrom(int fd, void *buf, unsigned int len, int flags,
-                          void *from, unsigned int *fromlen);
-int  nox_3ds_net_last_error(void);
+#define NOX_3DS_LOOPBACK_FD_BASE 1024
+#define NOX_3DS_LOOPBACK_FD_MAX  16
+#define NOX_3DS_SOCKETS_FD_BASE  2048
+#define NOX_3DS_SOCKETS_FD_MAX   32
+
+typedef enum {
+    NOX_3DS_NET_MODE_LOOPBACK = 0, /* Solo Campaign & Solo Quest (zero socInit, Airplane Mode OK) */
+    NOX_3DS_NET_MODE_WIFI     = 1  /* Multiplayer menus / Direct IPv4 / Wi-Fi host via soc:u */
+} nox_3ds_net_mode_t;
+
+struct hostent;
+
+typedef struct {
+    void (*init)(void);
+    void (*shutdown)(void);
+    int  (*socket)(int domain, int type, int protocol);
+    int  (*closesocket)(int fd);
+    int  (*bind)(int fd, const void *addr, unsigned int addrlen);
+    int  (*setsockopt)(int fd, int level, int opt, const void *val, unsigned int len);
+    int  (*ioctlsocket)(int fd, long cmd, unsigned long *argp);
+    int  (*sendto)(int fd, const void *buf, unsigned int len, int flags,
+                   const void *to, unsigned int tolen);
+    int  (*recvfrom)(int fd, void *buf, unsigned int len, int flags,
+                     void *from, unsigned int *fromlen);
+    int  (*listen)(int fd, int backlog);
+    int  (*accept)(int fd, void *addr, unsigned int *addrlen);
+    int  (*shutdown_sock)(int fd, int how);
+    int  (*send)(int fd, const void *buf, unsigned int len, int flags);
+    int  (*recv)(int fd, void *buf, unsigned int len, int flags);
+    int  (*gethostname)(char *name, size_t len);
+    struct hostent *(*gethostbyname)(const char *name);
+} nox_3ds_net_ops_t;
+
+extern const nox_3ds_net_ops_t g_nox_3ds_loopback_ops;
+extern const nox_3ds_net_ops_t g_nox_3ds_sockets_ops;
+
+#define NOX_PROTO_VER_LEGACY   0x0001039Au /* 66458: Nox 1.2b / nox-decomp / opennox-ivan */
+#define NOX_PROTO_VER_HIGHRES  0x000F039Au /* 983962: OpenNox HD (highres) */
+#define NOX_IS_COMPAT_PROTO_VER(v) \
+    (((uint32_t)(v) == NOX_PROTO_VER_LEGACY) || ((uint32_t)(v) == NOX_PROTO_VER_HIGHRES))
+
+void               nox_3ds_net_init(void);
+void               nox_3ds_net_shutdown(void);
+void               nox_3ds_net_log(const char *fmt, ...);
+void               nox_3ds_net_set_mode(nox_3ds_net_mode_t mode);
+nox_3ds_net_mode_t nox_3ds_net_get_mode(void);
+bool               nox_3ds_soc_is_ready(void);
+bool               nox_3ds_soc_ensure_ready(void);
+bool               nox_3ds_soc_get_ip_info(uint32_t *out_ip_be, uint32_t *out_mask_be, uint32_t *out_bcast_be);
+bool               nox_3ds_soc_resolve_ipv4(const char *hostname, uint32_t *out_ip_be);
+void               nox_3ds_net_on_apt_suspend(bool suspended);
+void               nox_3ds_lobby_init(void);
+void               nox_3ds_lobby_on_mode_change(nox_3ds_net_mode_t mode);
+void               nox_3ds_lobby_prefetch(void);
+bool               nox_3ds_lobby_has_pending_work(void);
+void               nox_3ds_lobby_shutdown(void);
+void               nox_3ds_reset_join_ver_retry(void);
+int                nox_3ds_try_flip_join_proto_ver(void);
+void               nox_3ds_set_host_client_proto_ver(uint32_t ver);
+uint32_t           nox_3ds_get_host_client_proto_ver(void);
+void               nox_3ds_lobby_on_host_close(int sockfd);
+int                nox_3ds_net_socket(int domain, int type, int protocol);
+int                nox_3ds_net_closesocket(int fd);
+int                nox_3ds_net_bind(int fd, const void *addr, unsigned int addrlen);
+int                nox_3ds_net_setsockopt(int fd, int level, int opt, const void *val, unsigned int len);
+int                nox_3ds_net_ioctlsocket(int fd, long cmd, unsigned long *argp);
+int                nox_3ds_net_sendto(int fd, const void *buf, unsigned int len, int flags,
+                                      const void *to, unsigned int tolen);
+int                nox_3ds_net_recvfrom(int fd, void *buf, unsigned int len, int flags,
+                                        void *from, unsigned int *fromlen);
+int                nox_3ds_net_last_error(void);
 
 /* =========================================================================
  * 6. Synchronization & ARM11 Alignment-Safe Helpers

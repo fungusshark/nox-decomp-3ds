@@ -46092,7 +46092,7 @@ int __cdecl sub_435A10(signed int *a1)
       *a1 = -19;
       return result;
     }
-    if ( sub_409AD0() != 66458 )
+    if ( !NOX_IS_COMPAT_PROTO_VER((uint32_t)sub_409AD0()) )
     {
       *a1 = -20;
       return 0;
@@ -47076,6 +47076,9 @@ int sub_437190()
   sub_44DF70();
   if ( !sub_40A5C0(1) )
     sub_43CC80();
+#ifdef __3DS__
+  nox_3ds_net_set_mode(NOX_3DS_NET_MODE_LOOPBACK);
+#endif
   *(_DWORD *)&byte_5D4594[811372] = 0;
   if ( !sub_40A5C0(1) )
     sub_4E4DE0();
@@ -47263,6 +47266,216 @@ void __cdecl sub_4375C0(int a1)
     sub_46AD20(*(_DWORD **)&byte_5D4594[814980], 10070, *(_DWORD *)&byte_5D4594[815088] + 10069, a1);
 }
 
+#ifdef __3DS__
+static uint64_t g_3ds_dip_reping_at_ms = 0;
+static u_short  g_3ds_dip_port         = 18590u;
+static uint32_t g_3ds_dip_cookie       = 0;
+
+#define NOX_3DS_LAN_SWEEP_MAX_HOSTS 1024u
+#define NOX_3DS_LAN_SWEEP_PER_TICK  16u
+static uint32_t g_3ds_lan_sweep_ips[NOX_3DS_LAN_SWEEP_MAX_HOSTS];
+static uint32_t g_3ds_lan_sweep_count  = 0;
+static uint32_t g_3ds_lan_sweep_cursor = 0;
+static uint32_t g_3ds_join_ver_override = 0;
+static uint32_t g_3ds_last_join_ver     = NOX_PROTO_VER_LEGACY;
+static int      g_3ds_join_ver_retried  = 0;
+
+void nox_3ds_reset_join_ver_retry(void)
+{
+  g_3ds_join_ver_override = 0;
+  g_3ds_join_ver_retried = 0;
+}
+
+static int nox_is_private_ipv4_u32(uint32_t ip_be)
+{
+  uint32_t h = ntohl(ip_be);
+  uint32_t o0 = (h >> 24) & 0xFFu;
+  uint32_t o1 = (h >> 16) & 0xFFu;
+  if ( o0 == 10u ) return 1;
+  if ( o0 == 172u && o1 >= 16u && o1 <= 31u ) return 1;
+  if ( o0 == 192u && o1 == 168u ) return 1;
+  return 0;
+}
+
+static void nox_3ds_stop_lan_unicast_sweep(void)
+{
+  g_3ds_lan_sweep_count = 0;
+  g_3ds_lan_sweep_cursor = 0;
+}
+
+static void nox_3ds_start_lan_unicast_sweep(u_short port, uint32_t cookie)
+{
+  g_3ds_lan_sweep_count = 0;
+  g_3ds_lan_sweep_cursor = 0;
+  if ( nox_3ds_net_get_mode() != NOX_3DS_NET_MODE_WIFI )
+    return;
+
+  uint32_t ip_be = 0, mask_be = 0, bcast_be = 0;
+  if ( !nox_3ds_soc_get_ip_info(&ip_be, &mask_be, &bcast_be) || !nox_is_private_ipv4_u32(ip_be) )
+    return;
+
+  uint32_t ip_h = ntohl(ip_be);
+  uint32_t mask_h = ntohl(mask_be);
+  if ( (mask_h & 0xFFFFFF00u) == 0 )
+    mask_h = 0xFFFFFF00u;
+
+  /* Clamp sweep to at most a /22 (4 x /24 = 1024 addresses) and probe own /24 first. */
+  if ( mask_h < 0xFFFFFC00u )
+    mask_h = 0xFFFFFC00u;
+
+  uint32_t own_24 = ip_h & 0xFFFFFF00u;
+  uint32_t net_base = ip_h & mask_h;
+  uint32_t host_span = (~mask_h) + 1u;
+  uint32_t num_blocks = host_span >> 8;
+  if ( num_blocks == 0u ) num_blocks = 1u;
+  if ( num_blocks > 4u )  num_blocks = 4u;
+
+  /* Probe self IPv4 first so same-host PC servers upgrade WAN->LAN immediately. */
+  g_3ds_lan_sweep_ips[g_3ds_lan_sweep_count++] = ip_be;
+  for ( uint32_t h = 1u; h <= 254u && g_3ds_lan_sweep_count < NOX_3DS_LAN_SWEEP_MAX_HOSTS; ++h )
+  {
+    uint32_t cand = own_24 | h;
+    if ( cand != ip_h )
+      g_3ds_lan_sweep_ips[g_3ds_lan_sweep_count++] = htonl(cand);
+  }
+  for ( uint32_t blk = 0u; blk < num_blocks; ++blk )
+  {
+    uint32_t base24 = net_base + (blk << 8);
+    if ( base24 == own_24 )
+      continue;
+    for ( uint32_t h = 1u; h <= 254u && g_3ds_lan_sweep_count < NOX_3DS_LAN_SWEEP_MAX_HOSTS; ++h )
+      g_3ds_lan_sweep_ips[g_3ds_lan_sweep_count++] = htonl(base24 | h);
+  }
+
+  g_3ds_dip_port = port;
+  g_3ds_dip_cookie = cookie;
+  nox_3ds_net_log("[net3ds] Paced unicast LAN sweep queued (%u hosts, self=%u.%u.%u.%u, port=%u)",
+                  (unsigned)g_3ds_lan_sweep_count,
+                  (unsigned)(ip_be & 0xFFu), (unsigned)((ip_be >> 8) & 0xFFu),
+                  (unsigned)((ip_be >> 16) & 0xFFu), (unsigned)((ip_be >> 24) & 0xFFu),
+                  (unsigned)(uint16_t)port);
+}
+
+static void nox_3ds_pump_lan_unicast_sweep(void)
+{
+  if ( g_3ds_lan_sweep_cursor >= g_3ds_lan_sweep_count )
+    return;
+  if ( nox_3ds_net_get_mode() != NOX_3DS_NET_MODE_WIFI ||
+       !*(_DWORD *)&byte_5D4594[814980] ||
+       *(_DWORD *)&byte_587000[87404] )
+  {
+    nox_3ds_stop_lan_unicast_sweep();
+    return;
+  }
+
+  char ping_pkt[12];
+  memset(ping_pkt, 0, sizeof(ping_pkt));
+  ping_pkt[2] = 12;
+  nox_write_u32(&ping_pkt[8], g_3ds_dip_cookie);
+
+  uint32_t sent = 0u;
+  while ( g_3ds_lan_sweep_cursor < g_3ds_lan_sweep_count && sent < NOX_3DS_LAN_SWEEP_PER_TICK )
+  {
+    uint32_t dst_ip_be = g_3ds_lan_sweep_ips[g_3ds_lan_sweep_cursor++];
+    sub_555010((int)dst_ip_be, g_3ds_dip_port, ping_pkt, 12);
+    sent++;
+  }
+}
+
+static int nox_is_private_ipv4_str(const char *s)
+{
+  unsigned a = 0, b = 0, c = 0, d = 0;
+  if ( !s || sscanf(s, "%u.%u.%u.%u", &a, &b, &c, &d) != 4 )
+    return 0;
+  if ( a == 10u || a == 127u )
+    return 1;
+  if ( a == 192u && b == 168u )
+    return 1;
+  if ( a == 172u && b >= 16u && b <= 31u )
+    return 1;
+  return 0;
+}
+
+static void nox_3ds_refresh_server_browser_node(int *node)
+{
+  if ( !*(_DWORD *)&byte_5D4594[814980] )
+    return;
+  if ( *(int *)&byte_5D4594[814624] == (int)node )
+    sub_4394D0((int)node);
+  if ( *(_DWORD *)&byte_587000[87408] )
+  {
+    sub_4379C0();
+    sub_4A0360();
+  }
+  else if ( node )
+  {
+    if ( *(int *)((char *)node + 28) )
+      sub_437320((int)node);
+    else
+      sub_43B7C0((int)node);
+  }
+}
+
+static void nox_3ds_update_srv_entry(int *ex, const char *ip_str, int a4)
+{
+  uint32_t ver = nox_read_u32((const void *)(a4 + 24));
+  DWORD ping_ms = timeGetTime() - nox_read_u32((const void *)(a4 + 44));
+  if ( ip_str )
+  {
+    strncpy((char *)ex + 12, ip_str, 15);
+    ((char *)ex)[27] = 0;
+  }
+  nox_write_u32((char *)ex + 48, ver);
+  nox_write_u32((char *)ex + 96, (uint32_t)ping_ms);
+  ((unsigned char *)ex)[103] = *(unsigned char *)(a4 + 3);
+  ((unsigned char *)ex)[104] = *(unsigned char *)(a4 + 4);
+  strncpy((char *)ex + 111, (const char *)(a4 + 10), 8);
+  ((char *)ex)[119] = 0;
+  nox_write_u16((char *)ex + 163, nox_read_u16((const void *)(a4 + 28)));
+  nox_3ds_refresh_server_browser_node(ex);
+}
+
+static void nox_3ds_ping_direct_ip_list(u_short default_port, uint32_t cookie, int count)
+{
+  if ( nox_3ds_net_get_mode() != NOX_3DS_NET_MODE_WIFI || count <= 0 )
+    return;
+  FILE *dipf = fopen(NOX_3DS_DATA_ROOT "/direct_ip.txt", "r");
+  if ( !dipf )
+    return;
+  char line[128];
+  char ping_pkt[12];
+  memset(ping_pkt, 0, sizeof(ping_pkt));
+  ping_pkt[2] = 12;
+  nox_write_u32(&ping_pkt[8], cookie);
+  while ( fgets(line, sizeof(line), dipf) )
+  {
+    char *p = line;
+    while ( *p == ' ' || *p == '\t' ) ++p;
+    if ( *p == '\0' || *p == '#' || *p == '\r' || *p == '\n' )
+      continue;
+    char *nl = strpbrk(p, "\r\n \t");
+    if ( nl ) *nl = '\0';
+    u_short target_port = default_port;
+    char *colon = strchr(p, ':');
+    if ( colon )
+    {
+      *colon = '\0';
+      int parsed_p = atoi(colon + 1);
+      if ( parsed_p >= 1024 && parsed_p <= 65535 )
+        target_port = (u_short)parsed_p;
+    }
+    unsigned int target_ip = inet_addr(p);
+    if ( target_ip != (unsigned int)-1 )
+    {
+      nox_3ds_net_log("[net3ds] Direct IPv4 ping (%dx) -> %s:%u", count, p, (unsigned)target_port);
+      for ( int i = 0; i < count; ++i )
+        sub_555010((int)target_ip, target_port, ping_pkt, 12);
+    }
+  }
+  fclose(dipf);
+}
+#endif
+
 //----- (004375F0) --------------------------------------------------------
 int __cdecl sub_4375F0(const char *a1, __int16 a2, char *a3, int a4)
 {
@@ -47274,69 +47487,141 @@ int __cdecl sub_4375F0(const char *a1, __int16 a2, char *a3, int a4)
   __int16 v9; // ax
   int v10; // ecx
   int v11; // eax
+  int inserted_idx; // eax
   char v13[172]; // [esp+14h] [ebp-CCh]
   char v14[32]; // [esp+C0h] [ebp-20h]
 
+#ifdef __3DS__
+  /* Accept cookie-matched 0x0D replies even after the initial 1 s popup window
+   * closed so async OpenNox HTTP / slow direct_ip replies still populate SelServ. */
+  if ( *(_DWORD *)&byte_5D4594[815088] < 0x9C4u
+    && !*(_DWORD *)&byte_5D4594[815044]
+    && *(_DWORD *)&byte_5D4594[814980]
+    && (!*(_DWORD *)&byte_5D4594[815060] || nox_3ds_net_get_mode() == NOX_3DS_NET_MODE_WIFI) )
+#else
   if ( *(_DWORD *)&byte_5D4594[815088] < 0x9C4u && !*(_DWORD *)&byte_5D4594[815044] && !*(_DWORD *)&byte_5D4594[815060] )
+#endif
   {
     if ( memcmp(a1, &byte_5D4594[815108], 1u) )
     {
-      if ( *(_DWORD *)(a4 + 44) == *(_DWORD *)&byte_5D4594[814964] )
+      if ( nox_read_u32((const void *)(a4 + 44)) == *(_DWORD *)&byte_5D4594[814964] )
       {
+#ifdef __3DS__
+        if ( a3 && *a3 )
+        {
+          char clamped_name[15];
+          strncpy(clamped_name, a3, 0xEu);
+          clamped_name[14] = 0;
+          int new_priv = nox_is_private_ipv4_str(a1);
+          for ( int *ex = sub_425890((int *)&byte_5D4594[1305796]); ex; ex = sub_4258A0(ex) )
+          {
+            if ( (uint16_t)a2 == nox_read_u16((const char *)ex + 109)
+              && !_strcmpi(clamped_name, (const char *)ex + 120)
+              && strcmp(a1, (const char *)ex + 12) != 0 )
+            {
+              int old_priv = nox_is_private_ipv4_str((const char *)ex + 12);
+              if ( !new_priv && old_priv )
+                return 0;
+              if ( new_priv && !old_priv )
+              {
+                uint32_t ver = nox_read_u32((const void *)(a4 + 24));
+                nox_3ds_net_log("[net3ds] Upgraded '%s' WAN->LAN %s:%u (ver=0x%X)",
+                                clamped_name, a1, (unsigned)(uint16_t)a2, (unsigned)ver);
+                nox_3ds_update_srv_entry(ex, a1, a4);
+                return 0;
+              }
+            }
+          }
+        }
+#endif
         if ( sub_4A0410(a1, a2) )
         {
           memset(v13, 0, 0xA8u);
           v13[168] = 0;
           v4 = timeGetTime();
-          v5 = *(_DWORD *)(a4 + 44);
-          v6 = *(_WORD *)(a4 + 36);
+          v5 = (int)nox_read_u32((const void *)(a4 + 44));
+          v6 = (int16_t)nox_read_u16((const void *)(a4 + 36));
           v13[101] = *(_BYTE *)(a4 + 5) | (16 * *(_BYTE *)(a4 + 6));
-          v7 = *(_WORD *)(a4 + 38);
-          *(_WORD *)&v13[105] = v6;
+          v7 = (int16_t)nox_read_u16((const void *)(a4 + 38));
+          nox_write_u16(&v13[105], (uint16_t)v6);
           LOBYTE(v6) = *(_BYTE *)(a4 + 21);
-          *(_WORD *)&v13[107] = v7;
+          nox_write_u16(&v13[107], (uint16_t)v7);
           LOBYTE(v7) = *(_BYTE *)(a4 + 4);
           v13[100] = *(_BYTE *)(a4 + 20) | v6;
           LOBYTE(v6) = *(_BYTE *)(a4 + 3);
           v13[104] = v7;
           LOBYTE(v7) = *(_BYTE *)(a4 + 19);
           v13[103] = v6;
-          v8 = *(_DWORD *)(a4 + 32);
+          v8 = (int)nox_read_u32((const void *)(a4 + 32));
           v13[102] = v7;
-          v9 = *(_WORD *)(a4 + 28);
-          *(_DWORD *)&v13[159] = v8;
-          v10 = *(_DWORD *)(a4 + 24);
-          *(_WORD *)&v13[163] = v9;
-          v11 = *(_DWORD *)(a4 + 40);
-          *(_DWORD *)&v13[48] = v10;
-          *(_DWORD *)&v13[44] = v11;
+          v9 = (int16_t)nox_read_u16((const void *)(a4 + 28));
+          nox_write_u32(&v13[159], (uint32_t)v8);
+          v10 = (int)nox_read_u32((const void *)(a4 + 24));
+          nox_write_u16(&v13[163], (uint16_t)v9);
+          v11 = (int)nox_read_u32((const void *)(a4 + 40));
+          nox_write_u32(&v13[48], (uint32_t)v10);
+          nox_write_u32(&v13[44], (uint32_t)v11);
           qmemcpy(&v13[135], (const void *)(a4 + 48), 0x14u);
-          *(_DWORD *)&v13[155] = *(_DWORD *)(a4 + 7);
+          nox_write_u32(&v13[155], nox_read_u32((const void *)(a4 + 7)));
           strcpy(&v13[111], (const char *)(a4 + 10));
-          LOWORD(v10) = *(_WORD *)(a4 + 68);
-          *(_DWORD *)&v13[96] = v4 - v5;
-          *(_WORD *)&v13[165] = v10;
+          LOWORD(v10) = nox_read_u16((const void *)(a4 + 68));
+          nox_write_u32(&v13[96], (uint32_t)(v4 - v5));
+          nox_write_u16(&v13[165], (uint16_t)v10);
           if ( *(int *)&byte_587000[87412] == -1
-            || sub_437860(*(__int16 *)&v13[44], *(__int16 *)&v13[46]) == *(_DWORD *)&byte_587000[87412] )
+            || sub_437860(nox_read_s16(&v13[44]), nox_read_s16(&v13[46])) == *(_DWORD *)&byte_587000[87412] )
           {
             if ( sub_4899C0((int)v13) )
             {
-              *(_DWORD *)&v13[36] = *(_DWORD *)&byte_5D4594[815088];
-              *(_DWORD *)&v13[28] = 0;
+              nox_write_u32(&v13[36], *(_DWORD *)&byte_5D4594[815088]);
+              nox_write_u32(&v13[28], 0);
               strcpy(&v13[12], a1);
-              *(_WORD *)&v13[109] = a2;
-              strncpy(&v13[120], a3, 0xFu);
-              *(_WORD *)&v13[163] = *(_WORD *)(a4 + 28);
-              sub_4A0030(v13);
+              nox_write_u16(&v13[109], (uint16_t)a2);
+              strncpy(&v13[120], a3, 0xEu);
+              v13[134] = 0;
+              nox_write_u16(&v13[163], nox_read_u16((const void *)(a4 + 28)));
+              inserted_idx = sub_4A0030(v13);
               v14[0] = 0;
               if ( a3 )
-                strcpy(v14, a3);
+                strncpy(v14, a3, sizeof(v14) - 1);
               else
                 sub_43BC80((int)a1, a2, v14);
+              v14[sizeof(v14) - 1] = 0;
               ++*(_DWORD *)&byte_5D4594[815088];
+#ifdef __3DS__
+              if ( *(_DWORD *)&byte_5D4594[815060] && *(_DWORD *)&byte_5D4594[814980] )
+              {
+                if ( *(_DWORD *)&byte_587000[87408] )
+                {
+                  sub_4379C0();
+                  sub_4A0360();
+                }
+                else
+                {
+                  int *node = (int *)sub_4A04C0(inserted_idx);
+                  if ( node )
+                    sub_43B7C0((int)node);
+                }
+              }
+#else
+              (void)inserted_idx;
+#endif
             }
           }
         }
+#ifdef __3DS__
+        else
+        {
+          for ( int *ex = sub_425890((int *)&byte_5D4594[1305796]); ex; ex = sub_4258A0(ex) )
+          {
+            if ( !strcmp(a1, (const char *)ex + 12)
+              && (uint16_t)a2 == nox_read_u16((const char *)ex + 109) )
+            {
+              nox_3ds_update_srv_entry(ex, NULL, a4);
+              break;
+            }
+          }
+        }
+#endif
       }
     }
   }
@@ -47396,6 +47681,14 @@ int sub_4378B0()
       *(_DWORD *)&byte_5D4594[814964] = v4;
       v1 = sub_40A430();
       sub_554AA0(v1, 0, 0, v4);
+#ifdef __3DS__
+      nox_3ds_ping_direct_ip_list(v1, (uint32_t)v4, 2);
+      nox_3ds_start_lan_unicast_sweep(v1, (uint32_t)v4);
+      nox_3ds_reset_join_ver_retry();
+      g_3ds_dip_port = v1;
+      g_3ds_dip_cookie = (uint32_t)v4;
+      g_3ds_dip_reping_at_ms = sub_416BB0() + 350ULL;
+#endif
       v2 = sub_40F1D0((char *)&byte_587000[88032], 0, (const char *)&byte_587000[87992], 1097);
       sub_449A10(*(int *)&byte_5D4594[814980], 0, (int)v2, 0, 0, 0);
     }
@@ -47595,7 +47888,15 @@ int sub_4379F0()
         if ( *(_DWORD *)&byte_587000[87408] == 1 )
           sub_4383A0();
         if ( !*(_DWORD *)&byte_587000[87404] )
+        {
+#ifdef __3DS__
+          if ( !sub_4D6F30() && sub_4D6FA0() == 0 )
+            nox_3ds_net_set_mode(NOX_3DS_NET_MODE_WIFI);
+          else
+            nox_3ds_net_set_mode(NOX_3DS_NET_MODE_LOOPBACK);
+#endif
           sub_554B40(0);
+        }
         *(_DWORD *)&byte_5D4594[815088] = 0;
         sub_4158C0();
         sub_415D50();
@@ -47894,6 +48195,26 @@ int sub_438770()
   }
   else
   {
+#ifdef __3DS__
+    if ( nox_3ds_consume_direct_ip_request() && !sub_44A4A0() )
+    {
+      char dip_entry[64];
+      if ( nox_3ds_swkbd_prompt_direct_ip(dip_entry, sizeof(dip_entry)) )
+      {
+        sub_4378B0();
+        return 1;
+      }
+    }
+    if ( g_3ds_dip_reping_at_ms && (unsigned __int64)sub_416BB0() >= g_3ds_dip_reping_at_ms )
+    {
+      g_3ds_dip_reping_at_ms = 0;
+      nox_3ds_ping_direct_ip_list(g_3ds_dip_port, g_3ds_dip_cookie, 1);
+    }
+    if ( sub_43AF80() == 0 )
+    {
+      nox_3ds_pump_lan_unicast_sweep();
+    }
+#endif
     if ( (!sub_46ACC0(*(int *)&byte_5D4594[814984])
        || !sub_46ACC0(*(int *)&byte_5D4594[814988])
        || !sub_46ACC0(*(int *)&byte_5D4594[815012]))
@@ -47907,6 +48228,20 @@ int sub_438770()
         sub_4378B0();
         return 1;
       }
+#ifdef __3DS__
+      {
+        uint64_t wait_ms = nox_3ds_lobby_has_pending_work() ? 0x1F40ULL : 0x3E8ULL;
+        if ( (unsigned __int64)(sub_416BB0() - *(_QWORD *)&byte_5D4594[815076]) > wait_ms
+          && !*(_DWORD *)&byte_5D4594[815060]
+          && !*(_DWORD *)&byte_587000[87404] )
+        {
+          sub_44A400();
+          sub_4379C0();
+          sub_4A0360();
+          *(_DWORD *)&byte_5D4594[815060] = 1;
+        }
+      }
+#else
       if ( (unsigned __int64)(sub_416BB0() - *(_QWORD *)&byte_5D4594[815076]) > 0x3E8
         && !*(_DWORD *)&byte_5D4594[815060]
         && !*(_DWORD *)&byte_587000[87404] )
@@ -47916,6 +48251,7 @@ int sub_438770()
         sub_4A0360();
         *(_DWORD *)&byte_5D4594[815060] = 1;
       }
+#endif
     }
 LABEL_29:
     result = 1;
@@ -47932,8 +48268,9 @@ int sub_438A90()
   BOOL v3; // eax
   int v4; // eax
   u_short v5; // [esp-10h] [ebp-74h]
-  char buf[100]; // [esp+0h] [ebp-64h]
+  NOX_ALIGN4 char buf[100]; // [esp+0h] [ebp-64h]
 
+  memset(buf, 0, sizeof(buf));
 //  int have_serial = sub_420120((LPBYTE)&buf[56]);
 //  fprintf(stderr, "[join] sub_438A90: have_serial=%d\n", have_serial);
 
@@ -47945,17 +48282,39 @@ int sub_438A90()
     buf[55] = byte_5D4594[2661960];
     buf[54] = byte_5D4594[2661958];
     buf[98] = !v3;
-    *(_DWORD *)&buf[80] = 0x1039A;
-    *(_DWORD *)&buf[84] = *(_DWORD *)&byte_5D4594[2660032];
-    strcpy(&buf[88], (const char *)&byte_5D4594[2660048]);
-    nox_wcscpy((wchar_t *)&buf[4], (const wchar_t *)&byte_5D4594[2661908]);
-    sub_43AF90(3);
-    *(_QWORD *)&byte_5D4594[814956] = sub_416BB0() + 20000;
-    v5 = sub_43B320();
-    v4 = sub_43B300();
-//    fprintf(stderr, "[join] sub_438A90: calling sub_5550A0 (join/handshake)\n");
-    result = sub_5550A0(v4, v5, buf);
-//    fprintf(stderr, "[join] sub_438A90: sub_5550A0 returned %d\n", result);
+    {
+      uint32_t join_ver = NOX_PROTO_VER_LEGACY;
+      int sel_srv = *(int *)&byte_5D4594[814624];
+      if ( *(_DWORD *)&byte_5D4594[815056] && sel_srv )
+      {
+        uint32_t adv_ver = nox_read_u32((const void *)(sel_srv + 48));
+        if ( NOX_IS_COMPAT_PROTO_VER(adv_ver) )
+          join_ver = adv_ver;
+      }
+#ifdef __3DS__
+      if ( g_3ds_join_ver_override && NOX_IS_COMPAT_PROTO_VER(g_3ds_join_ver_override) )
+      {
+        join_ver = g_3ds_join_ver_override;
+      }
+      g_3ds_last_join_ver = join_ver;
+      nox_3ds_stop_lan_unicast_sweep();
+#endif
+      nox_write_u32(&buf[80], join_ver);
+      nox_write_u32(&buf[84], nox_read_u32(&byte_5D4594[2660032]));
+      strcpy(&buf[88], (const char *)&byte_5D4594[2660048]);
+      nox_wcscpy((wchar_t *)&buf[4], (const wchar_t *)&byte_5D4594[2661908]);
+      sub_43AF90(3);
+      *(_QWORD *)&byte_5D4594[814956] = sub_416BB0() + 20000;
+      v5 = sub_43B320();
+      v4 = sub_43B300();
+#ifdef __3DS__
+      nox_3ds_net_log("[join3ds] sub_438A90 -> %u.%u.%u.%u:%u ver=0x%X",
+                      (unsigned)(v4 & 0xFFu), (unsigned)((v4 >> 8) & 0xFFu),
+                      (unsigned)((v4 >> 16) & 0xFFu), (unsigned)((v4 >> 24) & 0xFFu),
+                      (unsigned)(uint16_t)v5, (unsigned)join_ver);
+#endif
+      result = sub_5550A0(v4, v5, buf);
+    }
   }
   else
   {
@@ -47972,6 +48331,29 @@ int sub_438A90()
   }
   return result;
 }
+
+#ifdef __3DS__
+int nox_3ds_try_flip_join_proto_ver(void)
+{
+  if ( g_3ds_join_ver_retried )
+    return 0;
+
+  g_3ds_join_ver_retried = 1;
+  uint32_t alt_ver = (g_3ds_last_join_ver == NOX_PROTO_VER_HIGHRES)
+                         ? NOX_PROTO_VER_LEGACY
+                         : NOX_PROTO_VER_HIGHRES;
+  g_3ds_join_ver_override = alt_ver;
+
+  int sel_srv = *(int *)&byte_5D4594[814624];
+  if ( *(_DWORD *)&byte_5D4594[815056] && sel_srv )
+    nox_write_u32((void *)(sel_srv + 48), alt_ver);
+
+  nox_3ds_net_log("[join3ds] ErrWrongVer (13) -> auto-retrying 0x0E join with ver=0x%X",
+                  (unsigned)alt_ver);
+  sub_438A90();
+  return 1;
+}
+#endif
 
 //----- (00438BD0) --------------------------------------------------------
 int sub_438BD0()
@@ -48217,7 +48599,7 @@ int __cdecl sub_439370(int2 *a1, int a2)
     sub_46A9B0(*(_DWORD **)&byte_5D4594[815000], a1->field_0, a1->field_4);
     sub_4394D0(a2);
     *(_DWORD *)&byte_5D4594[815056] = 1;
-    *(_WORD *)&byte_5D4594[814604] = *(_WORD *)(a2 + 109);
+    *(_DWORD *)&byte_5D4594[814604] = (uint32_t)nox_read_u16((const void *)(a2 + 109));
     result = *(_DWORD *)&byte_5D4594[2650636];
     if ( *(_DWORD *)&byte_5D4594[2650636] & 0x40000 )
       result = sub_46ABB0(*(int *)&byte_5D4594[815008], 0);
@@ -48323,6 +48705,22 @@ int __cdecl sub_4394D0(int a1)
   }
   nox_swprintf(v38, (const wchar_t *)&byte_587000[89324], v37);
   sub_46B490(*(int *)&byte_5D4594[815004], 16397, (int)v38, -1);
+#ifdef __3DS__
+  {
+    const char *ip_str = (const char *)(a1 + 12);
+    uint16_t port_num = nox_read_u16((const void *)(a1 + 109));
+    char addr_a[48];
+    wchar_t addr_w[48];
+    snprintf(addr_a, sizeof(addr_a), "\n[%s] %s:%u",
+             nox_is_private_ipv4_str(ip_str) ? "LAN" : "WAN",
+             ip_str, (unsigned)port_num);
+    size_t k = 0;
+    for ( ; addr_a[k] && k + 1 < sizeof(addr_w) / sizeof(addr_w[0]); ++k )
+      addr_w[k] = (wchar_t)(unsigned char)addr_a[k];
+    addr_w[k] = 0;
+    sub_46B490(*(int *)&byte_5D4594[815004], 16397, (int)addr_w, 14);
+  }
+#endif
   if ( *(_DWORD *)&byte_587000[87404] == 1 )
   {
     sub_46B490(*(int *)&byte_5D4594[815004], 16397, (int)&byte_587000[89332], -1);
@@ -49042,30 +49440,40 @@ char *sub_43AA70()
   }
   v4 = sub_43BE50();
   v5 = v1[102];
-  *((_DWORD *)v1 + 12) = 66458;
-  v1[102] = v5 & 0x80 | v4;
-  *((_DWORD *)v1 + 11) = *(_DWORD *)&byte_5D4594[814916];
-  *(_WORD *)(v1 + 109) = sub_40A430();
-  sub_435720((char *)&byte_587000[90740]);
-  if ( *(_DWORD *)&byte_587000[87404] == 1 )
   {
-    memset(v10, 0, sizeof(v10));
-    v6 = sub_41FA40();
-    nox_sprintf(v9, (const char *)&byte_587000[90760], v6, &byte_587000[90752]);
-    strcpy(&v10[52], v9);
-    *(_DWORD *)v10 = sub_420100();
-    *(_DWORD *)&v10[4] = 1;
-    *(_DWORD *)&v10[8] = 32;
-    *(_DWORD *)&v10[12] = 0;
-    *(_DWORD *)&v10[16] = 0;
-    *(_DWORD *)&v10[20] = 1;
-    *(_DWORD *)&v10[24] = 1;
-    *(_DWORD *)&v10[44] = 0;
-    *(_DWORD *)&v10[28] = 0;
-    *(_DWORD *)&v10[224] = 66458;
-    *(_DWORD *)&v10[32] = *(_DWORD *)&byte_5D4594[814916];
-    v10[sub_425550(v1 + 100, &v10[69], 552) + 69] = 0;
-    sub_40D320((int)v10);
+#ifdef __3DS__
+    uint32_t host_proto_ver = (nox_3ds_net_get_mode() == NOX_3DS_NET_MODE_WIFI)
+                                  ? NOX_PROTO_VER_HIGHRES
+                                  : NOX_PROTO_VER_LEGACY;
+    nox_write_u32((char *)v1 + 48, host_proto_ver);
+#else
+    uint32_t host_proto_ver = 66458u;
+    *((_DWORD *)v1 + 12) = 66458;
+#endif
+    v1[102] = v5 & 0x80 | v4;
+    *((_DWORD *)v1 + 11) = *(_DWORD *)&byte_5D4594[814916];
+    *(_WORD *)(v1 + 109) = sub_40A430();
+    sub_435720((char *)&byte_587000[90740]);
+    if ( *(_DWORD *)&byte_587000[87404] == 1 )
+    {
+      memset(v10, 0, sizeof(v10));
+      v6 = sub_41FA40();
+      nox_sprintf(v9, (const char *)&byte_587000[90760], v6, &byte_587000[90752]);
+      strcpy(&v10[52], v9);
+      *(_DWORD *)v10 = sub_420100();
+      *(_DWORD *)&v10[4] = 1;
+      *(_DWORD *)&v10[8] = 32;
+      *(_DWORD *)&v10[12] = 0;
+      *(_DWORD *)&v10[16] = 0;
+      *(_DWORD *)&v10[20] = 1;
+      *(_DWORD *)&v10[24] = 1;
+      *(_DWORD *)&v10[44] = 0;
+      *(_DWORD *)&v10[28] = 0;
+      *(_DWORD *)&v10[224] = host_proto_ver;
+      *(_DWORD *)&v10[32] = *(_DWORD *)&byte_5D4594[814916];
+      v10[sub_425550(v1 + 100, &v10[69], 552) + 69] = 0;
+      sub_40D320((int)v10);
+    }
   }
   result = sub_416590(1);
   v8 = *((_WORD *)result + 26) & 0xE90F;
@@ -49413,7 +49821,18 @@ int sub_43B360()
 int sub_43B440()
 {
   if ( *(_DWORD *)&byte_587000[87404] == 1 )
+  {
+#ifdef __3DS__
+    if ( !sub_4D6F30() && sub_4D6FA0() == 0 )
+      nox_3ds_net_set_mode(NOX_3DS_NET_MODE_WIFI);
+    else
+      nox_3ds_net_set_mode(NOX_3DS_NET_MODE_LOOPBACK);
+#endif
     sub_554B40(0);
+  }
+#ifdef __3DS__
+  nox_3ds_reset_join_ver_retry();
+#endif
   sub_438A90();
   return 1;
 }
@@ -50566,6 +50985,10 @@ int __cdecl sub_43C7B0(char *cp, int hostshort, int a3, signed int *a4)
   *(_DWORD *)&v7[20] = 2048;
   *(_DWORD *)&v7[8] = hostshort;
   sub_5520B0(200, 1024);
+#ifdef __3DS__
+  if ( !sub_40A5C0(1) )
+    nox_3ds_net_set_mode(NOX_3DS_NET_MODE_WIFI);
+#endif
   *(_DWORD *)&v7[36] = sub_43C860;
   v4 = sub_5546F0((size_t *)v7);
   *(_DWORD *)&byte_5D4594[815700] = v4;
@@ -50601,7 +51024,7 @@ int __cdecl sub_43C860(int a1, unsigned __int8 *a2, int a3)
     }
     else if ( v4 == 36 )
     {
-      *(_DWORD *)&byte_5D4594[2614264] = *(_DWORD *)(a2 + 1);
+      *(_DWORD *)&byte_5D4594[2614264] = nox_read_u32(a2 + 1);
     }
   }
   else
@@ -50650,10 +51073,10 @@ int __cdecl sub_43C8F0(int a1, int a2, int a3)
         if ( a2 == *(unsigned __int16 *)&byte_5D4594[815768] && v6 == *(unsigned __int16 *)&byte_5D4594[815770] )
           return 1;
         *(_WORD *)&byte_5D4594[815770] = v6;
-        *(_WORD *)&v9[3] = v6;
+        nox_write_u16(&v9[3], (uint16_t)v6);
         *(_WORD *)&byte_5D4594[815768] = a2;
         v9[0] = -84;
-        *(_WORD *)&v9[1] = a2;
+        nox_write_u16(&v9[1], (uint16_t)a2);
         result = sub_40EBC0(a1, 0, v9, 5);
         if ( result )
           return 1;
@@ -50809,7 +51232,7 @@ int sub_43CCA0()
       if ( sub_416BB0() >= v2 )
       {
         v7[0] = 40;
-        *(_DWORD *)&v7[1] = *(_DWORD *)&byte_5D4594[2598000] + 1;
+        nox_write_u32(&v7[1], (uint32_t)(*(_DWORD *)&byte_5D4594[2598000] + 1));
         sub_48EA70(31, (unsigned int)v7, 5);
       }
     }
@@ -50957,6 +51380,10 @@ int sub_43CFF0()
     return 1;
   while ( (unsigned __int64)(sub_416BB0() - v0) < 0x2710 )
   {
+#ifdef __3DS__
+    sub_4453A0();
+    nox_3ds_sleep_ms(1);
+#endif
     sub_552A80(*(unsigned int *)&byte_5D4594[815700], 1);
     sub_40EE10(*(unsigned int *)&byte_5D4594[815700], 31, 0);
     sub_40ED10(31, 0);
