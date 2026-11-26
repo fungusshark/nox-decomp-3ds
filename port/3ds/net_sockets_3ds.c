@@ -38,7 +38,7 @@
 #define SOC_BUFFERSIZE          0x100000u /* 1 MB page-aligned FCRAM context buffer */
 #define MAX_SOC_SOCKS           NOX_3DS_SOCKETS_FD_MAX
 #define SOCKETS_FD_BASE         NOX_3DS_SOCKETS_FD_BASE
-#define SOC_MAX_DRAIN_PER_TICK  64u
+#define SOC_MAX_DRAIN_PER_TICK  256u
 #define SOC_DRAIN_WINDOW_MS     16u       /* Half of a 30 Hz Nox tick (~33 ms) */
 /* libctru sys/socket.h rejects any send/recv flag > 0x4 with EOPNOTSUPP. */
 #define SOC_SAFE_MSG_FLAGS(f)   (((f) & (MSG_OOB | MSG_PEEK)) | MSG_DONTWAIT)
@@ -439,11 +439,14 @@ static int sockets_bind(int vfd, const void *addr, unsigned int addrlen)
 
     int r = bind(rfd, (const struct sockaddr *)&sin, (socklen_t)sizeof(sin));
     if (r < 0 && stype == SOCK_DGRAM && sin.sin_port == 0) {
+        static uint16_t s_next_ephem = 49152u;
         int orig_errno = errno;
-        for (uint16_t ephem = 49152u; ephem <= 49215u; ++ephem) {
+        for (uint16_t k = 0; k < 64u; ++k) {
+            uint16_t ephem = (uint16_t)(49152u + (((s_next_ephem - 49152u) + k) & 63u));
             sin.sin_port = htons(ephem);
             r = bind(rfd, (const struct sockaddr *)&sin, (socklen_t)sizeof(sin));
             if (r == 0) {
+                s_next_ephem = (uint16_t)(49152u + (((ephem - 49152u) + 1u) & 63u));
                 nox_3ds_net_log("[net3ds:soc] bind(port=0) fallback succeeded on ephemeral UDP port %u",
                                 (unsigned)ephem);
                 break;
@@ -610,14 +613,14 @@ static int sockets_ioctlsocket(int vfd, long cmd, unsigned long *argp)
             return 0;
         }
 
-        if (stype == SOCK_DGRAM) {
-            /* Nox UDP loops (sub_552A80 / sub_554D70) only test truthiness of argp.
-             * Returning 1 avoids an extra MSG_PEEK soc:u IPC per datagram. */
-            *argp = 1ul;
+        char peek[1024];
+        ssize_t n = recv(rfd, peek, sizeof(peek), MSG_PEEK | MSG_DONTWAIT);
+        if (n > 0) {
+            *argp = (unsigned long)n;
+        } else if (n < 0 && errno == EMSGSIZE) {
+            *argp = (unsigned long)sizeof(peek);
         } else {
-            char peek[1024];
-            ssize_t n = recv(rfd, peek, sizeof(peek), MSG_PEEK | MSG_DONTWAIT);
-            *argp = (n > 0) ? (unsigned long)n : 1ul;
+            *argp = 0ul;
         }
         last_socket_error = 0;
         return 0;

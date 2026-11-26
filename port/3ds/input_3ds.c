@@ -1,4 +1,5 @@
 #include "platform_3ds.h"
+#include "perf_3ds.h"
 
 #include <3ds.h>
 #include <SDL2/SDL.h>
@@ -388,6 +389,26 @@ void nox_3ds_input_poll(nox_3ds_input_t *out)
         }
     }
 
+    /* Live toggle for top-right FPS / CPU / GPU HUD: hold L + R, tap START.
+     * Swallow START until released so the Pause/ESC menu or chat does not fire. */
+    {
+        static bool s_swallow_perf_start = false;
+        if (((g_in.keys_held & (NOX_3DS_KEY_L | NOX_3DS_KEY_R)) == (NOX_3DS_KEY_L | NOX_3DS_KEY_R)) &&
+            (g_in.keys_down & NOX_3DS_KEY_START)) {
+            nox_3ds_perf_hud_toggle();
+            s_swallow_perf_start = true;
+        }
+        if (s_swallow_perf_start) {
+            bool raw_start = (g_in.keys_held & NOX_3DS_KEY_START) != 0;
+            g_in.keys_held &= ~NOX_3DS_KEY_START;
+            g_in.keys_down &= ~NOX_3DS_KEY_START;
+            g_in.keys_up   &= ~NOX_3DS_KEY_START;
+            if (!raw_start) {
+                s_swallow_perf_start = false;
+            }
+        }
+    }
+
     /* Direct IPv4 prompt in Multiplayer Server Browser: plain SELECT when
      * SelServ.wnd (+814980) is open outside gameplay. */
     {
@@ -414,7 +435,9 @@ void nox_3ds_input_poll(nox_3ds_input_t *out)
      * Swallow START until released so the Pause/ESC menu does not fire. */
     {
         static bool s_swallow_start = false;
-        if ((g_in.keys_held & NOX_3DS_KEY_L) && (g_in.keys_down & NOX_3DS_KEY_START)) {
+        if (!(g_in.keys_held & NOX_3DS_KEY_R) &&
+            (g_in.keys_held & NOX_3DS_KEY_L) &&
+            (g_in.keys_down & NOX_3DS_KEY_START)) {
             g_pending_chat = true;
             s_swallow_start = true;
         }

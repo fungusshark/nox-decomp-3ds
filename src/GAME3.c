@@ -7,6 +7,9 @@
 extern int g_fullscreen;
 extern float draw_gamma;
 extern float input_sensitivity;
+#ifdef __3DS__
+extern void nox_3ds_stop_lan_unicast_sweep(void);
+#endif
 
 //----- (004A19D0) --------------------------------------------------------
 int sub_4A19D0()
@@ -4951,6 +4954,10 @@ int __cdecl sub_4A81D0(int a1, int a2)
     {
       sub_434390(*(_DWORD *)(v2 + 68));
       v9 = *(_DWORD *)(a1 + 8);
+#ifdef __3DS__
+      if ( nox_3ds_font_is_enabled() && nox_3ds_font_slot_from_ptr(*(_DWORD *)(v2 + 200)) != 1 )
+        v9 = 0;
+#endif
       v7 = sub_43F320(*(_DWORD *)(v2 + 200));
       sub_43FAF0(*(_DWORD *)(v2 + 200), (_WORD *)(v2 + 72), v5 - a2 / 2, v6 - v7 / 2, v9, 0);
     }
@@ -5021,6 +5028,10 @@ int __cdecl sub_4A8380(_DWORD *a1, int a2)
     {
       sub_434390(*(_DWORD *)(v2 + 68));
       v10 = v3[2];
+#ifdef __3DS__
+      if ( nox_3ds_font_is_enabled() && nox_3ds_font_slot_from_ptr(*(_DWORD *)(v2 + 200)) != 1 )
+        v10 = 0;
+#endif
       v8 = sub_43F320(*(_DWORD *)(v2 + 200));
       sub_43FAF0(*(_DWORD *)(v2 + 200), (_WORD *)(v2 + 72), (int)a1 - v11 / 2, a2 - v8 / 2, v10, 0);
     }
@@ -5221,14 +5232,23 @@ int __cdecl sub_4A8820(int a1, int a2)
     {
       sub_434390(*(_DWORD *)(v2 + 68));
       v11 = *(_DWORD *)(v3 + 8);
+#ifdef __3DS__
+      if ( nox_3ds_font_is_enabled() && nox_3ds_font_slot_from_ptr(*(_DWORD *)(v2 + 200)) != 1 )
+        v11 = 0;
+#endif
       v9 = sub_43F320(*(_DWORD *)(v2 + 200));
       sub_43FAF0(*(_DWORD *)(v2 + 200), (_WORD *)(v2 + 72), v14 - a1 / 2, v15 - v9 / 2, v11, 0);
     }
   }
   else if ( *(_DWORD *)(v2 + 68) != 0x80000000 )
   {
+    int v3ds_w = *(_DWORD *)(v3 + 8);
+#ifdef __3DS__
+    if ( nox_3ds_font_is_enabled() && nox_3ds_font_slot_from_ptr(*(_DWORD *)(v2 + 200)) != 1 )
+      v3ds_w = 0;
+#endif
     sub_434390(*(_DWORD *)(v2 + 68));
-    sub_43FAF0(*(_DWORD *)(v2 + 200), (_WORD *)(v2 + 72), v4 + 14, v5 - v13 / 2 + 5, *(_DWORD *)(v3 + 8), 0);
+    sub_43FAF0(*(_DWORD *)(v2 + 200), (_WORD *)(v2 + 72), v4 + 14, v5 - v13 / 2 + 5, v3ds_w, 0);
   }
   sub_43F670(0);
   return 1;
@@ -5288,6 +5308,10 @@ int __cdecl sub_4A8A20(int a1, int a2)
     {
       sub_434390(*(_DWORD *)(v2 + 68));
       v12 = *(_DWORD *)(a1 + 8);
+#ifdef __3DS__
+      if ( nox_3ds_font_is_enabled() && nox_3ds_font_slot_from_ptr(*(_DWORD *)(v2 + 200)) != 1 )
+        v12 = 0;
+#endif
       v8 = sub_43F320(*(_DWORD *)(v2 + 200));
       sub_43FAF0(*(_DWORD *)(v2 + 200), (_WORD *)(v2 + 72), v13 - a2 / 2, v14 - v8 / 2, v12, 0);
     }
@@ -5300,8 +5324,13 @@ int __cdecl sub_4A8A20(int a1, int a2)
     v13 += 28;
     if ( v10 != 0x80000000 )
     {
+      int v3ds_w = *(_DWORD *)(a1 + 8);
+#ifdef __3DS__
+      if ( nox_3ds_font_is_enabled() && nox_3ds_font_slot_from_ptr(*(_DWORD *)(v2 + 200)) != 1 )
+        v3ds_w = 0;
+#endif
       sub_434390(v10);
-      sub_43FAF0(*(_DWORD *)(v2 + 200), (_WORD *)(v2 + 72), v13, v14, *(_DWORD *)(a1 + 8), 0);
+      sub_43FAF0(*(_DWORD *)(v2 + 200), (_WORD *)(v2 + 72), v13, v14, v3ds_w, 0);
     }
   }
   sub_43F670(0);
@@ -5469,8 +5498,13 @@ int __cdecl sub_4A8EA0(int a1, int a2)
   {
     if ( (*(_DWORD *)(a1 + 4) & 0x2000) == 0x2000 )
       sub_43F670(1);
+    int v3ds_w = *(_DWORD *)(a1 + 8);
+#ifdef __3DS__
+    if ( nox_3ds_font_is_enabled() && nox_3ds_font_slot_from_ptr(*(_DWORD *)(v2 + 200)) != 1 )
+      v3ds_w = 0;
+#endif
     sub_434390(*(_DWORD *)(v2 + 68));
-    sub_43FAF0(*(_DWORD *)(v2 + 200), (_WORD *)(v2 + 72), v7, v6, *(_DWORD *)(a1 + 8), 0);
+    sub_43FAF0(*(_DWORD *)(v2 + 200), (_WORD *)(v2 + 72), v7, v6, v3ds_w, 0);
     sub_43F670(0);
   }
   return 1;
@@ -5531,8 +5565,13 @@ LABEL_12:
   {
     if ( (v3[1] & 0x2000) == 0x2000 )
       sub_43F670(1);
+    int v3ds_w = v3[2];
+#ifdef __3DS__
+    if ( nox_3ds_font_is_enabled() && nox_3ds_font_slot_from_ptr(*(_DWORD *)(v2 + 200)) != 1 )
+      v3ds_w = 0;
+#endif
     sub_434390(*(_DWORD *)(v2 + 68));
-    sub_43FAF0(*(_DWORD *)(v2 + 200), (_WORD *)(v2 + 72), v9, v8, v3[2], 0);
+    sub_43FAF0(*(_DWORD *)(v2 + 200), (_WORD *)(v2 + 72), v9, v8, v3ds_w, 0);
     sub_43F670(0);
   }
   return 1;
@@ -35461,7 +35500,10 @@ int sub_4D1660()
                                     if ( sub_4D6F30() || sub_4D6FA0() != 0 )
                                       nox_3ds_net_set_mode(NOX_3DS_NET_MODE_LOOPBACK);
                                     else
+                                    {
                                       nox_3ds_net_set_mode(NOX_3DS_NET_MODE_WIFI);
+                                      nox_3ds_stop_lan_unicast_sweep();
+                                    }
 #endif
                                     v1 = sub_40A430();
                                     *(_DWORD *)&byte_5D4594[1548516] = sub_4DEBC0(v1);

@@ -43,7 +43,7 @@ extern int nox_env_truthy(const char *s);
 #define NOX_3DS_LOBBY_MAX_SERVERS       64
 #define NOX_3DS_LOBBY_FAKE_QUEUE_CAP    64
 #define NOX_3DS_LOBBY_JSON_CAP          (128u * 1024u)
-#define NOX_3DS_LOBBY_WORKER_STACK      (32u * 1024u)
+#define NOX_3DS_LOBBY_WORKER_STACK      (64u * 1024u)
 #define NOX_3DS_LOBBY_CACHE_TTL_MS      60000u
 #define NOX_3DS_LOBBY_REPING_TTL_MS     10000u
 #define NOX_3DS_LOBBY_RETRY_BACKOFF_MS  5000u
@@ -527,8 +527,13 @@ static fake_srv_pkt_t *alloc_fake_slot_locked(void)
     return NULL;
 }
 
-static size_t queue_cached_rows_locked(void)
+static size_t queue_cached_rows_locked(struct sockaddr_in *out_addrs,
+                                       size_t max_addrs,
+                                       int *out_sockfd,
+                                       uint8_t out_cookie[4])
 {
+    if (out_sockfd)
+        *out_sockfd = -1;
     if (!g_active_ping_valid || g_active_ping_sockfd < 0 || g_srv_cache_count == 0)
         return 0;
 
@@ -548,9 +553,11 @@ static size_t queue_cached_rows_locked(void)
         uint8_t *out = slot->data;
         memset(out, 0, sizeof(slot->data));
 
-        /* Exact 1999 MSVC 0x0D server-info layout (see GAME5.c:sub_554040 & GAME1.c:sub_4375F0) */
+        /* Exact 1999 MSVC 0x0D server-info layout (see GAME5.c:sub_554040 & GAME1.c:sub_4375F0).
+         * Mark out[1] = 0x3D so sub_4375F0 initializes HTTP rows with ping=9999 ('???')
+         * until a live UDP 0x0D reply arrives from the host. */
         out[0] = 0x00;
-        out[1] = 0x00;
+        out[1] = 0x3Du;
         out[2] = 0x0D;
         out[3] = row->players_cur;
         out[4] = row->players_max ? row->players_max : 31;
@@ -631,14 +638,41 @@ static size_t queue_cached_rows_locked(void)
         slot->from.sin_addr = srv_ip;
         slot->sockfd = g_active_ping_sockfd;
         slot->used = true;
+        if (out_addrs && queued < max_addrs)
+            out_addrs[queued] = slot->from;
         queued++;
     }
 
     if (queued > 0) {
+        if (out_sockfd)
+            *out_sockfd = g_active_ping_sockfd;
+        if (out_cookie)
+            memcpy(out_cookie, g_active_ping_cookie, 4);
         nox_3ds_net_log("[lobby3ds] Queued %zu internet server(s) into 0x0D UI bridge (fd=%d)",
                         queued, g_active_ping_sockfd);
     }
     return queued;
+}
+
+static void ping_cached_rows_udp(int sockfd,
+                                 const uint8_t cookie[4],
+                                 const struct sockaddr_in *addrs,
+                                 size_t count)
+{
+    if (sockfd < 0 || !cookie || !addrs || count == 0)
+        return;
+    if (nox_3ds_net_get_mode() != NOX_3DS_NET_MODE_WIFI)
+        return;
+
+    uint8_t ping_pkt[12];
+    memset(ping_pkt, 0, sizeof(ping_pkt));
+    ping_pkt[2] = 0x0C;
+    memcpy(&ping_pkt[8], cookie, 4);
+
+    for (size_t i = 0; i < count; ++i) {
+        nox_3ds_net_sendto(sockfd, ping_pkt, (unsigned int)sizeof(ping_pkt), 0,
+                           &addrs[i], (unsigned int)sizeof(addrs[i]));
+    }
 }
 
 /* =========================================================================
@@ -1089,14 +1123,9 @@ static int soc_connect_with_timeout(struct in_addr ip, uint16_t port, int timeou
             return -1;
         }
 
-        /* Horizon soc:u fails/skips SO_ERROR reliably; verify completion via
-         * getpeername() + devkitPro 3DS connect()-retry idiom instead. */
-        struct sockaddr_in peer;
-        socklen_t plen = (socklen_t)sizeof(peer);
-        memset(&peer, 0, sizeof(peer));
-        if (getpeername(fd, (struct sockaddr *)&peer, &plen) == 0 && peer.sin_addr.s_addr != 0)
-            return fd;
-
+        /* Retry non-blocking connect() first before falling back to getpeername();
+         * calling getpeername() while connect is still pending leaves sa_family==0
+         * and triggers Azahar's CTRSockAddr::ToPlatform assertion. */
         rc = connect(fd, (struct sockaddr *)&sa, sizeof(sa));
         if (rc == 0 || errno == EISCONN)
             return fd;
@@ -1105,6 +1134,16 @@ static int soc_connect_with_timeout(struct in_addr ip, uint16_t port, int timeou
             if (pr != 0 || poll_dt < 5u)
                 nox_3ds_sleep_ms(15);
             continue;
+        }
+
+        if (errno == EINVAL) {
+            struct sockaddr_in peer;
+            socklen_t plen = (socklen_t)sizeof(peer);
+            memset(&peer, 0, sizeof(peer));
+            if (getpeername(fd, (struct sockaddr *)&peer, &plen) == 0 &&
+                peer.sin_family == AF_INET && peer.sin_addr.s_addr != 0) {
+                return fd;
+            }
         }
 
         nox_3ds_net_log("[lobby3ds] soc connect(%s:%u) failed: errno=%d",
@@ -1395,7 +1434,10 @@ static int http_post_json(const char *url, const char *json_body)
 /* =========================================================================
  * Background Worker Thread (32 KB Stack; Heap-Allocated 128 KB JSON Buffer)
  * ========================================================================= */
-static void worker_do_fetch_list(char *json_buf, size_t json_cap)
+static void worker_do_fetch_list(char *json_buf,
+                                 size_t json_cap,
+                                 lobby_cached_row_t *parsed,
+                                 lobby_cached_row_t *resolved)
 {
     bool disabled = false;
     lobby_endpoint_t endpoints[NOX_3DS_LOBBY_MAX_ENDPOINTS];
@@ -1407,8 +1449,6 @@ static void worker_do_fetch_list(char *json_buf, size_t json_cap)
         return;
     }
 
-    lobby_cached_row_t parsed[NOX_3DS_LOBBY_MAX_SERVERS];
-    lobby_cached_row_t resolved[NOX_3DS_LOBBY_MAX_SERVERS];
     size_t parsed_count = 0;
     size_t resolved_count = 0;
     bool got_valid_response = false;
@@ -1455,6 +1495,11 @@ static void worker_do_fetch_list(char *json_buf, size_t json_cap)
             break;
     }
 
+    struct sockaddr_in ping_addrs[NOX_3DS_LOBBY_MAX_SERVERS];
+    size_t ping_count = 0;
+    int ping_sockfd = -1;
+    uint8_t ping_cookie[4] = {0};
+
     uint32_t now_ms = nox_3ds_get_ticks_ms();
     RecursiveLock_Lock(&g_lobby_lock);
     if (got_valid_response) {
@@ -1468,7 +1513,8 @@ static void worker_do_fetch_list(char *json_buf, size_t json_cap)
 
         /* Immediately inject into the 0x0D queue if the player is still in the browser */
         if (nox_3ds_net_get_mode() == NOX_3DS_NET_MODE_WIFI && g_active_ping_valid) {
-            queue_cached_rows_locked();
+            ping_count = queue_cached_rows_locked(ping_addrs, NOX_3DS_LOBBY_MAX_SERVERS,
+                                                  &ping_sockfd, ping_cookie);
             g_cache_consumed_by_ping = true;
         }
     } else {
@@ -1478,6 +1524,10 @@ static void worker_do_fetch_list(char *json_buf, size_t json_cap)
     }
     g_fetch_inflight = false;
     RecursiveLock_Unlock(&g_lobby_lock);
+
+    if (ping_count > 0 && ping_sockfd >= 0) {
+        ping_cached_rows_udp(ping_sockfd, ping_cookie, ping_addrs, ping_count);
+    }
 }
 
 static void json_escape_str(const char *src, char *dst, size_t dst_sz)
@@ -1566,9 +1616,13 @@ static void lobby_worker_main(void *arg)
 {
     (void)arg;
     char *json_buf = (char *)malloc(NOX_3DS_LOBBY_JSON_CAP);
-    if (!json_buf) {
-        printf("[lobby3ds] OOM allocating %u KB JSON buffer\n",
-               (unsigned)(NOX_3DS_LOBBY_JSON_CAP / 1024u));
+    lobby_cached_row_t *parsed = (lobby_cached_row_t *)malloc(NOX_3DS_LOBBY_MAX_SERVERS * sizeof(lobby_cached_row_t));
+    lobby_cached_row_t *resolved = (lobby_cached_row_t *)malloc(NOX_3DS_LOBBY_MAX_SERVERS * sizeof(lobby_cached_row_t));
+    if (!json_buf || !parsed || !resolved) {
+        free(json_buf);
+        free(parsed);
+        free(resolved);
+        printf("[lobby3ds] OOM allocating worker buffers\n");
         return;
     }
 
@@ -1589,7 +1643,7 @@ static void lobby_worker_main(void *arg)
         RecursiveLock_Unlock(&g_lobby_lock);
 
         if (do_fetch) {
-            worker_do_fetch_list(json_buf, NOX_3DS_LOBBY_JSON_CAP);
+            worker_do_fetch_list(json_buf, NOX_3DS_LOBBY_JSON_CAP, parsed, resolved);
             continue;
         }
         if (reg_copy.pending) {
@@ -1601,6 +1655,8 @@ static void lobby_worker_main(void *arg)
         LightEvent_WaitTimeout(&g_lobby_event, 250000000LL);
     }
 
+    free(resolved);
+    free(parsed);
     free(json_buf);
 }
 
@@ -1611,11 +1667,9 @@ static bool ensure_worker_started_locked(void)
 
     s32 main_prio = 0x30;
     svcGetThreadPriority(&main_prio, CUR_THREAD_HANDLE);
-    /* Horizon OS Kernel11 uses strict fixed-priority scheduling with zero
-     * time-slicing for lower-priority threads on Core 0. Keep the I/O worker
-     * higher priority than the 30 Hz software render loop so Wi-Fi handshakes
-     * are not starved; it blocks >99% of the time on LightEvent/poll/IPC. */
-    s32 worker_prio = (main_prio > 0x18) ? (main_prio - 1) : main_prio;
+    /* Run HTTP worker strictly lower priority than Core 0 main thread so it
+     * never preempts active GUI/socket teardown; it wakes while main yields. */
+    s32 worker_prio = (main_prio < 0x3E) ? (main_prio + 1) : main_prio;
     if (worker_prio < 0x18)
         worker_prio = 0x18;
     if (worker_prio > 0x3E)
@@ -1630,7 +1684,7 @@ static bool ensure_worker_started_locked(void)
         return false;
     }
     g_worker_started = true;
-    nox_3ds_net_log("[lobby3ds] Background HTTP worker started (stack=32KB prio=0x%lX main=0x%lX)",
+    nox_3ds_net_log("[lobby3ds] Background HTTP worker started (stack=64KB prio=0x%lX main=0x%lX)",
                     (unsigned long)worker_prio, (unsigned long)main_prio);
     return true;
 }
@@ -1802,9 +1856,15 @@ void nox_netextras_on_discovery_ping_send(int sockfd,
                         (!g_cache_consumed_by_ping ||
                          (now_ms - g_cache_last_ok_ms) < NOX_3DS_LOBBY_REPING_TTL_MS);
 
+    struct sockaddr_in ping_addrs[NOX_3DS_LOBBY_MAX_SERVERS];
+    size_t ping_count = 0;
+    int ping_sockfd = -1;
+    uint8_t ping_cookie[4] = {0};
+
     if (cache_usable && g_srv_cache_count > 0) {
         /* Immediately populate native browser with cached rows (zero wait) */
-        queue_cached_rows_locked();
+        ping_count = queue_cached_rows_locked(ping_addrs, NOX_3DS_LOBBY_MAX_SERVERS,
+                                              &ping_sockfd, ping_cookie);
         g_cache_consumed_by_ping = true;
     }
 
@@ -1818,6 +1878,10 @@ void nox_netextras_on_discovery_ping_send(int sockfd,
     }
 
     RecursiveLock_Unlock(&g_lobby_lock);
+
+    if (ping_count > 0 && ping_sockfd >= 0) {
+        ping_cached_rows_udp(ping_sockfd, ping_cookie, ping_addrs, ping_count);
+    }
 }
 
 int nox_netextras_fake_pending(int sockfd)
