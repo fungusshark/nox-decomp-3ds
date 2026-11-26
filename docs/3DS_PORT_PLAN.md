@@ -448,14 +448,10 @@ static inline void     nox_write_f32(void *p, float v)    { __builtin_memcpy(p, 
 
 ---
 
-## 6. Remaining Gaps & Edge-Case Issues (Post-M8 Audit)
+## 6. Post-M7 Hardening & Release Polish Summary
 
-| Priority / Effort | Area | File(s) | Issue / Remaining Work |
-| :---: | :--- | :--- | :--- |
-| **Easy / Quick Win** | **Release Packaging (`.smdh`)** | `port/3ds/CMakeLists.txt` | `ctr_create_3dsx(nox)` uses default `.smdh` metadata (`nox_3dsx.default.smdh`). Wire `logos/nox-decomp.png` (or `dist-scripts/io.github.sookyboo.nox-decomp.png`) + title/author metadata into `ctr_create_3dsx`. |
-| **Easy / Quick Win** | **Corrupted Autosave EOF Loop (M4 P0 `661f63e2`)** | `src/GAME1.c` (`sub_41A000`) | `while (1) { sub_426AC0(&v10, 4u); if (!v10) break; ... }` does not check `sub_426AC0` for EOF/short read, risking an infinite loop on truncated/corrupted save files. |
-| **Easy / Quick Win** | **Lobby `gethostbyname()` Thread Safety** | `port/3ds/lobby_3ds.c` (`resolve_ipv4_addr`) | `lobby_worker_main` calls `libctru`'s `gethostbyname()`, which uses a static `hostent` buffer and can race with `compatgethostbyname()` on the main thread. Guard with a shared mutex or `getaddrinfo`. |
-| **Easy / Quick Win** | **`swkbd` Numeric Mode** | `port/3ds/swkbd_3ds.c` | When `digits_only != 0`, `swkbdInit` uses `SWKBD_TYPE_NORMAL` and filters afterward instead of `SWKBD_TYPE_NUMPAD`. |
-| **Medium** | **Remaining M4 P0/P1 Backports** | `src/GAME1.c`–`GAME5.c` | Unapplied items from Section 1.2: GUI listbox OOB (`#400`), startup/map path buffer bounds (`#490`), bow/arrow pickup null guard (`ff500adf`), out-of-bounds projectile grid check (`#403`), monster max-health/direction bounds (`0b5e6a8c`/`cedf94ca`), GUI null-parent/image guards (`7232f915`, `57e73307`), and P2 hardening. |
-| **Low / Optional** | **Exit Prompt & Viewport Toggle** | `port/3ds/platform_3ds.c`, `port/3ds/video_3ds.c` | `nox_3ds_shutdown()` blocks waiting for `START` on clean quit (useful for dev logs, optional for release); `wide_stretch` / `nox_3ds_video_toggle_wide()` is currently unused in dual-screen mode. |
-| **Inherent (OS)** | **Blocking `swkbd` in Multiplayer** | `port/3ds/swkbd_3ds.c` | `swkbdInputText()` is a blocking Horizon OS applet; lingering in chat/text entry during an active Wi-Fi match pauses UDP pumping and may trigger peer timeout. |
+- **M4 Backports Applied (`src/GAME1.c`–`src/GAME5.c`, `src/GAME_ABI.c`):** Monster direction lookup bounds and health regen period clamp (`0b5e6a8c`/`cedf94ca`), GUI listbox/string/image read safety (`#400`, `57e73307`, `cdcb39b4`), unified `sub_57AAA0` rule buffers and bounded map paths (`e0384026`, `#490`), and config/rule/`.wnd` `strtok` NULL safety.
+- **Custom Release Packaging (`port/3ds/CMakeLists.txt`, `port/3ds/icon.png`):** Custom `nox.smdh` icon/metadata generation with embedded `NOX_3DS_VERSION` in the SMDH banner, boot console, and menu UI.
+- **Clean Exit & Top-Screen `wide_stretch` (`port/3ds/platform_3ds.c`, `port/3ds/video_3ds.c`, `port/3ds/platform_3ds.h`):** Normal exit skips the blocking `"Press START to exit"` prompt unless `NOX_3DS_WAIT_ON_EXIT=1` is set; `wide_stretch` controls top-screen 400×240 full stretch vs. 320×240 4:3 pillarboxed aspect preservation.
+- **L-Target Cursor & Native GPU Font Polish (`port/3ds/font_3ds.c`, `src/GAME1.c`–`src/GAME3.c`, `src/draw.c`):** Preserves interact/pickup cursors and tooltips during L-target mode and refines native GPU typography (bottom-screen metrics, dialog re-wrapping, software Spellbook fallback, whole-pass GUI coherence).
+- **Inherent (OS) Caveat in Multiplayer:** `swkbdInputText()` is a blocking Horizon OS applet; lingering in chat/text entry during an active Wi-Fi match pauses UDP pumping and may trigger peer timeout.

@@ -1,4 +1,9 @@
 #include "platform_3ds.h"
+#include "nox_3ds_version.h"
+
+#ifndef NOX_3DS_VERSION_STR
+#define NOX_3DS_VERSION_STR "3ds-dev"
+#endif
 
 #include <3ds.h>
 #include <ctype.h>
@@ -85,7 +90,7 @@ bool nox_3ds_init(void)
     g_3ds_state.linear_free_bytes = (uint32_t)linearSpaceFree();
     g_3ds_state.heap_used_bytes = (uint32_t)mallinfo().uordblks;
 
-    printf("=== Nox New 3DS Port (Dual-Screen UI) ===\n");
+    printf("=== Nox New 3DS Port [%s] ===\n", NOX_3DS_VERSION_STR);
     printf("[3ds] Model: %s\n", g_3ds_state.is_new_3ds ? "New 3DS (804MHz + L2)" : "WARNING: Old 3DS (268MHz)");
     printf("[3ds] Stack: %u KB | linearFree: %u KB\n",
            (unsigned)(__stacksize__ / 1024u),
@@ -162,22 +167,26 @@ void nox_3ds_shutdown(void)
     nox_3ds_video_shutdown();
     nox_3ds_net_shutdown();
 
-    /* Restore bottom console so shutdown diagnostics are visible before exit. */
-    consoleInit(GFX_BOTTOM, NULL);
-    consoleDebugInit(debugDevice_CONSOLE);
+    /* Only restore the bottom console and pause on exit when requested for diagnostics. */
     g_console_detached = false;
     g_3ds_state.bottom_console_mode = true;
 
-    printf("\n[3ds] Engine exited. Press START to exit.\n");
-    gfxFlushBuffers();
-    gfxSwapBuffers();
-    gspWaitForVBlank();
+    const char *w = getenv("NOX_3DS_WAIT_ON_EXIT");
+    if (w && w[0] == '1') {
+        consoleInit(GFX_BOTTOM, NULL);
+        consoleDebugInit(debugDevice_CONSOLE);
 
-    while (aptMainLoop()) {
-        hidScanInput();
-        if (hidKeysDown() & KEY_START)
-            break;
+        printf("\n[3ds] Engine exited. Press START to exit.\n");
+        gfxFlushBuffers();
+        gfxSwapBuffers();
         gspWaitForVBlank();
+
+        while (aptMainLoop()) {
+            hidScanInput();
+            if (hidKeysDown() & KEY_START)
+                break;
+            gspWaitForVBlank();
+        }
     }
 
     if (g_3ds_state.romfs_mounted) {
