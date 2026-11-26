@@ -73,12 +73,13 @@ typedef enum {
 
 typedef struct {
     bool     is_new_3ds;
+    uint8_t  system_model;        /* CFG_SystemModel (0=O3DS, 1=O3DSXL, 2=N3DS, 3=O2DS, 4=N3DSXL, 5=N2DSXL) */
     bool     romfs_mounted;
     bool     sdmc_root_ready;
     bool     dsp_audio_ready;     /* true if sdmc:/3ds/dspfirm.cdc present and ndspInit() OK */
     bool     soc_ready;           /* true once lazy socInit() succeeded on Multiplayer entry */
     bool     httpc_ready;         /* true once lazy httpcInit() succeeded for OpenNox lobby */
-    bool     wide_stretch;        /* top screen: true = fill 400x240, false = preserve aspect (4:3 320x240) */
+    bool     wide_stretch;        /* top screen: true = 5:3 fill 400x240, false = 4:3 preserve aspect (320x240) */
     bool     bottom_console_mode; /* true during boot before citro2d takes GFX_BOTTOM */
     bool     touch_to_aim;        /* false in dual-screen mode (touch is strict bottom UI) */
     nox_3ds_aim_mode_t    aim_mode;
@@ -169,6 +170,10 @@ typedef struct {
     int         crop_y;
     int         crop_w;
     int         crop_h;
+    int         font_crop_x;  /* logical 640x480 sub-rect for GPU font mapping (0 = use crop_*) */
+    int         font_crop_y;
+    int         font_crop_w;
+    int         font_crop_h;
     bool        is_linear;
     bool        fill_screen;  /* true = fill full target; false = letterbox aspect */
     bool        reuse_tex;    /* true = skip cache flush + GX upload, redraw existing VRAM tex */
@@ -176,7 +181,8 @@ typedef struct {
 
 #if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
 _Static_assert(offsetof(nox_3ds_screen_frame_t, crop_x) == 20, "ABI pack guard failed on nox_3ds_screen_frame_t");
-_Static_assert(sizeof(nox_3ds_screen_frame_t) == 40, "Unexpected sizeof(nox_3ds_screen_frame_t)");
+_Static_assert(offsetof(nox_3ds_screen_frame_t, font_crop_x) == 36, "ABI pack guard failed on nox_3ds_screen_frame_t font_crop");
+_Static_assert(sizeof(nox_3ds_screen_frame_t) == 56, "Unexpected sizeof(nox_3ds_screen_frame_t)");
 #endif
 
 bool  nox_3ds_video_init(int logical_w, int logical_h);
@@ -222,6 +228,7 @@ const void *nox_3ds_get_world_tooltip(void);
 void nox_3ds_capture_top_splash(void);
 bool nox_3ds_has_top_splash(void);
 bool nox_3ds_present_top_splash(void);
+void nox_3ds_clear_top_backbuffer(void);
 void nox_3ds_skip_default_cursor_blit(void);
 
 /* Native 1:1 PICA200/citro2d Pixel Font Renderer (port/3ds/font_3ds.c) */
@@ -234,6 +241,7 @@ void nox_3ds_font_finish_slot(int font_slot);
 bool nox_3ds_font_is_enabled(void);
 void nox_3ds_font_set_enabled(bool enabled);
 void nox_3ds_font_toggle(void);
+void nox_3ds_font_show_toast(const char *msg, bool green);
 uint32_t nox_3ds_font_generation(void);
 void nox_3ds_font_push_shadow(bool shadow);
 void nox_3ds_font_pop_shadow(bool shadow);

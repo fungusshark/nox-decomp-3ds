@@ -62,6 +62,7 @@ add_executable(nox
     "${NOX_SRC_DIR}/compat.c"
     "${NOX_SRC_DIR}/compat_mss.c"
     "${NOX_SRC_DIR}/draw.c"
+    "${NOX_SRC_DIR}/fov_scaler.c"
     "${NOX_SRC_DIR}/gamepad.c"
     "${NOX_SRC_DIR}/imm.c"
     "${NOX_SRC_DIR}/input.c"
@@ -101,7 +102,8 @@ set_source_files_properties(
     "${CMAKE_CURRENT_SOURCE_DIR}/lobby_3ds.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/cJSON.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/stubs.c"
-    PROPERTIES COMPILE_OPTIONS "-O3;-faggressive-loop-optimizations"
+    "${NOX_SRC_DIR}/fov_scaler.c"
+    PROPERTIES COMPILE_OPTIONS "-O3;-ftree-vectorize;-faggressive-loop-optimizations"
 )
 
 target_include_directories(nox PRIVATE
