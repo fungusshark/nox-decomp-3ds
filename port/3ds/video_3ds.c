@@ -14,7 +14,8 @@
 
 typedef struct {
     C3D_Tex                  tex;
-    uint16_t                *staging;
+    uint16_t                *staging_ring[2];
+    int                      staging_idx;
     u16                      tex_w;
     u16                      tex_h;
     bool                     inited;
@@ -59,9 +60,11 @@ static bool ensure_tex_slot(nox_3ds_tex_slot_t *slot, u16 tex_w, u16 tex_h,
         slot->inited = false;
         slot->has_content = false;
     }
-    if (slot->staging) {
-        linearFree(slot->staging);
-        slot->staging = NULL;
+    for (int i = 0; i < 2; ++i) {
+        if (slot->staging_ring[i]) {
+            linearFree(slot->staging_ring[i]);
+            slot->staging_ring[i] = NULL;
+        }
     }
 
     slot->in_vram = C3D_TexInitVRAM(&slot->tex, tex_w, tex_h, fmt);
@@ -127,14 +130,17 @@ static bool prepare_frame_slot(nox_3ds_tex_slot_t *slot,
         }
         xfer_src = frame->pixels;
     } else {
-        if (!slot->staging) {
-            slot->staging = (uint16_t *)linearAlloc((size_t)tw * (size_t)th * 2u);
-            if (!slot->staging)
+        int sidx = slot->staging_idx & 1;
+        slot->staging_idx ^= 1;
+        if (!slot->staging_ring[sidx]) {
+            slot->staging_ring[sidx] = (uint16_t *)linearAlloc((size_t)tw * (size_t)th * 2u);
+            if (!slot->staging_ring[sidx])
                 return false;
-            memset(slot->staging, 0, (size_t)tw * (size_t)th * 2u);
+            memset(slot->staging_ring[sidx], 0, (size_t)tw * (size_t)th * 2u);
         }
+        uint16_t *stg = slot->staging_ring[sidx];
         const uint8_t *src_row = (const uint8_t *)frame->pixels + (size_t)fy * (size_t)frame->pitch;
-        uint8_t *dst_row = (uint8_t *)slot->staging + (size_t)fy * (size_t)tw * 2u;
+        uint8_t *dst_row = (uint8_t *)stg + (size_t)fy * (size_t)tw * 2u;
         const size_t copy_bytes = (size_t)w * 2u;
         for (int y = fy; y < fe; ++y) {
             memcpy(dst_row, src_row, copy_bytes);
@@ -143,11 +149,11 @@ static bool prepare_frame_slot(nox_3ds_tex_slot_t *slot,
         }
         if (fe > fy) {
             GSPGPU_FlushDataCache(
-                (uint8_t *)slot->staging + (size_t)fy * (size_t)tw * 2u,
+                (uint8_t *)stg + (size_t)fy * (size_t)tw * 2u,
                 (u32)((size_t)tw * (size_t)(fe - fy) * 2u)
             );
         }
-        xfer_src = slot->staging;
+        xfer_src = stg;
     }
 
     int y0 = fy & ~7;
@@ -319,6 +325,7 @@ bool nox_3ds_video_init(int logical_w, int logical_h)
         fprintf(stderr, "[video3ds] ERROR: C3D_Init failed\n");
         return false;
     }
+    C3D_FrameRate(30.0f);
     if (!C2D_Init(C2D_DEFAULT_MAX_OBJECTS)) {
         fprintf(stderr, "[video3ds] ERROR: C2D_Init failed\n");
         C3D_Fini();
@@ -364,13 +371,15 @@ void nox_3ds_video_shutdown(void)
 
     nox_3ds_font_shutdown();
 
-    if (s_top_slot.staging) {
-        linearFree(s_top_slot.staging);
-        s_top_slot.staging = NULL;
-    }
-    if (s_bot_slot.staging) {
-        linearFree(s_bot_slot.staging);
-        s_bot_slot.staging = NULL;
+    for (int i = 0; i < 2; ++i) {
+        if (s_top_slot.staging_ring[i]) {
+            linearFree(s_top_slot.staging_ring[i]);
+            s_top_slot.staging_ring[i] = NULL;
+        }
+        if (s_bot_slot.staging_ring[i]) {
+            linearFree(s_bot_slot.staging_ring[i]);
+            s_bot_slot.staging_ring[i] = NULL;
+        }
     }
     if (s_top_slot.inited) {
         C3D_TexDelete(&s_top_slot.tex);
@@ -549,7 +558,7 @@ void nox_3ds_video_present_movie(const void *pixels, int w, int h, int pitch,
     float prev_gamma = s_gamma;
     s_gamma = 1.0f;
 
-    if (C3D_FrameBegin(C3D_FRAME_SYNCDRAW)) {
+    if (C3D_FrameBegin(0)) {
         nox_3ds_font_upload_pending();
         if (top_ready)
             enqueue_frame_upload(&s_top_slot, top_src, top_gx_fmt, top_y0, top_h_aligned);
