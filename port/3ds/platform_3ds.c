@@ -82,8 +82,7 @@ bool nox_3ds_init(void)
         g_3ds_state.is_new_3ds = is_n3ds;
     }
 
-    g_3ds_state.linear_free_bytes = (uint32_t)linearSpaceFree();
-    g_3ds_state.heap_used_bytes = (uint32_t)mallinfo().uordblks;
+    nox_3ds_refresh_mem_stats();
 
     printf("=== Nox New 3DS Port [%s] ===\n", NOX_3DS_VERSION_STR);
     printf("[3ds] Ported by Fungus Shark & AlbertChen408 (Giraffepus) | Orig: Westwood Studios\n");
@@ -228,10 +227,14 @@ void nox_3ds_sleep_ms(uint32_t ms)
     svcSleepThread((s64)ms * 1000000LL);
 }
 
-const nox_3ds_state_t *nox_3ds_get_state(void)
+void nox_3ds_refresh_mem_stats(void)
 {
     g_3ds_state.linear_free_bytes = (uint32_t)linearSpaceFree();
     g_3ds_state.heap_used_bytes = (uint32_t)mallinfo().uordblks;
+}
+
+const nox_3ds_state_t *nox_3ds_get_state(void)
+{
     return &g_3ds_state;
 }
 
