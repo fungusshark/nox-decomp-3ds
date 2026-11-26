@@ -164,6 +164,7 @@ static fake_srv_pkt_t g_fake_packets[NOX_3DS_LOBBY_FAKE_QUEUE_CAP];
 /* Cached serverinfo flags & optional host registration state */
 static uint16_t g_last_serverinfo_flags = 0;
 static bool g_host_active = false;
+static uint32_t g_host_client_proto_ver = NOX_PROTO_VER_LEGACY;
 static unsigned g_host_bound_port = NOX_3DS_LOBBY_DEFAULT_PORT;
 static uint32_t g_host_last_snapshot_ms = 0;
 static uint32_t g_host_last_reg_ms = 0;
@@ -1928,9 +1929,34 @@ void nox_netextras_on_host_serverinfo(const void *packet, size_t len)
     RecursiveLock_Unlock(&g_lobby_lock);
 }
 
+void nox_3ds_set_host_client_proto_ver(uint32_t ver)
+{
+    if (NOX_IS_COMPAT_PROTO_VER(ver))
+        g_host_client_proto_ver = ver;
+}
+
+uint32_t nox_3ds_get_host_client_proto_ver(void)
+{
+    return NOX_IS_COMPAT_PROTO_VER(g_host_client_proto_ver)
+               ? g_host_client_proto_ver
+               : NOX_PROTO_VER_LEGACY;
+}
+
+void nox_3ds_lobby_on_host_close(int sockfd)
+{
+    if (g_lobby_inited) {
+        RecursiveLock_Lock(&g_lobby_lock);
+        g_host_active = false;
+        g_host_reg_job.pending = false;
+        RecursiveLock_Unlock(&g_lobby_lock);
+    }
+    nox_3ds_net_log("[host3ds] Host UDP socket closed (vfd=%d)", sockfd);
+}
+
 void nox_netextras_on_host_bind_success(int sockfd, unsigned bound_port)
 {
     (void)sockfd;
+    g_host_client_proto_ver = NOX_PROTO_VER_LEGACY;
     if (nox_3ds_net_get_mode() != NOX_3DS_NET_MODE_WIFI)
         return;
     if (!lobby_should_register_host())

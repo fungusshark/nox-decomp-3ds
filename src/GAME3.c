@@ -35460,6 +35460,8 @@ int sub_4D1660()
 #ifdef __3DS__
                                     if ( sub_4D6F30() || sub_4D6FA0() != 0 )
                                       nox_3ds_net_set_mode(NOX_3DS_NET_MODE_LOOPBACK);
+                                    else
+                                      nox_3ds_net_set_mode(NOX_3DS_NET_MODE_WIFI);
 #endif
                                     v1 = sub_40A430();
                                     *(_DWORD *)&byte_5D4594[1548516] = sub_4DEBC0(v1);
@@ -45313,7 +45315,10 @@ _DWORD *__cdecl sub_4DDB40(_DWORD *a1)
   uint32_t host_proto_ver = 66458u;
 #ifdef __3DS__
   if ( nox_3ds_net_get_mode() == NOX_3DS_NET_MODE_WIFI )
-    host_proto_ver = NOX_PROTO_VER_HIGHRES;
+  {
+    host_proto_ver = nox_3ds_get_host_client_proto_ver();
+    nox_3ds_net_log("[host3ds] Sending 0xAF welcome with ver=0x%X", (unsigned)host_proto_ver);
+  }
 #endif
 
   nox_write_u32(&v5[1], *(_DWORD *)&byte_5D4594[2598000]);
@@ -46141,7 +46146,7 @@ int sub_4DEF00()
   uint32_t host_proto_ver = 66458u;
 #ifdef __3DS__
   if ( nox_3ds_net_get_mode() == NOX_3DS_NET_MODE_WIFI )
-    host_proto_ver = NOX_PROTO_VER_HIGHRES;
+    host_proto_ver = nox_3ds_get_host_client_proto_ver();
 #endif
 
   v0 = sub_416590(0);
