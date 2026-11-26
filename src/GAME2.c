@@ -54675,7 +54675,6 @@ LABEL_32:
           v38 = *(_DWORD *)(v19 + 20);
           v39 = *(_DWORD *)&byte_5D4594[1217444] - *(_DWORD *)(v38 + 12);
           v40 = *(_DWORD *)(v38 + 16) - *(_DWORD *)&byte_5D4594[1217448];
-          sub_419B10(sqrt((double)*(int *)(v19 + 32)));
           v83.field_0 = (double)(int)(v40 + *(int *)(*(_DWORD *)(v19 + 20) + 12));
           v83.field_4 = (double)(int)(v39 + *(int *)(*(_DWORD *)(v19 + 20) + 16));
           v83.field_8 = (double)(int)(*(int *)(*(_DWORD *)(v19 + 20) + 12) - v40);
