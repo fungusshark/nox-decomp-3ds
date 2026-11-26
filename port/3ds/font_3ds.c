@@ -194,6 +194,9 @@ static int            s_fallback_depth = 0;
 static int            s_shadow_depth = 0;
 static uint32_t       s_font_generation = 1;
 static uint32_t       s_toast_until_ms = 0;
+static char           s_toast_custom[64];
+static bool           s_toast_custom_active = false;
+static bool           s_toast_custom_green = true;
 static bool           s_show_version_overlay = false;
 
 /* Stock .fnt metrics recorded from all 4 slots for exact auto-fit comparison */
@@ -421,9 +424,20 @@ void nox_3ds_font_toggle(void)
     s_counts[0] = 0;
     s_counts[1] = 0;
     nox_3ds_swbuf_invalidate_bottom();
+    s_toast_custom_active = false;
     s_toast_until_ms = nox_3ds_get_ticks_ms() + TOAST_MS;
     fprintf(stderr, "[font3ds] Native Auto-Fit GPU font: %s\n",
             s_native_enabled ? "ON" : "OFF");
+}
+
+void nox_3ds_font_show_toast(const char *msg, bool green)
+{
+    if (!msg || !*msg)
+        return;
+    snprintf(s_toast_custom, sizeof(s_toast_custom), "%s", msg);
+    s_toast_custom_active = true;
+    s_toast_custom_green = green;
+    s_toast_until_ms = nox_3ds_get_ticks_ms() + TOAST_MS;
 }
 
 uint32_t nox_3ds_font_generation(void)
@@ -828,8 +842,11 @@ static void draw_toast_overlay(int target_w, int target_h)
         return;
     }
 
-    const char *msg = s_native_enabled ? "NATIVE FONT: AUTO" : "NATIVE FONT: OFF";
-    u32 fg = s_native_enabled ? C2D_Color32(120, 255, 140, 255) : C2D_Color32(255, 210, 110, 255);
+    const char *msg = s_toast_custom_active
+        ? s_toast_custom
+        : (s_native_enabled ? "NATIVE FONT: AUTO" : "NATIVE FONT: OFF");
+    bool is_green = s_toast_custom_active ? s_toast_custom_green : s_native_enabled;
+    u32 fg = is_green ? C2D_Color32(120, 255, 140, 255) : C2D_Color32(255, 210, 110, 255);
     draw_crisp_pill_overlay(target_w, target_h, msg, false,
                             C2D_Color32(10, 10, 16, 210), fg);
 }
