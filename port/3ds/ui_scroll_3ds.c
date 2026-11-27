@@ -2134,12 +2134,10 @@ void nox_3ds_ui_takeover_servopts(void *root_wnd)
             sub_46A9B0(c, 10, 34);
             sub_46AB20(c, 604, 426);
         } else if (cid == 10196) {
-            /* Nested Server Sub-Border (shown by Nox only on Server tab): top stone bar
-             * (y=68..88) attaches directly under General | Access | Teams sub-tabs. */
-            c[1] &= ~(0x80u | 0x1000u);
+            /* Nested Server Sub-Border (shown by Nox only on Server tab): keep stock
+             * border flags intact (like 10195) so its 9-slice stone frame renders
+             * cleanly beneath General | Access | Teams (top stone bar y=68..88). */
             c[11] |= 2048u;
-            c[14] = 0x80000000u;
-            c[16] = 0x80000000u;
             sub_46A9B0(c, 30, 78);
             sub_46AB20(c, 564, 326);
         } else if (cid == 10149) {
@@ -2177,7 +2175,7 @@ void nox_3ds_ui_takeover_servopts(void *root_wnd)
         if (th < 20) th = 20;
         t[1] |= 0x20u; /* ABOVE so tabs always win child hit-testing */
         if (is_subtab) {
-            sub_46A9B0(t, row2_x, 48);
+            sub_46A9B0(t, row2_x, 46);
             sub_46AB20(t, tw, th);
             row2_x += tw + 6;
         } else {
