@@ -52893,7 +52893,9 @@ map_loaded:
       goto done;
     sub_4519C0();
     sub_4312C0();
+#ifndef __3DS__
     sub_495430();
+#endif
     if ( sub_40A5C0(1) && *(_DWORD *)&byte_587000[93200] == 1 )
     {
       if ( *(_DWORD *)&byte_5D4594[815132] )
@@ -53267,6 +53269,7 @@ LABEL_24:
               int v3ds_prev = nox_3ds_swbuf_select(NOX_3DS_SWBUF_BOTTOM);
               sub_437290();
               sub_445530();
+              sub_495430();
               nox_3ds_swbuf_select(v3ds_prev);
             }
 

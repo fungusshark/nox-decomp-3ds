@@ -43,6 +43,8 @@ static int g_gamepad_log_enabled(void);
 extern void nox_ctrl_inject_mouse_move(int dx, int dy, int wheel);
 extern void nox_ctrl_inject_mouse_button(int button, int down);
 extern void nox_ctrl_inject_key_scancode(int sdl_scancode, int down);
+extern void nox_ctrl_trigger_emote(int emote);
+extern void nox_ctrl_toggle_scoreboard(void);
 extern void nox_ctrl_set_thumbstick_move(int active, int orientation, int move_cmd, double mag);
 extern void nox_ctrl_set_thumbstick_jump(int jump);
 //extern void nox_ctrl_inject_text_utf8(const char *utf8);
@@ -1434,6 +1436,8 @@ static int      g_3ds_inv_shift_ready   = 0;
 static uint32_t g_3ds_inv_pending_mask  = 0;
 static uint32_t g_3ds_inv_early_up_mask = 0;
 static uint32_t g_3ds_inv_active_mask   = 0;
+static uint32_t g_3ds_emote_claimed_mask = 0;
+static int      g_3ds_select_claimed     = 0;
 
 static const int k_3ds_spell_scancodes[5] = {
     SDL_SCANCODE_A, /* Slot 1: A */
@@ -1484,6 +1488,8 @@ static void nox_3ds_inv_spell_reset(int emit_releases)
     g_3ds_inv_pending_mask  = 0;
     g_3ds_inv_early_up_mask = 0;
     g_3ds_inv_active_mask   = 0;
+    g_3ds_emote_claimed_mask = 0;
+    g_3ds_select_claimed     = 0;
 }
 
 static void load_3ds_default_mappings(void)
@@ -1504,6 +1510,8 @@ static void load_3ds_default_mappings(void)
      *  - ZL / ZR:      Previous / Next Spell/Ability Page (W / E)
      *  - C-Stick + L:  Tight ~18px close aim; hold L for detached Top-Screen ranged free-aim
      *  - L + Spell:    Overloaded Shift + Spell (Invert Spell / Cast on Self)
+     *  - L + D-Pad:    Emotes (Up = Laugh, Right = Point, Left = Shake Fist)
+     *  - L + Select:   Toggle Scoreboard
      *  - R:            Left-Click at Top-Screen C-Stick cursor (interact/attack)
      *  - Weapon Swap:  Handled natively via Bottom-Screen HUD touch (no physical 'V' button)
      */
@@ -2047,6 +2055,42 @@ void nox_gamepad_update(void)
         }
 
 #ifdef __3DS__
+        /* Overloaded L + Select -> Toggle Scoreboard */
+        if (inv_world_mode && buttons[i].in == IN_SELECT) {
+            if (down_edge && g_cur.l1 && !g_cur.r1) {
+                nox_ctrl_toggle_scoreboard();
+                g_3ds_select_claimed = 1;
+                continue;
+            }
+            if (up_edge && g_3ds_select_claimed) {
+                g_3ds_select_claimed = 0;
+                continue;
+            }
+        }
+
+        /* Overloaded L + D-Pad -> Emotes (Up = Laugh, Right = Point, Left = Shake Fist) */
+        if (inv_world_mode) {
+            int emote_id = -1;
+            uint32_t emote_bit = 0;
+            switch (buttons[i].in) {
+                case IN_UP:    emote_id = 1; emote_bit = (1u << 0); break; /* Laugh */
+                case IN_RIGHT: emote_id = 2; emote_bit = (1u << 1); break; /* Point */
+                case IN_LEFT:  emote_id = 0; emote_bit = (1u << 2); break; /* Shake Fist / Taunt */
+                default: break;
+            }
+            if (emote_bit) {
+                if (down_edge && g_cur.l1) {
+                    nox_ctrl_trigger_emote(emote_id);
+                    g_3ds_emote_claimed_mask |= emote_bit;
+                    continue;
+                }
+                if (up_edge && (g_3ds_emote_claimed_mask & emote_bit)) {
+                    g_3ds_emote_claimed_mask &= ~emote_bit;
+                    continue;
+                }
+            }
+        }
+
         /* Overloaded L + Spell Button -> Shift + Spell (Invert Spell / Cast on Self) */
         if (inv_world_mode) {
             int slot_idx = nox_3ds_spell_slot_index(buttons[i].in);
