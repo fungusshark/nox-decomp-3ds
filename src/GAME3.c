@@ -15049,20 +15049,22 @@ int __cdecl sub_4B71A0(_DWORD *a1, int a2)
     {
       sub_4B69F0(a2);
 #ifdef __3DS__
+      int q16;
       char glow_i;
       if (__builtin_expect((uint32_t)v5 >= 2u && (uint32_t)v5 < 256u && (uint32_t)v6 <= 0x00100000u, 1))
       {
         uint32_t recip = s_nox_3ds_recip_u32[(uint32_t)v5];
-        v9 = (int)nox_3ds_udiv_recip((uint32_t)(16 * v6), recip);
+        q16 = (int)nox_3ds_udiv_recip((uint32_t)(16 * v6), recip);
         glow_i = (char)nox_3ds_udiv_recip((uint32_t)(5 * v6), recip);
       }
       else
       {
-        v9 = 16 * v6 / v5;
+        q16 = 16 * v6 / v5;
         glow_i = (char)(5 * v6 / v5);
       }
-      v8 = 4 * v9;
+      v8 = 4 * q16;
       v12 = *(_DWORD *)&byte_5D4594[v8 + 1313596];
+      v9 = v8 / 16;
       v10 = v9 >> 1;
       sub_4B6720(&v11, v12, 2 * v9 + 1, glow_i);
 #else
