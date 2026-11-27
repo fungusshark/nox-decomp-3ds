@@ -71,6 +71,17 @@ typedef enum {
     NOX_3DS_GUI_NO_BG   = 2  /* Render all windows except MainBG.wnd (-> Bottom) */
 } nox_3ds_gui_filter_t;
 
+typedef enum {
+    NOX_3DS_RES_400x240 = 0, /* 1:1 native 400x240 crop inside 640x480 (fastest CPU) */
+    NOX_3DS_RES_640x384 = 1, /* 5:3 640x384 downscaled -> 400x240 (default balanced) */
+    NOX_3DS_RES_800x480 = 2  /* 5:3 800x480 2x SSAA -> 400x240 (wide competitive FOV) */
+} nox_3ds_res_preset_t;
+
+typedef enum {
+    NOX_3DS_FILTER_LINEAR  = 0, /* PICA200 GPU_LINEAR hardware box/bilinear filter */
+    NOX_3DS_FILTER_NEAREST = 1  /* PICA200 GPU_NEAREST crisp nearest-neighbor */
+} nox_3ds_tex_filter_t;
+
 typedef struct {
     bool     is_new_3ds;
     bool     romfs_mounted;
@@ -83,6 +94,8 @@ typedef struct {
     bool     touch_to_aim;        /* false in dual-screen mode (touch is strict bottom UI) */
     nox_3ds_aim_mode_t    aim_mode;
     nox_3ds_cstick_mode_t cstick_mode;
+    nox_3ds_res_preset_t  top_res_preset;
+    nox_3ds_tex_filter_t  tex_filter;
     uint32_t fps;
     uint32_t linear_free_bytes;
     uint32_t heap_used_bytes;
@@ -98,6 +111,11 @@ uint64_t nox_3ds_get_perf_freq(void);    /* SYSCLOCK_ARM11 (268111856ULL) */
 void     nox_3ds_sleep_ms(uint32_t ms);  /* svcSleepThread */
 const nox_3ds_state_t *nox_3ds_get_state(void);
 nox_3ds_state_t       *nox_3ds_state_mut(void);
+void     nox_3ds_cfg_load(void);         /* load sdmc:/3ds/nox/nox_3ds.cfg */
+void     nox_3ds_cfg_save(void);         /* save sdmc:/3ds/nox/nox_3ds.cfg */
+void     nox_3ds_get_top_viewport(int *out_l, int *out_t, int *out_r, int *out_b,
+                                  int *out_w, int *out_h,
+                                  int *out_surf_w, int *out_surf_h);
 
 /* =========================================================================
  * 2b. SD Card File System & Persistence Hooks (fs_3ds.c)
@@ -223,6 +241,8 @@ void nox_3ds_capture_top_splash(void);
 bool nox_3ds_has_top_splash(void);
 bool nox_3ds_present_top_splash(void);
 void nox_3ds_skip_default_cursor_blit(void);
+void nox_3ds_begin_top_world_pass(void);
+void nox_3ds_end_top_world_pass(void);
 
 /* Native 1:1 PICA200/citro2d Pixel Font Renderer (port/3ds/font_3ds.c) */
 bool nox_3ds_font_init(void);
@@ -312,6 +332,7 @@ void nox_3ds_input_init(void);
 void nox_3ds_input_poll(nox_3ds_input_t *out);
 const nox_3ds_input_t *nox_3ds_input_get(void);
 void nox_3ds_input_set_cstick_params(float deadzone, float curve_exp, float sensitivity);
+void nox_3ds_input_apply_sensitivity(float sens);
 bool nox_3ds_is_gameplay_active(void);
 bool nox_3ds_input_is_world_mode(void);
 bool nox_3ds_input_is_bottom_touch_frame(void);
@@ -326,6 +347,14 @@ void nox_3ds_input_get_bottom_touch(int *out_x, int *out_y);
 void nox_3ds_input_process_hybrid(void);
 void nox_3ds_input_process_twin_stick_and_touch(void);
 void nox_3ds_input_reset_after_applet(void);
+
+#define NOX_3DS_JOY_BTN_BASE  0x20000u
+#define NOX_3DS_JOY_BTN_COUNT 13
+uint32_t nox_3ds_get_bound_hid_mask(int action_id);
+uint32_t nox_3ds_update_joystick_buttons(void);
+int      nox_3ds_poll_ui_capture_token(void);
+void     nox_3ds_ensure_default_button_bindings(bool force_defaults);
+const void *nox_3ds_get_joy_button_label(int joy_idx);
 
 /* =========================================================================
  * 4b. Native 3DS Software Keyboard (swkbd) Bridge (swkbd_3ds.c)

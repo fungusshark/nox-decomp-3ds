@@ -1420,14 +1420,14 @@ static int g_l2_state = 0;
 static int g_r2_state = 0;
 
 #ifdef __3DS__
+#include <sys/stat.h>
+
+static bool g_3ds_use_custom_ini = false;
+
 /*
- * Overloaded L + Spell Button -> Shift + Spell (Invert Spell / Cast on Self)
- * state machine. Nox's InvertSpellTarget (LSHIFT) sets a frame tick via
- * sub_460630() during input processing, and sub_45F900() flips invertible
- * spell-bar slots during the HUD draw pass at the end of that frame. Holding
- * LSHIFT for 1 frame before firing the spell scancode guarantees that even a
- * simultaneous 1-frame L + Spell tap casts cleanly on self, while holding L
- * alone for C-Stick ranged free-aim never emits spurious Shift toggles.
+ * Legacy fallback L + Spell state machine (used ONLY if a user explicitly
+ * places a custom sdmc:/3ds/nox/gamepad.ini override on their SD card;
+ * normal 3DS input routes buttons natively through 0x20000..0x2000C in input_3ds.c).
  */
 static int      g_3ds_inv_shift_held    = 0;
 static int      g_3ds_inv_shift_ready   = 0;
@@ -1440,18 +1440,20 @@ static const int k_3ds_spell_scancodes[5] = {
     SDL_SCANCODE_S, /* Slot 2: B */
     SDL_SCANCODE_D, /* Slot 3: X */
     SDL_SCANCODE_F, /* Slot 4: Y */
-    SDL_SCANCODE_G  /* Slot 5: D-Pad Up */
+    SDL_SCANCODE_G  /* Slot 5: D-Pad Down */
 };
 
 static int nox_3ds_spell_slot_index(enum phys_input pin)
 {
+    if (!g_3ds_use_custom_ini)
+        return -1;
     switch (pin) {
-        case IN_A:  return 0;
-        case IN_B:  return 1;
-        case IN_X:  return 2;
-        case IN_Y:  return 3;
-        case IN_UP: return 4;
-        default:    return -1;
+        case IN_A:    return 0;
+        case IN_B:    return 1;
+        case IN_X:    return 2;
+        case IN_Y:    return 3;
+        case IN_DOWN: return 4;
+        default:      return -1;
     }
 }
 
@@ -1462,7 +1464,7 @@ static int nox_3ds_spell_slot_phys_held(int slot_idx)
         case 1: return g_cur.b;
         case 2: return g_cur.x;
         case 3: return g_cur.y;
-        case 4: return g_cur.dpad_up;
+        case 4: return g_cur.dpad_down;
         default: return 0;
     }
 }
@@ -1491,37 +1493,17 @@ static void load_3ds_default_mappings(void)
     reset_mappings();
 
     /*
-     * New 3DS Hybrid Dual-Screen Control Scheme (PC-aligned, zero layer conflicts):
-     *  - Circle Pad:   360 deg hero walk/run movement in gameplay
-     *  - Touch (Bot):  100% of menu, inventory, spellbook, weapon swap & HUD tapping (input_3ds.c)
-     *  - A / B / X / Y: Permanent Spell/Ability Slots 1-4 (A / S / D / F)
-     *  - D-Pad Up:     Jump (Middle Mouse Click)
-     *  - D-Pad Down:   Spell/Ability Slot 5 (G)
-     *  - D-Pad Left:   Quick Heal (X)
-     *  - D-Pad Right:  Quick Mana (C)
-     *  - Start:        Escape / Pause Menu (ESC)
-     *  - Select:       Toggle Minimap (TAB)
-     *  - ZL / ZR:      Previous / Next Spell/Ability Page (W / E)
-     *  - C-Stick + L:  Tight ~18px close aim; hold L for detached Top-Screen ranged free-aim
-     *  - L + Spell:    Overloaded Shift + Spell (Invert Spell / Cast on Self)
-     *  - R:            Left-Click at Top-Screen C-Stick cursor (interact/attack)
-     *  - Weapon Swap:  Handled natively via Bottom-Screen HUD touch (no physical 'V' button)
+     * Native 3DS Button Remapping Mode:
+     *  - Circle Pad (`IN_LEFT_ANALOG`): 360 deg hero walk/run movement
+     *  - Start (`IN_START`):            Escape / Pause Menu / Cancel modal
+     *  - All 13 gameplay buttons ([A], [B], [X], [Y], [L], [R], [ZL], [ZR],
+     *    [D-Up], [D-Down], [D-Left], [D-Right], [Select]) map natively to
+     *    Westwood's JOYSTICK_BUTTON_1..13 (0x20000..0x2000C) in nox.cfg so
+     *    players can freely remap them in Options -> Configure Controls!
      */
     g_layers[0].overlay = OVERLAY_CLEAR;
     g_layers[0].binds[IN_LEFT_ANALOG] = (struct action){ ACT_MOUSE_ABSOLUTE, 0 };
-    g_layers[0].binds[IN_A]           = (struct action){ ACT_KEY, SDL_SCANCODE_A };
-    g_layers[0].binds[IN_B]           = (struct action){ ACT_KEY, SDL_SCANCODE_S };
-    g_layers[0].binds[IN_X]           = (struct action){ ACT_KEY, SDL_SCANCODE_D };
-    g_layers[0].binds[IN_Y]           = (struct action){ ACT_KEY, SDL_SCANCODE_F };
-    g_layers[0].binds[IN_DOWN]        = (struct action){ ACT_KEY, SDL_SCANCODE_G };
-    g_layers[0].binds[IN_UP]          = (struct action){ ACT_MOUSE_MIDDLE, 0 };
-    g_layers[0].binds[IN_LEFT]        = (struct action){ ACT_KEY, SDL_SCANCODE_X };
-    g_layers[0].binds[IN_RIGHT]       = (struct action){ ACT_KEY, SDL_SCANCODE_C };
     g_layers[0].binds[IN_START]       = (struct action){ ACT_KEY, SDL_SCANCODE_ESCAPE };
-    g_layers[0].binds[IN_SELECT]      = (struct action){ ACT_KEY, SDL_SCANCODE_TAB };
-    g_layers[0].binds[IN_L2]          = (struct action){ ACT_KEY, SDL_SCANCODE_W };
-    g_layers[0].binds[IN_R2]          = (struct action){ ACT_KEY, SDL_SCANCODE_E };
-    /* L (IN_L1), R (IN_R1), and C-Stick (IN_RU/RD/RL/RR) are handled natively in input_3ds.c */
 }
 #endif
 
@@ -1548,10 +1530,13 @@ static void nox_gamepad_open_if_needed(void)
     nox_3ds_inv_spell_reset(0);
 
     {
+        struct stat st_ini;
         const char *explicit_ini = getenv("NOX_GAMEPAD_INI");
-        if (explicit_ini && *explicit_ini) {
+        if ((explicit_ini && *explicit_ini) || stat("gamepad.ini", &st_ini) == 0) {
+            g_3ds_use_custom_ini = true;
             ini_load();
         } else {
+            g_3ds_use_custom_ini = false;
             load_3ds_default_mappings();
         }
     }

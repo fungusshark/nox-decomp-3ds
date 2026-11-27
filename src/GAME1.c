@@ -471,6 +471,10 @@ LABEL_45:
 
       NOX_INIT_LOG("step 034: sub_42EAE0()");
       sub_42EAE0();
+#ifdef __3DS__
+      nox_3ds_ensure_default_button_bindings(false);
+      nox_3ds_cfg_load();
+#endif
 
       NOX_INIT_LOG("step 035: sub_415D50()");
       sub_415D50();
@@ -40051,6 +40055,9 @@ unsigned int sub_42D220()
 
   v0 = 0;
   v21 = 0;
+#ifdef __3DS__
+  *(_DWORD *)&byte_5D4594[747844] = nox_3ds_update_joystick_buttons();
+#endif
   v1 = sub_4309F0();
   v22 = v1;
   v2 = *(_DWORD *)&byte_5D4594[754056];
@@ -40124,7 +40131,11 @@ LABEL_17:
           goto LABEL_32;
         }
       }
-      else if ( v4 & 0x20000 && (byte_5D4594[750956] || !((1 << v4) & *(_DWORD *)&byte_5D4594[747844])) )
+      else if ( v4 & 0x20000
+             && (byte_5D4594[750956]
+              || sub_46B4F0()
+              || sub_46A4A0()
+              || !((1u << (v4 & 31)) & *(_DWORD *)&byte_5D4594[747844])) )
       {
         goto LABEL_33;
       }
@@ -40754,6 +40765,14 @@ char *sub_42EAE0()
     }
     while ( v1 );
   }
+#ifdef __3DS__
+  for ( int ji = 0; ji < NOX_3DS_JOY_BTN_COUNT; ++ji )
+  {
+    const void *lbl = nox_3ds_get_joy_button_label(ji);
+    if ( lbl )
+      *(_DWORD *)&byte_587000[75364 + 16 * ji] = (int)lbl;
+  }
+#endif
   *(_DWORD *)&byte_587000[75888] = sub_40F1D0((char *)&byte_587000[80484], 0, (const char *)&byte_587000[80444], 2095);
   result = *(char **)&byte_587000[75892];
   if ( *(_DWORD *)&byte_587000[75892] )
@@ -42650,7 +42669,11 @@ int sub_430BA0()
       sub_430CC0();
     else
       sub_430D60();
+#ifdef __3DS__
+    if ( sub_430DB0(800, 480) )
+#else
     if ( sub_430DB0(*(int *)&byte_5D4594[3801784], *(int *)&byte_5D4594[3801788]) )
+#endif
     {
       result = 1;
     }
@@ -42932,7 +42955,11 @@ int __cdecl sub_431040(int a1, int a2, int a3)
       sub_430CC0();
     else
       sub_430D60();
+#ifdef __3DS__
+    if ( sub_430DB0(800, 480) )
+#else
     if ( sub_430DB0(*(int *)&byte_5D4594[3801784], *(int *)&byte_5D4594[3801788]) )
+#endif
     {
       result = 1;
     }
@@ -44829,6 +44856,7 @@ FILE *__cdecl sub_433290(char *a1)
     EM_ASM(FS.syncfs(false,function (err) {}));
 #endif
 #ifdef __3DS__
+    nox_3ds_cfg_save();
     nox_3ds_commit_save();
 #endif
     result = (FILE *)1;
@@ -46396,6 +46424,10 @@ int sub_436100()
     *(_DWORD *)&byte_5D4594[2650636] &= 0x7FFFFFFFu;
     *(_DWORD *)&byte_5D4594[814536] = v1;
     *(_DWORD *)&byte_5D4594[811916] = *(_DWORD *)&byte_5D4594[2598000];
+#ifdef __3DS__
+    if ( !*(_DWORD *)&byte_5D4594[815132] && sub_43C700() )
+      nox_3ds_begin_top_world_pass();
+#endif
     if ( *(_DWORD *)&byte_587000[85744] )
     {
       *(_DWORD *)&byte_5D4594[811104] = *(_DWORD *)&byte_5D4594[811100]
@@ -46414,15 +46446,19 @@ int sub_436100()
       v6 = *(_DWORD *)&byte_5D4594[811068];
     }
 #ifdef __3DS__
-    /* Keep isometric world viewport at centered 5:3 (640x384 -> GPU_LINEAR 400x240) */
-    v6 = NOX_3DS_VP_LEFT;
-    v7 = NOX_3DS_VP_TOP;
-    *(_DWORD *)&byte_5D4594[811068] = NOX_3DS_VP_LEFT;
-    *(_DWORD *)&byte_5D4594[811072] = NOX_3DS_VP_TOP;
-    *(_DWORD *)&byte_5D4594[811076] = NOX_3DS_VP_RIGHT;
-    *(_DWORD *)&byte_5D4594[811080] = NOX_3DS_VP_BOTTOM;
-    *(_DWORD *)&byte_5D4594[811100] = NOX_3DS_VP_W;
-    *(_DWORD *)&byte_5D4594[811104] = NOX_3DS_VP_H;
+    /* Dynamic Top-Screen isometric world viewport (400x240, 640x384, or 800x480 2x SSAA) */
+    {
+      int vp_l, vp_t, vp_r, vp_b, vp_w, vp_h;
+      nox_3ds_get_top_viewport(&vp_l, &vp_t, &vp_r, &vp_b, &vp_w, &vp_h, NULL, NULL);
+      v6 = vp_l;
+      v7 = vp_t;
+      *(_DWORD *)&byte_5D4594[811068] = vp_l;
+      *(_DWORD *)&byte_5D4594[811072] = vp_t;
+      *(_DWORD *)&byte_5D4594[811076] = vp_r;
+      *(_DWORD *)&byte_5D4594[811080] = vp_b;
+      *(_DWORD *)&byte_5D4594[811100] = vp_w;
+      *(_DWORD *)&byte_5D4594[811104] = vp_h;
+    }
 #endif
     sub_430B50(v6, v7, *(int *)&byte_5D4594[811076], *(int *)&byte_5D4594[811080]);
     if ( *(_DWORD *)&byte_5D4594[2616328] )
@@ -46528,6 +46564,9 @@ int sub_436100()
       result = sub_440900();
       *(_DWORD *)&byte_587000[85744] = 0;
     }
+#ifdef __3DS__
+    nox_3ds_end_top_world_pass();
+#endif
   }
   else
   {
@@ -52681,6 +52720,14 @@ map_loaded:
       sub_46B6B0(v0);
       v0 = (unsigned __int8 *)(*(_DWORD *)&byte_5D4594[2618912] + 8);
     }
+#ifdef __3DS__
+    if ( sub_46B4F0() )
+    {
+      int joy_tok = nox_3ds_poll_ui_capture_token();
+      if ( joy_tok )
+        sub_46B4C0(sub_46B4F0(), 22, joy_tok, 1);
+    }
+#endif
     if ( !(*(int (**)(void))&byte_5D4594[816396])() )
       goto done;
     sub_430880(0);
@@ -52800,6 +52847,7 @@ LABEL_24:
       if ( *(_DWORD *)&byte_5D4594[815132] )
       {
         s_bot_was_gameplay = 0;
+        sub_430A70(0, NOX_3DS_LOGICAL_W - 1, 0, NOX_3DS_LOGICAL_H - 1);
         /* ================================================================
          * MAIN MENU DUAL-SCREEN SPLIT:
          *  - Top Screen (400x240):    Nox Title Splash (captured from legal.wnd)
@@ -52908,7 +52956,13 @@ LABEL_24:
         int saved_my = gm->field_4;
         int saved_cid = *(_DWORD *)&byte_5D4594[1097200];
 
-        /* --- Pass 1: Top Screen (Primary SW buffer) --- */
+        /* --- Pass 1: Top Screen (Primary SW buffer: 400x240, 640x384, or 800x480 2x SSAA) --- */
+        int vp_l = NOX_3DS_VP_LEFT, vp_t = NOX_3DS_VP_TOP;
+        int vp_r = NOX_3DS_VP_RIGHT, vp_b = NOX_3DS_VP_BOTTOM;
+        int vp_w = NOX_3DS_VP_W, vp_h = NOX_3DS_VP_H;
+        int surf_w = NOX_3DS_LOGICAL_W, surf_h = NOX_3DS_LOGICAL_H;
+        nox_3ds_get_top_viewport(&vp_l, &vp_t, &vp_r, &vp_b, &vp_w, &vp_h, &surf_w, &surf_h);
+        nox_3ds_begin_top_world_pass();
         nox_3ds_set_top_render_active(true);
         sub_437180();
         v25 = (int *)sub_437250();
@@ -52917,9 +52971,9 @@ LABEL_24:
         if ( do_present )
         {
           if ( sub_43C700() && !(*(_DWORD *)&byte_5D4594[2650636] & 0x40000) )
-            nox_3ds_set_top_crop(NOX_3DS_VP_LEFT, NOX_3DS_VP_TOP, NOX_3DS_VP_W, NOX_3DS_VP_H, true);
+            nox_3ds_set_top_crop(vp_l, vp_t, vp_w, vp_h, true);
           else
-            nox_3ds_set_top_crop(0, 0, NOX_3DS_LOGICAL_W, NOX_3DS_LOGICAL_H, true);
+            nox_3ds_set_top_crop(0, 0, surf_w, surf_h, true);
         }
 
         if ( do_present && world_mode &&
@@ -52958,10 +53012,10 @@ LABEL_24:
             th += 4;
             tx = aim_x - *(_DWORD *)&byte_5D4594[1097204];
             ty = aim_y - *(_DWORD *)&byte_5D4594[1097208];
-            if ( tx + tw + 4 > NOX_3DS_VP_RIGHT )  tx = NOX_3DS_VP_RIGHT - (tw + 4);
-            if ( tx < NOX_3DS_VP_LEFT )            tx = NOX_3DS_VP_LEFT;
-            if ( ty + th > NOX_3DS_VP_BOTTOM )     ty = NOX_3DS_VP_BOTTOM - th;
-            if ( ty < NOX_3DS_VP_TOP )             ty = NOX_3DS_VP_TOP;
+            if ( tx + tw + 4 > vp_r )  tx = vp_r - (tw + 4);
+            if ( tx < vp_l )           tx = vp_l;
+            if ( ty + th > vp_b )      ty = vp_b - th;
+            if ( ty < vp_t )           ty = vp_t;
             sub_49CF10(tx, ty, tw + 4, th);
             sub_434390(*(int *)&byte_5D4594[2589772]);
             sub_43FAF0(0, (void *)wtip, tx + 2, ty + 2, 0, 0);
@@ -52981,6 +53035,7 @@ LABEL_24:
             nox_3ds_skip_default_cursor_blit();
         }
         nox_3ds_set_top_render_active(false);
+        nox_3ds_end_top_world_pass();
 
         /* --- Pass 2: Bottom Screen (Secondary SW buffer -> 320x240) --- */
         {

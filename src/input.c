@@ -1751,14 +1751,24 @@ int __cdecl sub_42D6B0(_DWORD *a3, int a4)
   {
     if ( byte_5D4594[747848] != 2 && *(_DWORD *)&byte_5D4594[747868] == 4 )
     {
+      int center_x = *(int *)&byte_5D4594[3805496] / 2;
+      int center_y = *(int *)&byte_5D4594[3807120] / 2;
+#ifdef __3DS__
+      {
+        int vp_l, vp_t, vp_r, vp_b, vp_w, vp_h;
+        nox_3ds_get_top_viewport(&vp_l, &vp_t, &vp_r, &vp_b, &vp_w, &vp_h, NULL, NULL);
+        center_x = vp_l + vp_w / 2;
+        center_y = vp_t + vp_h / 2;
+      }
+#endif
       v15 = sub_476F80();
       v16 = a3;
       if ( v15 )
         v17 = sub_4739D0(*(_DWORD *)(v15 + 16));
       else
         v17 = a3[1];
-      a4 = *v16 - *(int *)&byte_5D4594[3805496] / 2;
-      v18 = (__int64)((atan2((double)(v17 - *(int *)&byte_5D4594[3807120] / 2), (double)a4) + 6.2831855) * 40.743664 + 0.5);
+      a4 = *v16 - center_x;
+      v18 = (__int64)((atan2((double)(v17 - center_y), (double)a4) + 6.2831855) * 40.743664 + 0.5);
       *(_DWORD *)&byte_5D4594[754060] = v18;
       if ( (int)v18 < 0 )
       {
@@ -1974,16 +1984,34 @@ LABEL_149:
           break;
         case 14:
           sub_452D80(921, 100);
+#ifdef USE_SDL
+          {
+            extern float draw_gamma;
+            draw_gamma += 0.1f;
+            if ( draw_gamma > 2.5f )
+              draw_gamma = 2.5f;
+          }
+#else
           v38 = sub_434B00();
           sub_434B30(v38 + 1);
           sub_434B60();
+#endif
           *(_DWORD *)&byte_5D4594[v36 + 747900] = 0;
           break;
         case 15:
           sub_452D80(921, 100);
+#ifdef USE_SDL
+          {
+            extern float draw_gamma;
+            draw_gamma -= 0.1f;
+            if ( draw_gamma < 0.5f )
+              draw_gamma = 0.5f;
+          }
+#else
           v39 = sub_434B00();
           sub_434B30(v39 - 1);
           sub_434B60();
+#endif
           *(_DWORD *)&byte_5D4594[v36 + 747900] = 0;
           break;
         case 16:

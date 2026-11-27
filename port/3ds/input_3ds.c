@@ -14,6 +14,8 @@
 
 /* Engine state queries (src/GAME1.c, src/GAME2.c, src/GAME_data.c) */
 extern unsigned char byte_5D4594[];
+extern unsigned char byte_587000[];
+extern int sub_42CF50(const char *a1);   /* parse & prepend keybinding line */
 extern int sub_43C700(void);           /* world/map loaded */
 extern int sub_450560(void);           /* console text entry active */
 extern int sub_46A4A0(void);           /* multiplayer chat text entry active */
@@ -25,6 +27,39 @@ extern char *sub_437250(void);         /* gameplay viewport rect [l,t,r,b,...] *
 extern int sub_46AAB0(void *a1, int a2, int a3); /* GUI widget point-in-rect hit test */
 extern int sub_46ACC0(int a1);                   /* GUI widget hidden check */
 extern int sub_477600(void);                     /* dragging inventory item / spell icon */
+
+/* 3DS physical button <-> Westwood JOYSTICK_BUTTON_1..13 (0x20000..0x2000C) table */
+typedef struct {
+    uint32_t       hid_bit;
+    const wchar_t *label;
+} nox_3ds_joy_map_t;
+
+static const nox_3ds_joy_map_t k_3ds_joy_map[NOX_3DS_JOY_BTN_COUNT] = {
+    { NOX_3DS_KEY_A,      L"[A]"       }, /* 0x20000 JOYSTICK_BUTTON_1  */
+    { NOX_3DS_KEY_B,      L"[B]"       }, /* 0x20001 JOYSTICK_BUTTON_2  */
+    { NOX_3DS_KEY_X,      L"[X]"       }, /* 0x20002 JOYSTICK_BUTTON_3  */
+    { NOX_3DS_KEY_Y,      L"[Y]"       }, /* 0x20003 JOYSTICK_BUTTON_4  */
+    { NOX_3DS_KEY_L,      L"[L]"       }, /* 0x20004 JOYSTICK_BUTTON_5  */
+    { NOX_3DS_KEY_R,      L"[R]"       }, /* 0x20005 JOYSTICK_BUTTON_6  */
+    { NOX_3DS_KEY_ZL,     L"[ZL]"      }, /* 0x20006 JOYSTICK_BUTTON_7  */
+    { NOX_3DS_KEY_ZR,     L"[ZR]"      }, /* 0x20007 JOYSTICK_BUTTON_8  */
+    { NOX_3DS_KEY_DUP,    L"[D-Up]"    }, /* 0x20008 JOYSTICK_BUTTON_9  */
+    { NOX_3DS_KEY_DDOWN,  L"[D-Down]"  }, /* 0x20009 JOYSTICK_BUTTON_10 */
+    { NOX_3DS_KEY_DLEFT,  L"[D-Left]"  }, /* 0x2000A JOYSTICK_BUTTON_11 */
+    { NOX_3DS_KEY_DRIGHT, L"[D-Right]" }, /* 0x2000B JOYSTICK_BUTTON_12 */
+    { NOX_3DS_KEY_SELECT, L"[Select]"  }, /* 0x2000C JOYSTICK_BUTTON_13 */
+};
+
+static float s_base_cstick_sens = 1.0f;
+static float s_base_free_speed  = NOX_3DS_FREE_AIM_SPEED;
+
+/* 1-frame <RangedAim> + <InvokeSlot1..5> self-cast state machine on 0x20000..0x2000C */
+static bool     s_inv_shift_held       = false;
+static bool     s_inv_shift_ready      = false;
+static uint32_t s_inv_pending_slots    = 0;
+static uint32_t s_inv_early_up_slots   = 0;
+static uint32_t s_inv_active_slots     = 0;
+static uint32_t s_prev_slot_held_mask  = 0;
 
 /* Input injectors (src/input.c) */
 extern void nox_ctrl_inject_mouse_abs(int x, int y);
@@ -86,18 +121,8 @@ static int orientation_from_vec(float fx, float fy)
 static void get_top_viewport_bounds(int *out_l, int *out_t, int *out_r, int *out_b,
                                     int *out_cx, int *out_cy)
 {
-    int l = NOX_3DS_VP_LEFT;
-    int t = NOX_3DS_VP_TOP;
-    int r = NOX_3DS_VP_RIGHT;
-    int b = NOX_3DS_VP_BOTTOM;
-
-    int *vp = (int *)(void *)sub_437250();
-    if (vp && (vp[2] - vp[0]) >= 64 && (vp[3] - vp[1]) >= 64) {
-        l = vp[0];
-        t = vp[1];
-        r = vp[2];
-        b = vp[3];
-    }
+    int l = 0, t = 48, r = 639, b = 431;
+    nox_3ds_get_top_viewport(&l, &t, &r, &b, NULL, NULL, NULL, NULL);
 
     if (out_l)  *out_l  = l;
     if (out_t)  *out_t  = t;
@@ -197,11 +222,13 @@ static bool is_creature_cage_hit(int x, int y)
 void nox_3ds_input_init(void)
 {
     memset(&g_in, 0, sizeof(g_in));
+    s_base_cstick_sens           = read_env_float("NOX_3DS_CSTICK_SENS",     1.0f,  0.2f,  4.0f);
+    s_base_free_speed            = read_env_float("NOX_3DS_FREE_AIM_SPEED", NOX_3DS_FREE_AIM_SPEED, 2.0f, 20.0f);
     g_in.cstick_cfg.deadzone     = read_env_float("NOX_3DS_CSTICK_DEADZONE", 0.14f, 0.02f, 0.85f);
     g_in.cstick_cfg.curve_exp    = read_env_float("NOX_3DS_CSTICK_CURVE",    1.75f, 1.0f,  4.0f);
-    g_in.cstick_cfg.sensitivity  = read_env_float("NOX_3DS_CSTICK_SENS",     1.0f,  0.2f,  4.0f);
+    g_in.cstick_cfg.sensitivity  = s_base_cstick_sens;
     g_in.cstick_cfg.close_radius = read_env_float("NOX_3DS_AIM_RADIUS", NOX_3DS_AIM_CLOSE_RADIUS, 10.0f, 36.0f);
-    g_in.cstick_cfg.free_speed   = read_env_float("NOX_3DS_FREE_AIM_SPEED", NOX_3DS_FREE_AIM_SPEED, 2.0f, 20.0f);
+    g_in.cstick_cfg.free_speed   = s_base_free_speed;
 
     g_in.world_aim_x    = NOX_3DS_LOGICAL_W / 2;
     g_in.world_aim_y    = (NOX_3DS_LOGICAL_H / 2) + (int)lrintf(g_in.cstick_cfg.close_radius);
@@ -232,6 +259,268 @@ void nox_3ds_input_set_cstick_params(float deadzone, float curve_exp, float sens
     g_in.cstick_cfg.deadzone    = deadzone;
     g_in.cstick_cfg.curve_exp   = curve_exp;
     g_in.cstick_cfg.sensitivity = sensitivity;
+}
+
+void nox_3ds_input_apply_sensitivity(float sens)
+{
+    if (sens < 0.1f) sens = 0.1f;
+    if (sens > 10.0f) sens = 10.0f;
+    /* Smooth sqrt curve maps Options slider [0..50..100] (0.1..1.0..10.0) -> ~0.32x..1.0x..3.16x */
+    float scale = sqrtf(sens);
+    float c_sens = s_base_cstick_sens * scale;
+    float f_spd  = s_base_free_speed * scale;
+    if (c_sens < 0.25f) c_sens = 0.25f;
+    if (c_sens > 4.0f)  c_sens = 4.0f;
+    if (f_spd  < 3.0f)  f_spd  = 3.0f;
+    if (f_spd  > 36.0f) f_spd  = 36.0f;
+    g_in.cstick_cfg.sensitivity = c_sens;
+    g_in.cstick_cfg.free_speed  = f_spd;
+}
+
+const void *nox_3ds_get_joy_button_label(int joy_idx)
+{
+    if (joy_idx < 0 || joy_idx >= NOX_3DS_JOY_BTN_COUNT)
+        return NULL;
+    return (const void *)k_3ds_joy_map[joy_idx].label;
+}
+
+static uint32_t get_bound_joy_bits_for_action(int action_id, bool *out_has_lmb)
+{
+    uint32_t joy_bits = 0;
+    bool has_lmb = false;
+    uint32_t *node = (uint32_t *)(uintptr_t)nox_read_u32(&byte_5D4594[754056]);
+    while (node) {
+        int num_inputs  = (int)node[8];
+        int num_actions = (int)node[17];
+        bool match = false;
+        for (int a = 0; a < num_actions && a < 8; ++a) {
+            if ((int)node[9 + a] == action_id) {
+                match = true;
+                break;
+            }
+        }
+        if (match && num_inputs == 1) {
+            uint32_t code = node[0];
+            if (code == 0x10000u) {
+                has_lmb = true;
+            } else if ((code & 0xFFFF0000u) == NOX_3DS_JOY_BTN_BASE) {
+                uint32_t idx = code & 0xFFFFu;
+                if (idx < NOX_3DS_JOY_BTN_COUNT)
+                    joy_bits |= (1u << idx);
+            }
+        }
+        node = (uint32_t *)(uintptr_t)node[19];
+    }
+    if (out_has_lmb)
+        *out_has_lmb = has_lmb;
+    return joy_bits;
+}
+
+uint32_t nox_3ds_get_bound_hid_mask(int action_id)
+{
+    uint32_t joy_bits = get_bound_joy_bits_for_action(action_id, NULL);
+    uint32_t hid_mask = 0;
+    for (int i = 0; i < NOX_3DS_JOY_BTN_COUNT; ++i) {
+        if (joy_bits & (1u << i))
+            hid_mask |= k_3ds_joy_map[i].hid_bit;
+    }
+    return hid_mask;
+}
+
+int nox_3ds_poll_ui_capture_token(void)
+{
+    uint32_t down = g_in.keys_down;
+    if (!down)
+        return 0;
+    for (int i = 0; i < NOX_3DS_JOY_BTN_COUNT; ++i) {
+        if (down & k_3ds_joy_map[i].hid_bit)
+            return (int)(NOX_3DS_JOY_BTN_BASE + (uint32_t)i);
+    }
+    return 0;
+}
+
+static void remove_3ds_joy_bindings_for_action(int action_id)
+{
+    uint32_t *node = (uint32_t *)(uintptr_t)nox_read_u32(&byte_5D4594[754056]);
+    while (node) {
+        uint32_t *next = (uint32_t *)(uintptr_t)node[19];
+        int num_inputs  = (int)node[8];
+        int num_actions = (int)node[17];
+        bool has_joy = false;
+        bool has_act = false;
+        for (int i = 0; i < num_inputs && i < 8; ++i) {
+            if ((node[i] & 0xFFFF0000u) == NOX_3DS_JOY_BTN_BASE)
+                has_joy = true;
+        }
+        for (int a = 0; a < num_actions && a < 8; ++a) {
+            if ((int)node[9 + a] == action_id)
+                has_act = true;
+        }
+        if (has_joy && (action_id < 0 || has_act)) {
+            uint32_t *prev = (uint32_t *)(uintptr_t)node[18];
+            if (prev)
+                prev[19] = (uint32_t)(uintptr_t)next;
+            else
+                nox_write_u32(&byte_5D4594[754056], (uint32_t)(uintptr_t)next);
+            if (next)
+                next[18] = (uint32_t)(uintptr_t)prev;
+            free(node);
+        }
+        node = next;
+    }
+}
+
+void nox_3ds_ensure_default_button_bindings(bool force_defaults)
+{
+    if (!force_defaults) {
+        uint32_t *node = (uint32_t *)(uintptr_t)nox_read_u32(&byte_5D4594[754056]);
+        while (node) {
+            int n = (int)node[8];
+            for (int i = 0; i < n && i < 8; ++i) {
+                if ((node[i] & 0xFFFF0000u) == NOX_3DS_JOY_BTN_BASE)
+                    return; /* User already has saved 3DS button bindings in nox.cfg */
+            }
+            node = (uint32_t *)(uintptr_t)node[19];
+        }
+    } else {
+        remove_3ds_joy_bindings_for_action(-1);
+    }
+
+    /* Seed ergonomic New 3DS defaults into Key 1 (preserving PC mouse/key fallbacks in Key 2) */
+    static const char *const k_defaults[] = {
+        "JOYSTICK_BUTTON_13 = ToggleMap",         /* [Select]  */
+        "JOYSTICK_BUTTON_8 = NextSpellSet",       /* [ZR]      */
+        "JOYSTICK_BUTTON_7 = PreviousSpellSet",   /* [ZL]      */
+        "JOYSTICK_BUTTON_12 = QuickMana",         /* [D-Right] */
+        "JOYSTICK_BUTTON_11 = QuickHealth",       /* [D-Left]  */
+        "JOYSTICK_BUTTON_9 = Jump",               /* [D-Up]    */
+        "JOYSTICK_BUTTON_10 = InvokeSlot5",       /* [D-Down]  */
+        "JOYSTICK_BUTTON_4 = InvokeSlot4",        /* [Y]       */
+        "JOYSTICK_BUTTON_3 = InvokeSlot3",        /* [X]       */
+        "JOYSTICK_BUTTON_2 = InvokeSlot2",        /* [B]       */
+        "JOYSTICK_BUTTON_1 = InvokeSlot1",        /* [A]       */
+        "JOYSTICK_BUTTON_5 = InvertSpellTarget",  /* [L]       */
+        "JOYSTICK_BUTTON_6 = Action",             /* [R]       */
+    };
+    for (size_t i = 0; i < sizeof(k_defaults) / sizeof(k_defaults[0]); ++i) {
+        sub_42CF50(k_defaults[i]);
+    }
+}
+
+uint32_t nox_3ds_update_joystick_buttons(void)
+{
+    uint32_t raw_joy = 0;
+    for (int i = 0; i < NOX_3DS_JOY_BTN_COUNT; ++i) {
+        if (g_in.keys_held & k_3ds_joy_map[i].hid_bit)
+            raw_joy |= (1u << i);
+    }
+
+    const bool world_mode = nox_3ds_input_is_world_mode();
+    if (!world_mode) {
+        s_inv_shift_held      = false;
+        s_inv_shift_ready     = false;
+        s_inv_pending_slots   = 0;
+        s_inv_early_up_slots  = 0;
+        s_inv_active_slots    = 0;
+        s_prev_slot_held_mask = 0;
+        return raw_joy;
+    }
+
+    bool attack_has_lmb = false;
+    uint32_t attack_joy_bits = get_bound_joy_bits_for_action(1, &attack_has_lmb);
+    uint32_t aim_joy_bits    = get_bound_joy_bits_for_action(49, NULL);
+    uint32_t slot_joy_bits[5];
+    uint32_t cur_slot_held_mask = 0;
+    for (int s = 0; s < 5; ++s) {
+        slot_joy_bits[s] = get_bound_joy_bits_for_action(28 + s, NULL);
+        if (raw_joy & slot_joy_bits[s])
+            cur_slot_held_mask |= (1u << s);
+    }
+
+    uint32_t out_joy = raw_joy;
+
+    /* Primary Attack ([R] by default) already injects LMB at world_aim_x/y in world_mode;
+     * avoid duplicate Action firing when MOUSE_BUTTON_LEFT is also bound to Action. */
+    if (attack_has_lmb && attack_joy_bits)
+        out_joy &= ~attack_joy_bits;
+
+    /* Overloaded <RangedAim> ([L]) + <InvokeSlot1..5> -> 1-frame InvertSpellTarget + Spell self-cast!
+     * Holding <RangedAim> alone detaches C-Stick ranged free-aim without flipping ally heals. */
+    if (aim_joy_bits) {
+        bool aim_phys_held = (raw_joy & aim_joy_bits) != 0;
+        out_joy &= ~aim_joy_bits;
+
+        if (s_inv_shift_held && !s_inv_shift_ready)
+            s_inv_shift_ready = true;
+
+        /* Release finished inverted spell casts */
+        for (int s = 0; s < 5; ++s) {
+            uint32_t sbit = (1u << s);
+            if ((s_inv_active_slots & sbit) &&
+                ((s_inv_early_up_slots & sbit) || !(cur_slot_held_mask & sbit))) {
+                s_inv_active_slots   &= ~sbit;
+                s_inv_early_up_slots &= ~sbit;
+            }
+        }
+
+        uint32_t fired_now = 0;
+        if (s_inv_shift_ready && s_inv_pending_slots) {
+            for (int s = 0; s < 5; ++s) {
+                uint32_t sbit = (1u << s);
+                if (s_inv_pending_slots & sbit) {
+                    s_inv_pending_slots &= ~sbit;
+                    s_inv_active_slots  |= sbit;
+                    fired_now           |= sbit;
+                }
+            }
+        }
+
+        for (int s = 0; s < 5; ++s) {
+            uint32_t sbit = (1u << s);
+            bool down_edge = ((cur_slot_held_mask & sbit) != 0) && ((s_prev_slot_held_mask & sbit) == 0);
+            bool up_edge   = ((cur_slot_held_mask & sbit) == 0) && ((s_prev_slot_held_mask & sbit) != 0);
+
+            if (down_edge && aim_phys_held) {
+                if (!s_inv_shift_held) {
+                    s_inv_shift_held  = true;
+                    s_inv_shift_ready = false;
+                }
+                if (s_inv_shift_ready) {
+                    s_inv_active_slots   |= sbit;
+                    s_inv_early_up_slots &= ~sbit;
+                    fired_now            |= sbit;
+                } else {
+                    s_inv_pending_slots  |= sbit;
+                    s_inv_early_up_slots &= ~sbit;
+                }
+            } else if (up_edge) {
+                if ((s_inv_pending_slots & sbit) || (fired_now & sbit)) {
+                    s_inv_early_up_slots |= sbit;
+                } else if (s_inv_active_slots & sbit) {
+                    s_inv_active_slots   &= ~sbit;
+                    s_inv_early_up_slots &= ~sbit;
+                }
+            }
+
+            if (s_inv_pending_slots & sbit) {
+                /* Hold spell back for 1 frame while InvertSpellTarget flips the spell bar */
+                out_joy &= ~slot_joy_bits[s];
+            } else if (s_inv_active_slots & sbit) {
+                out_joy |= slot_joy_bits[s];
+            }
+        }
+
+        if (s_inv_shift_held && s_inv_pending_slots == 0 && s_inv_active_slots == 0) {
+            s_inv_shift_held  = false;
+            s_inv_shift_ready = false;
+        }
+        if (s_inv_shift_held) {
+            out_joy |= aim_joy_bits;
+        }
+    }
+
+    s_prev_slot_held_mask = cur_slot_held_mask;
+    return out_joy;
 }
 
 /*
@@ -498,7 +787,13 @@ const nox_3ds_input_t *nox_3ds_input_get(void)
 void nox_3ds_input_process_hybrid(void)
 {
     const bool world_mode = g_in.in_gameplay;
-    bool l_held = (g_in.keys_held & NOX_3DS_KEY_L) != 0;
+    uint32_t aim_hid_mask = nox_3ds_get_bound_hid_mask(49); /* InvertSpellTarget / Ranged Aim */
+    if (aim_hid_mask == 0)
+        aim_hid_mask = NOX_3DS_KEY_L;
+    uint32_t atk_hid_mask = nox_3ds_get_bound_hid_mask(1);  /* Action / Primary Attack */
+    if (atk_hid_mask == 0)
+        atk_hid_mask = NOX_3DS_KEY_R;
+    bool l_held = (g_in.keys_held & aim_hid_mask) != 0;
 
     if (g_pending_chat) {
         g_pending_chat = false;
@@ -510,15 +805,16 @@ void nox_3ds_input_process_hybrid(void)
     }
 
     /* =====================================================================
-     * 1. Top-Screen World Aiming: C-Stick + L Modifier
-     *    - Default (L not held): Tight fixed radius (~18px) right next to the
-     *      character so adjacent doors, items, and melee targets hover naturally.
-     *    - Hold L: Detaches into free-aim cursor across the full 400x240 Top
-     *      Screen for ranged spells; snaps cleanly back to tight ring on release.
+     * 1. Top-Screen World Aiming: C-Stick + <RangedAim> ([L] by default)
+     *    - Default (L not held): Tight fixed radius (~15px physical) right next
+     *      to the character so adjacent doors, items, and melee targets hover.
+     *    - Hold L: Detaches into free-aim cursor across the full active Top
+     *      Screen viewport (400x240, 640x384, or 800x480) for ranged spells.
      * ===================================================================== */
     if (world_mode) {
         int vp_l, vp_t, vp_r, vp_b, cx, cy;
         get_top_viewport_bounds(&vp_l, &vp_t, &vp_r, &vp_b, &cx, &cy);
+        float vp_scale = (float)(vp_r - vp_l + 1) / (float)NOX_3DS_VP_W;
 
         bool l_down = (l_held && !g_prev_l_held);
         bool l_up   = (!l_held && g_prev_l_held);
@@ -531,9 +827,9 @@ void nox_3ds_input_process_hybrid(void)
 
         if (l_held) {
             if (g_in.touch_active) {
-                /* TRACKPAD MODE: Match exact bottom touch scaled location directly */
-                g_in.world_aim_x = g_in.bottom_touch_x;
-                g_in.world_aim_y = g_in.bottom_touch_y;
+                /* TRACKPAD MODE: Scale 320x240 bottom touch proportionally across active Top viewport */
+                g_in.world_aim_x = vp_l + ((int)g_in.touch_x * (vp_r - vp_l)) / (NOX_3DS_BOT_W - 1);
+                g_in.world_aim_y = vp_t + ((int)g_in.touch_y * (vp_b - vp_t)) / (NOX_3DS_BOT_H - 1);
                 g_free_aim_x = (float)g_in.world_aim_x;
                 g_free_aim_y = (float)g_in.world_aim_y;
                 
@@ -553,11 +849,12 @@ void nox_3ds_input_process_hybrid(void)
                 }
 
                 if (cstick_active) {
-                    g_free_aim_x += cnx * cmag * g_in.cstick_cfg.free_speed;
-                    g_free_aim_y += cny * cmag * g_in.cstick_cfg.free_speed;
+                    float eff_speed = g_in.cstick_cfg.free_speed * vp_scale;
+                    g_free_aim_x += cnx * cmag * eff_speed;
+                    g_free_aim_y += cny * cmag * eff_speed;
                 }
 
-                /* Clamp strictly to the 400x240 Top Screen viewport bounds */
+                /* Clamp strictly to the active Top Screen viewport bounds */
                 if (g_free_aim_x < (float)vp_l) g_free_aim_x = (float)vp_l;
                 if (g_free_aim_x > (float)vp_r) g_free_aim_x = (float)vp_r;
                 if (g_free_aim_y < (float)vp_t) g_free_aim_y = (float)vp_t;
@@ -588,13 +885,13 @@ void nox_3ds_input_process_hybrid(void)
             }
 
             if (cstick_active) {
-                /* Direct C-Stick aim on tight fixed radius (~18px) */
+                /* Direct C-Stick aim on tight fixed radius (~15px physical) */
                 g_aim_dir_x = cnx;
                 g_aim_dir_y = cny;
                 g_world_aim_orient = orientation_from_vec(g_aim_dir_x, g_aim_dir_y);
             } else {
                 /* When walking with Circle Pad and not touching C-Stick, smoothly
-                 * keep the ~18px close-aim probe directly ahead of the hero so
+                 * keep the close-aim probe directly ahead of the hero so
                  * adjacent doors, chests, and items highlight naturally! */
                 float lx = (float)g_in.cpad_x / 156.0f;
                 float ly = -(float)g_in.cpad_y / 156.0f;
@@ -606,7 +903,7 @@ void nox_3ds_input_process_hybrid(void)
                 }
             }
 
-            float r = g_in.cstick_cfg.close_radius;
+            float r = g_in.cstick_cfg.close_radius * vp_scale;
             int ax = cx + (int)lrintf(g_aim_dir_x * r);
             int ay = cy + (int)lrintf(g_aim_dir_y * r);
             if (ax < vp_l) ax = vp_l;
@@ -633,12 +930,12 @@ void nox_3ds_input_process_hybrid(void)
     /* =====================================================================
      * 2. Strict Screen Input Arbitration:
      *    - Touch Movement: Stays active independently of the mouse pointer.
-     *    - Mouse Pointer & Clicks: R-button (attack) or L-button (trackpad)
-     *      take priority and force the mouse to the Top Screen. Otherwise,
-     *      Touch owns the mouse for UI interaction.
+     *    - Mouse Pointer & Clicks: Primary Attack ([R] or remapped button) or
+     *      Ranged Aim ([L] or remapped button) take priority and force the
+     *      mouse to the Top Screen. Otherwise, Touch owns the mouse for UI.
      * ===================================================================== */
      
-    bool r_held = (g_in.keys_held & NOX_3DS_KEY_R) != 0;
+    bool r_held = (g_in.keys_held & atk_hid_mask) != 0;
     bool top_screen_priority = world_mode && (l_held || r_held);
 
     if (top_screen_priority) {

@@ -462,6 +462,97 @@ static uint16_t g_3ds_world_tooltip[256];
 static uint16_t *g_3ds_top_splash_pixels = NULL;
 static int g_3ds_top_splash_w = 0;
 static int g_3ds_top_splash_h = 0;
+static uint16_t *g_3ds_top800_swbuf = NULL;
+static uint16_t **g_3ds_top800_swrows = NULL;
+static void *g_3ds_orig_top_swbuf = NULL;
+static void *g_3ds_orig_top_swrows = NULL;
+static int g_3ds_top_world_800_active = 0;
+
+static void nox_3ds_free_top800_swbuf(void)
+{
+    free(g_3ds_top800_swrows);
+    free(g_3ds_top800_swbuf);
+    g_3ds_top800_swrows = NULL;
+    g_3ds_top800_swbuf = NULL;
+    g_3ds_top_world_800_active = 0;
+}
+
+static bool nox_3ds_ensure_top800_swbuf(void)
+{
+    const int w = 800;
+    const int h = 480;
+    if (g_3ds_top800_swbuf && g_3ds_top800_swrows)
+        return true;
+
+    g_3ds_top800_swbuf = (uint16_t *)calloc((size_t)w * (size_t)h, sizeof(uint16_t));
+    g_3ds_top800_swrows = (uint16_t **)malloc((size_t)h * sizeof(uint16_t *));
+    if (!g_3ds_top800_swbuf || !g_3ds_top800_swrows) {
+        nox_3ds_free_top800_swbuf();
+        return false;
+    }
+    for (int y = 0; y < h; ++y) {
+        g_3ds_top800_swrows[y] = g_3ds_top800_swbuf + (size_t)y * (size_t)w;
+    }
+    return true;
+}
+
+void nox_3ds_begin_top_world_pass(void)
+{
+    int vp_l, vp_t, vp_r, vp_b, vp_w, vp_h, surf_w, surf_h;
+    nox_3ds_get_top_viewport(&vp_l, &vp_t, &vp_r, &vp_b, &vp_w, &vp_h, &surf_w, &surf_h);
+    sub_430A70(0, surf_w - 1, 0, surf_h - 1);
+
+    if (surf_w == 800 && nox_3ds_ensure_top800_swbuf()) {
+        nox_3ds_swbuf_select(NOX_3DS_SWBUF_TOP);
+        if (!g_3ds_top_world_800_active) {
+            g_3ds_orig_top_swbuf  = *(void **)&byte_5D4594[3798780];
+            g_3ds_orig_top_swrows = *(void **)&byte_5D4594[3798784];
+            *(void **)&byte_5D4594[3798780] = g_3ds_top800_swbuf;
+            *(void **)&byte_5D4594[3798784] = g_3ds_top800_swrows;
+            g_3ds_top_world_800_active = 1;
+        }
+        *(_DWORD *)&byte_5D4594[3805496] = 800;
+        *(_DWORD *)&byte_5D4594[3801784] = 800;
+        *(_DWORD *)&byte_5D4594[3801808] = 1600;
+        *(_DWORD *)&byte_5D4594[3801776] = 400;
+        *(_DWORD *)&byte_5D4594[3801800] = 50;
+        *(_DWORD *)&byte_5D4594[3805488] = 1600 * 480;
+        *(_DWORD *)&byte_5D4594[1193684] = 800;
+        if (g_backbuffer1) {
+            g_backbuffer1->w = 800;
+            dword_974868 = g_backbuffer1->pitch - 1600;
+        }
+    } else {
+        if (g_3ds_top_world_800_active)
+            nox_3ds_end_top_world_pass();
+        if (g_backbuffer1) {
+            g_backbuffer1->w = 640;
+            dword_974868 = g_backbuffer1->pitch - 1280;
+        }
+    }
+}
+
+void nox_3ds_end_top_world_pass(void)
+{
+    if (!g_3ds_top_world_800_active)
+        return;
+
+    nox_3ds_swbuf_select(NOX_3DS_SWBUF_TOP);
+    *(void **)&byte_5D4594[3798780] = g_3ds_orig_top_swbuf;
+    *(void **)&byte_5D4594[3798784] = g_3ds_orig_top_swrows;
+    *(_DWORD *)&byte_5D4594[3805496] = NOX_3DS_LOGICAL_W;
+    *(_DWORD *)&byte_5D4594[3801784] = NOX_3DS_LOGICAL_W;
+    *(_DWORD *)&byte_5D4594[3801808] = NOX_3DS_LOGICAL_W * 2;
+    *(_DWORD *)&byte_5D4594[3801776] = NOX_3DS_LOGICAL_W >> 1;
+    *(_DWORD *)&byte_5D4594[3801800] = NOX_3DS_LOGICAL_W >> 4;
+    *(_DWORD *)&byte_5D4594[3805488] = NOX_3DS_LOGICAL_W * 2 * NOX_3DS_LOGICAL_H;
+    *(_DWORD *)&byte_5D4594[1193684] = NOX_3DS_LOGICAL_W;
+    if (g_backbuffer1) {
+        g_backbuffer1->w = NOX_3DS_LOGICAL_W;
+        dword_974868 = g_backbuffer1->pitch - (NOX_3DS_LOGICAL_W * 2);
+    }
+    g_3ds_top_world_800_active = 0;
+}
 
 static void nox_3ds_free_top_splash(void)
 {
@@ -919,6 +1010,7 @@ void sub_48A120()
 #ifdef __3DS__
 	sub_48B1D0(&g_backbuffer_bot);
 	nox_3ds_free_bot_swbuf();
+	nox_3ds_free_top800_swbuf();
 	nox_3ds_free_top_splash();
 #endif
 	sub_48B1B0(&g_ddraw);
@@ -1585,6 +1677,10 @@ void sdl_present()
             top_frame.crop_w      = g_3ds_top_crop_w;
             top_frame.crop_h      = g_3ds_top_crop_h;
             top_frame.fill_screen = g_3ds_top_fill_screen;
+            if (top_frame.crop_x + top_frame.crop_w > top_frame.w)
+                top_frame.w = top_frame.crop_x + top_frame.crop_w;
+            if (top_frame.crop_y + top_frame.crop_h > top_frame.h)
+                top_frame.h = top_frame.crop_y + top_frame.crop_h;
         } else {
             top_frame.crop_x      = 0;
             top_frame.crop_y      = 0;

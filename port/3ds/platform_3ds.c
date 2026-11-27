@@ -87,6 +87,8 @@ bool nox_3ds_init(void)
     if (R_SUCCEEDED(APT_CheckNew3DS(&is_n3ds))) {
         g_3ds_state.is_new_3ds = is_n3ds;
     }
+    g_3ds_state.top_res_preset = NOX_3DS_RES_640x384;
+    g_3ds_state.tex_filter     = NOX_3DS_FILTER_LINEAR;
 
     g_3ds_state.linear_free_bytes = (uint32_t)linearSpaceFree();
     g_3ds_state.heap_used_bytes = (uint32_t)mallinfo().uordblks;
@@ -292,4 +294,124 @@ void nox_3ds_movie_log(const char *fmt, ...)
         fflush(f);
         fclose(f);
     }
+}
+
+extern unsigned char byte_587000[];
+extern float input_sensitivity;
+
+void nox_3ds_get_top_viewport(int *out_l, int *out_t, int *out_r, int *out_b,
+                              int *out_w, int *out_h,
+                              int *out_surf_w, int *out_surf_h)
+{
+    int surf_w = NOX_3DS_LOGICAL_W;
+    int surf_h = NOX_3DS_LOGICAL_H;
+    int w = NOX_3DS_VP_W;
+    int h = NOX_3DS_VP_H;
+    int l = NOX_3DS_VP_LEFT;
+    int t = NOX_3DS_VP_TOP;
+
+    switch (g_3ds_state.top_res_preset) {
+    case NOX_3DS_RES_400x240:
+        surf_w = 640;
+        surf_h = 480;
+        w = 400;
+        h = 240;
+        l = (surf_w - w) / 2; /* 120 */
+        t = (surf_h - h) / 2; /* 120 */
+        break;
+    case NOX_3DS_RES_800x480:
+        surf_w = 800;
+        surf_h = 480;
+        w = 800;
+        h = 480;
+        l = 0;
+        t = 0;
+        break;
+    case NOX_3DS_RES_640x384:
+    default:
+        surf_w = 640;
+        surf_h = 480;
+        w = 640;
+        h = 384;
+        l = 0;
+        t = 48;
+        break;
+    }
+
+    if (out_l)      *out_l      = l;
+    if (out_t)      *out_t      = t;
+    if (out_r)      *out_r      = l + w - 1;
+    if (out_b)      *out_b      = t + h - 1;
+    if (out_w)      *out_w      = w;
+    if (out_h)      *out_h      = h;
+    if (out_surf_w) *out_surf_w = surf_w;
+    if (out_surf_h) *out_surf_h = surf_h;
+}
+
+void nox_3ds_cfg_load(void)
+{
+    FILE *f = fopen(NOX_3DS_DATA_ROOT "/nox_3ds.cfg", "r");
+    if (f) {
+        char line[256];
+        while (fgets(line, sizeof(line), f)) {
+            char *p = line;
+            while (*p && isspace((unsigned char)*p)) ++p;
+            if (!*p || *p == '#' || *p == ';')
+                continue;
+            char *eq = strchr(p, '=');
+            if (!eq)
+                continue;
+            *eq = '\0';
+            char *k = p;
+            char *ke = eq;
+            while (ke > k && isspace((unsigned char)ke[-1])) --ke;
+            *ke = '\0';
+
+            char *v = eq + 1;
+            while (*v && isspace((unsigned char)*v)) ++v;
+            int iv = atoi(v);
+
+            if (strcasecmp(k, "TopResolution") == 0) {
+                if (iv >= 0 && iv <= 2)
+                    g_3ds_state.top_res_preset = (nox_3ds_res_preset_t)iv;
+            } else if (strcasecmp(k, "WideStretch") == 0) {
+                g_3ds_state.wide_stretch = (iv != 0);
+            } else if (strcasecmp(k, "TexFilter") == 0) {
+                g_3ds_state.tex_filter = (iv != 0) ? NOX_3DS_FILTER_NEAREST : NOX_3DS_FILTER_LINEAR;
+            } else if (strcasecmp(k, "ShowFPS") == 0) {
+                nox_3ds_perf_hud_set_enabled(iv != 0);
+            } else if (strcasecmp(k, "ShowTooltips") == 0) {
+                nox_write_u32(&byte_587000[80840], (iv != 0) ? 1u : 0u);
+            }
+        }
+        fclose(f);
+    }
+
+    /* Allow environment override for automated testing/benchmarking */
+    const char *env_res = getenv("NOX_3DS_TOP_RES");
+    if (env_res && *env_res) {
+        if (strcmp(env_res, "400") == 0 || strcmp(env_res, "400x240") == 0 || strcmp(env_res, "0") == 0)
+            g_3ds_state.top_res_preset = NOX_3DS_RES_400x240;
+        else if (strcmp(env_res, "640") == 0 || strcmp(env_res, "640x384") == 0 || strcmp(env_res, "1") == 0)
+            g_3ds_state.top_res_preset = NOX_3DS_RES_640x384;
+        else if (strcmp(env_res, "800") == 0 || strcmp(env_res, "800x480") == 0 || strcmp(env_res, "2") == 0)
+            g_3ds_state.top_res_preset = NOX_3DS_RES_800x480;
+    }
+
+    nox_3ds_input_apply_sensitivity(input_sensitivity);
+}
+
+void nox_3ds_cfg_save(void)
+{
+    FILE *f = fopen(NOX_3DS_DATA_ROOT "/nox_3ds.cfg", "w");
+    if (!f)
+        return;
+    fprintf(f, "# Nox 3DS Hardware Display & UI Settings\n");
+    fprintf(f, "TopResolution = %d\n", (int)g_3ds_state.top_res_preset);
+    fprintf(f, "WideStretch = %d\n", g_3ds_state.wide_stretch ? 1 : 0);
+    fprintf(f, "TexFilter = %d\n", (g_3ds_state.tex_filter == NOX_3DS_FILTER_NEAREST) ? 1 : 0);
+    fprintf(f, "ShowFPS = %d\n", nox_3ds_perf_hud_is_enabled() ? 1 : 0);
+    fprintf(f, "ShowTooltips = %u\n", (unsigned)(nox_read_u32(&byte_587000[80840]) ? 1u : 0u));
+    fflush(f);
+    fclose(f);
 }

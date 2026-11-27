@@ -438,6 +438,11 @@ bool nox_3ds_perf_hud_is_enabled(void)
     return s_perf_hud_enabled;
 }
 
+void nox_3ds_perf_hud_set_enabled(bool enabled)
+{
+    s_perf_hud_enabled = enabled;
+}
+
 void nox_3ds_perf_hud_toggle(void)
 {
     s_perf_hud_enabled = !s_perf_hud_enabled;
@@ -505,6 +510,16 @@ void nox_3ds_font_clear_all(void)
     s_counts[1] = 0;
 }
 
+static int top_crisp_line_height_logical(void)
+{
+    switch (nox_3ds_get_state()->top_res_preset) {
+    case NOX_3DS_RES_400x240: return 6;
+    case NOX_3DS_RES_800x480: return 12;
+    case NOX_3DS_RES_640x384:
+    default:                  return 8;
+    }
+}
+
 static int crisp_glyph_width_logical(uint16_t ch, bool is_bottom)
 {
     if (ch < 0x20)
@@ -512,7 +527,23 @@ static int crisp_glyph_width_logical(uint16_t ch, bool is_bottom)
     ch = normalize_crisp_char(ch);
     int pw = (int)s_crisp_font[ch - 0x20].w;
     int adv_phys = pw + 1;
-    int adv_logical = is_bottom ? (adv_phys * 2) : ((adv_phys * 8 + 2) / 5);
+    int adv_logical;
+    if (is_bottom) {
+        adv_logical = adv_phys * 2;
+    } else {
+        switch (nox_3ds_get_state()->top_res_preset) {
+        case NOX_3DS_RES_400x240:
+            adv_logical = adv_phys;
+            break;
+        case NOX_3DS_RES_800x480:
+            adv_logical = adv_phys * 2;
+            break;
+        case NOX_3DS_RES_640x384:
+        default:
+            adv_logical = (adv_phys * 8 + 2) / 5;
+            break;
+        }
+    }
     return (adv_logical > 1) ? (adv_logical - 1) : 1;
 }
 
@@ -533,7 +564,7 @@ int nox_3ds_font_line_height_logical(int font_slot, bool is_bottom)
         return 0;
     if (font_slot < 0 || font_slot >= FONT_SLOTS || font_slot == 1)
         return 0;
-    return is_bottom ? 12 : 8;
+    return is_bottom ? 12 : top_crisp_line_height_logical();
 }
 
 /* Measure wrapped string dimensions using either crisp 3x5 or stock .fnt metrics */
@@ -542,7 +573,7 @@ static void measure_string_wrapped(int font_slot, const uint16_t *wstr, int wrap
                                    int *out_max_w, int *out_lines, int *out_line_h)
 {
     int line_h = use_crisp
-        ? (is_bottom ? 12 : 8)
+        ? (is_bottom ? 12 : top_crisp_line_height_logical())
         : ((font_slot >= 0 && font_slot < FONT_SLOTS && s_stock_h[font_slot] > 0) ? s_stock_h[font_slot] : 10);
     if (tab_w <= 0)
         tab_w = 64;

@@ -218,12 +218,18 @@ static void draw_screen_pass(C3D_RenderTarget *target,
     Tex3DS_SubTexture subtex;
     build_subtex(&subtex, frame);
 
-    /* Use crisp nearest-neighbor when rendering native 1:1 400x240 gameplay,
-     * and smooth bilinear filtering when scaling 640x480 -> 400x240 or 320x240. */
-    GPU_TEXTURE_FILTER_PARAM want_filter =
-        (subtex.width == (u16)target_w && subtex.height == (u16)target_h)
-            ? GPU_NEAREST
-            : GPU_LINEAR;
+    const nox_3ds_state_t *st = nox_3ds_state_mut();
+
+    /* Bottom screen UI (640x480 -> 320x240) always uses GPU_LINEAR 2:1 box average.
+     * Top screen uses GPU_NEAREST for native 1:1 400x240 or when Sharp filter is selected,
+     * and GPU_LINEAR for 640x384 / 800x480 2x SSAA downscaling. */
+    GPU_TEXTURE_FILTER_PARAM want_filter = GPU_LINEAR;
+    if (target == s_top_target) {
+        if ((subtex.width == (u16)target_w && subtex.height == (u16)target_h) ||
+            st->tex_filter == NOX_3DS_FILTER_NEAREST) {
+            want_filter = GPU_NEAREST;
+        }
+    }
     if (slot->filter != want_filter) {
         C3D_TexSetFilter(&slot->tex, want_filter, want_filter);
         slot->filter = want_filter;
@@ -231,7 +237,6 @@ static void draw_screen_pass(C3D_RenderTarget *target,
 
     float dst_w = (float)target_w;
     float dst_h = (float)target_h;
-    const nox_3ds_state_t *st = nox_3ds_state_mut();
     bool fill_screen = frame->fill_screen && (target != s_top_target || st->wide_stretch);
     if (!fill_screen && subtex.height > 0) {
         float src_aspect = (float)subtex.width / (float)subtex.height;
@@ -257,6 +262,26 @@ static void draw_screen_pass(C3D_RenderTarget *target,
         C2D_SetTintMode(C2D_TintMult);
         C2D_PlainImageTint(&tint, C2D_Color32f(s_gamma, s_gamma, s_gamma, 1.0f), 1.0f);
         C2D_DrawImageAt(img, draw_x, draw_y, 0.0f, &tint, scale_x, scale_y);
+    } else if (s_gamma > 1.02f) {
+        /* Base pass + zero-CPU PICA200 additive overbright & subtle shadow lift */
+        float boost = (s_gamma - 1.0f) * 0.85f;
+        if (boost > 1.25f) boost = 1.25f;
+        C2D_DrawImageAt(img, draw_x, draw_y, 0.0f, NULL, scale_x, scale_y);
+        C2D_Flush();
+        C3D_AlphaBlend(GPU_BLEND_ADD, GPU_BLEND_ADD, GPU_SRC_ALPHA, GPU_ONE, GPU_ZERO, GPU_ONE);
+        C2D_ImageTint add_tint;
+        C2D_SetTintMode(C2D_TintMult);
+        C2D_PlainImageTint(&add_tint, C2D_Color32f(1.0f, 1.0f, 1.0f, boost), 1.0f);
+        C2D_DrawImageAt(img, draw_x, draw_y, 0.0f, &add_tint, scale_x, scale_y);
+        u8 shadow_lift = (u8)(boost * 18.0f);
+        if (shadow_lift > 0) {
+            C2D_DrawRectSolid(draw_x, draw_y, 0.0f, dst_w, dst_h,
+                              C2D_Color32(255, 255, 255, shadow_lift));
+        }
+        C2D_Flush();
+        C3D_AlphaBlend(GPU_BLEND_ADD, GPU_BLEND_ADD,
+                       GPU_SRC_ALPHA, GPU_ONE_MINUS_SRC_ALPHA,
+                       GPU_SRC_ALPHA, GPU_ONE_MINUS_SRC_ALPHA);
     } else {
         C2D_DrawImageAt(img, draw_x, draw_y, 0.0f, NULL, scale_x, scale_y);
     }
