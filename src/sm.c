@@ -319,7 +319,13 @@ void NET_CONNECT_WAIT_LOOP (sm_args_t *args)
   if ( !v4 )
     GOTO_NET_CONNECT_WAIT_THEN(args->net_connect_wait_loop.data, a1, -3);
   if ( 20 * a3 < ++v6 )
+  {
+#ifdef __3DS__
+    nox_3ds_net_log("[sm] NET_CONNECT_WAIT_LOOP timed out after %d iters (ack=%d expect=%d) -> -23",
+                    v6, (int)*(char *)(v4 + 113), (int)a2);
+#endif
     GOTO_NET_CONNECT_WAIT_THEN(args->net_connect_wait_loop.data, a1, -23);
+  }
 #ifndef __EMSCRIPTEN__
   /* Match original sub_5525B0 (GAME5.c) 50 ms polling cadence; mainloop()
    * returns immediately while mainloop_enter is active, so without Sleep(50)
@@ -332,7 +338,14 @@ void NET_CONNECT_WAIT_LOOP (sm_args_t *args)
   sub_4453A0();
 #endif
   if ( *(char *)(v4 + 113) >= a2 )
+  {
+#ifdef __3DS__
+    nox_3ds_net_log("[sm] NET_CONNECT_WAIT_LOOP ack OK after %d iters (flag=%d slot=%d xor=0x%02X)",
+                    v6, *(_DWORD *)&byte_5D4594[3844304], *(int *)(v4 + 20),
+                    (unsigned)*(unsigned char *)(v4 + 148));
+#endif
     GOTO_NET_CONNECT_WAIT_THEN(args->net_connect_wait_loop.data, a1, 0);
+  }
 
   args->net_connect_wait_loop.counter = v6;
 }
@@ -357,6 +370,10 @@ void NET_CONNECT_WAIT_THEN (sm_args_t *args)
     byte_5D4594[2512894] = 32;
     if ( a4 )
       qmemcpy(&byte_5D4594[2512895], (const void *)a4, a5);
+#ifdef __3DS__
+    nox_3ds_net_log("[sm] NET_CONNECT_WAIT_THEN sending 0x20 JoinData (%uB, slot=%d, seq=%u)",
+                    a5 + 3u, v5[5], (unsigned)(unsigned char)byte_5D4594[2512893]);
+#endif
     sub_552640(a1, &byte_5D4594[2512892], a5 + 3, 3);
   }
   GOTO_NET_CONNECT_THEN(v5[5]);
@@ -383,7 +400,12 @@ void NET_CONNECT_THEN (sm_args_t *args)
 void CONNECT_WAIT_LOOP (sm_args_t *args)
 {
   if (sub_416BB0() >= args->connect_wait_loop.timeout)
+  {
+#ifdef __3DS__
+    nox_3ds_net_log("[sm] CONNECT_WAIT_LOOP timed out waiting for 0xAF welcome -> -19");
+#endif
     GOTO_CONNECT_WAIT_THEN(0);
+  }
   
   sub_552A80(*(unsigned int *)&byte_5D4594[815700], 1);
   sub_40EE10(*(unsigned int *)&byte_5D4594[815700], 31, 0);

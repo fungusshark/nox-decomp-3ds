@@ -40,8 +40,11 @@
 #define SOCKETS_FD_BASE         NOX_3DS_SOCKETS_FD_BASE
 #define SOC_MAX_DRAIN_PER_TICK  256u
 #define SOC_DRAIN_WINDOW_MS     16u       /* Half of a 30 Hz Nox tick (~33 ms) */
-/* libctru sys/socket.h rejects any send/recv flag > 0x4 with EOPNOTSUPP. */
-#define SOC_SAFE_MSG_FLAGS(f)   (((f) & (MSG_OOB | MSG_PEEK)) | MSG_DONTWAIT)
+/* Sockets are already configured O_NONBLOCK via fcntl() at creation time.
+ * Never force MSG_DONTWAIT onto sendto()/send() (real soc:u rejects unsupported
+ * per-call flags on SendTo); only fall back to MSG_DONTWAIT on recv if fcntl failed. */
+#define SOC_SAFE_SEND_FLAGS(f)      ((f) & MSG_OOB)
+#define SOC_SAFE_RECV_FLAGS(f, nb)  (((f) & (MSG_OOB | MSG_PEEK)) | ((nb) ? 0 : MSG_DONTWAIT))
 
 /* Real 3DS soc:u CTRPollFD bitmasks (libctru <poll.h> misdefines POLLERR=0x08 / POLLNVAL=0x20). */
 #define CTR_SOC_POLLRDNORM      0x01
@@ -381,11 +384,21 @@ static int sockets_socket(int domain, int type, int protocol)
 
     /* Enforce strictly non-blocking mode immediately so dropped UDP packets
      * or TOCTOU races can NEVER hang the ARM11 30 Hz main loop. */
+    bool nonblock_ok = false;
     int fl = fcntl(rfd, F_GETFL, 0);
     if (fl >= 0) {
-        if (fcntl(rfd, F_SETFL, fl | O_NONBLOCK) < 0) {
-            printf("[net3ds:soc] WARN: fcntl(O_NONBLOCK) failed on rfd=%d errno=%d\n", rfd, errno);
+        if (fcntl(rfd, F_SETFL, fl | O_NONBLOCK) == 0) {
+            nonblock_ok = true;
+        } else {
+            nox_3ds_net_log("[net3ds:soc] WARN: fcntl(O_NONBLOCK) failed on rfd=%d errno=%d", rfd, errno);
         }
+    } else {
+        nox_3ds_net_log("[net3ds:soc] WARN: fcntl(F_GETFL) failed on rfd=%d errno=%d", rfd, errno);
+    }
+
+    if (type == SOCK_DGRAM) {
+        int reuse = 1;
+        (void)setsockopt(rfd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
     }
 
     soc_slot_t *s = &g_soc_slots[slot_idx];
@@ -393,7 +406,7 @@ static int sockets_socket(int domain, int type, int protocol)
     s->in_use = true;
     s->real_fd = rfd;
     s->type = type;
-    s->nonblocking = true;
+    s->nonblocking = nonblock_ok;
 
     last_socket_error = 0;
     soc_unlock();
@@ -459,14 +472,18 @@ static int sockets_bind(int vfd, const void *addr, unsigned int addrlen)
 
     int r = -1;
     if (stype == SOCK_DGRAM && sin.sin_port == 0) {
-        /* Proactively pick a verified unused ephemeral UDP port so soc:u never leaves port=0. */
-        static uint16_t s_ephem_cursor = 49152u;
+        /* Proactively pick a verified unused ephemeral UDP port so soc:u never leaves port=0.
+         * Seed the cursor from the ARM11 system tick so restarts avoid stale router NAT state. */
+        static uint16_t s_ephem_cursor = 0u;
         int last_err = EADDRINUSE;
         for (uint16_t k = 0; k < 64u; ++k) {
             uint16_t cand = 0;
             soc_lock();
-            for (uint16_t probe = 0; probe < 1024u; ++probe) {
-                uint16_t p = (uint16_t)(49152u + (((s_ephem_cursor - 49152u) + probe) & 1023u));
+            if (s_ephem_cursor == 0u) {
+                s_ephem_cursor = (uint16_t)(49152u + ((uint32_t)svcGetSystemTick() & 8191u));
+            }
+            for (uint16_t probe = 0; probe < 8192u; ++probe) {
+                uint16_t p = (uint16_t)(49152u + (((s_ephem_cursor - 49152u) + probe) & 8191u));
                 bool used = false;
                 for (int i = 0; i < MAX_SOC_SOCKS; ++i) {
                     if (g_soc_slots[i].in_use && g_soc_slots[i].bound_port == p) {
@@ -476,13 +493,13 @@ static int sockets_bind(int vfd, const void *addr, unsigned int addrlen)
                 }
                 if (!used) {
                     cand = p;
-                    s_ephem_cursor = (uint16_t)(49152u + (((p - 49152u) + 1u) & 1023u));
+                    s_ephem_cursor = (uint16_t)(49152u + (((p - 49152u) + 1u) & 8191u));
                     break;
                 }
             }
             soc_unlock();
             if (cand == 0u)
-                cand = (uint16_t)(49152u + (k & 1023u));
+                cand = (uint16_t)(49152u + (k & 8191u));
 
             sin.sin_port = htons(cand);
             r = bind(rfd, (const struct sockaddr *)&sin, (socklen_t)sizeof(sin));
@@ -603,6 +620,7 @@ static int sockets_ioctlsocket(int vfd, long cmd, unsigned long *argp)
     }
     int rfd = s->real_fd;
     int stype = s->type;
+    bool nb = s->nonblocking;
     bool capped = false;
     if (s->rx_count_this_tick > 0u) {
         uint32_t now_ms = nox_3ds_get_ticks_ms();
@@ -658,10 +676,11 @@ static int sockets_ioctlsocket(int vfd, long cmd, unsigned long *argp)
             struct sockaddr_in tmp_from;
             ssize_t got = -1;
             int got_err = EWOULDBLOCK;
+            int rx_flags = SOC_SAFE_RECV_FLAGS(0, nb);
             for (int tries = 0; tries < 16; ++tries) {
                 socklen_t fl = (socklen_t)sizeof(tmp_from);
                 memset(&tmp_from, 0, sizeof(tmp_from));
-                ssize_t r = recvfrom(rfd, tmp_buf, sizeof(tmp_buf), MSG_DONTWAIT,
+                ssize_t r = recvfrom(rfd, tmp_buf, sizeof(tmp_buf), rx_flags,
                                      (struct sockaddr *)&tmp_from, &fl);
                 if (r >= 0) {
                     got = r;
@@ -691,7 +710,15 @@ static int sockets_ioctlsocket(int vfd, long cmd, unsigned long *argp)
                 last_socket_error = 0;
                 return 0;
             }
-            (void)got_err;
+            if (got_err != EWOULDBLOCK && got_err != EAGAIN && got_err != 0) {
+                static uint32_t s_last_rxerr_ms = 0;
+                uint32_t now_ms = nox_3ds_get_ticks_ms();
+                if (s_last_rxerr_ms == 0u || (uint32_t)(now_ms - s_last_rxerr_ms) >= 1000u) {
+                    s_last_rxerr_ms = now_ms ? now_ms : 1u;
+                    nox_3ds_net_log("[net3ds:soc] FIONREAD UDP recvfrom(vfd=%d, rfd=%d, flags=0x%x) err=%d",
+                                    vfd, rfd, rx_flags, got_err);
+                }
+            }
             *argp = 0ul;
             last_socket_error = 0;
             return 0;
@@ -717,7 +744,7 @@ static int sockets_ioctlsocket(int vfd, long cmd, unsigned long *argp)
         }
 
         char peek[1024];
-        ssize_t n = recv(rfd, peek, sizeof(peek), MSG_PEEK | MSG_DONTWAIT);
+        ssize_t n = recv(rfd, peek, sizeof(peek), SOC_SAFE_RECV_FLAGS(MSG_PEEK, nb));
         if (n > 0) {
             *argp = (unsigned long)n;
         } else if (n < 0 && errno == EMSGSIZE) {
@@ -773,7 +800,7 @@ static int sockets_sendto(int vfd, const void *buf, unsigned int len, int flags,
             bcast_be != 0u && bcast_be != htonl(INADDR_BROADCAST)) {
             struct sockaddr_in dir_sin = dst_sin;
             dir_sin.sin_addr.s_addr = bcast_be;
-            r_dir = sendto(rfd, buf, (size_t)len, SOC_SAFE_MSG_FLAGS(flags),
+            r_dir = sendto(rfd, buf, (size_t)len, SOC_SAFE_SEND_FLAGS(flags),
                            (const struct sockaddr *)&dir_sin, (socklen_t)sizeof(dir_sin));
             err_dir = errno;
             nox_3ds_net_log("[net3ds:soc] Directed LAN bcast -> %u.%u.%u.%u:%u rc=%d errno=%d",
@@ -783,7 +810,7 @@ static int sockets_sendto(int vfd, const void *buf, unsigned int len, int flags,
                             (r_dir < 0) ? err_dir : 0);
         }
 
-        ssize_t r_lim = sendto(rfd, buf, (size_t)len, SOC_SAFE_MSG_FLAGS(flags),
+        ssize_t r_lim = sendto(rfd, buf, (size_t)len, SOC_SAFE_SEND_FLAGS(flags),
                                (const struct sockaddr *)&dst_sin, (socklen_t)sizeof(dst_sin));
         if (r_dir >= 0 || r_lim >= 0) {
             last_socket_error = 0;
@@ -793,10 +820,23 @@ static int sockets_sendto(int vfd, const void *buf, unsigned int len, int flags,
         return -1;
     }
 
-    ssize_t r = sendto(rfd, buf, (size_t)len, SOC_SAFE_MSG_FLAGS(flags),
+    int tx_flags = SOC_SAFE_SEND_FLAGS(flags);
+    ssize_t r = sendto(rfd, buf, (size_t)len, tx_flags,
                        (const struct sockaddr *)&dst_sin, (socklen_t)sizeof(dst_sin));
     if (r < 0) {
-        last_socket_error = wsa_from_errno(errno);
+        int e = (errno > 0) ? errno : -errno;
+        last_socket_error = wsa_from_errno(e);
+        static uint32_t s_last_txerr_ms = 0;
+        uint32_t now_ms = nox_3ds_get_ticks_ms();
+        if (s_last_txerr_ms == 0u || (uint32_t)(now_ms - s_last_txerr_ms) >= 1000u) {
+            s_last_txerr_ms = now_ms ? now_ms : 1u;
+            uint32_t dip = (uint32_t)dst_sin.sin_addr.s_addr;
+            nox_3ds_net_log("[net3ds:soc] sendto(vfd=%d, rfd=%d, len=%u, flags=0x%x) -> %u.%u.%u.%u:%u FAILED errno=%d wsa=%u",
+                            vfd, rfd, len, tx_flags,
+                            (unsigned)(dip & 0xFFu), (unsigned)((dip >> 8) & 0xFFu),
+                            (unsigned)((dip >> 16) & 0xFFu), (unsigned)((dip >> 24) & 0xFFu),
+                            (unsigned)ntohs(dst_sin.sin_port), e, last_socket_error);
+        }
         return -1;
     }
 
@@ -828,6 +868,7 @@ static int sockets_recvfrom(int vfd, void *buf, unsigned int len, int flags,
     }
     int rfd = s->real_fd;
     int stype = s->type;
+    bool nb = s->nonblocking;
     if (stype == SOCK_DGRAM && s->rx_valid) {
         size_t copy_n = (len < (size_t)s->rx_len) ? len : (size_t)s->rx_len;
         if (copy_n > 0u)
@@ -861,10 +902,11 @@ static int sockets_recvfrom(int vfd, void *buf, unsigned int len, int flags,
     socklen_t src_len = (socklen_t)sizeof(src_sin);
     ssize_t r = -1;
     int max_tries = (stype == SOCK_DGRAM) ? 16 : 1;
+    int rx_flags = SOC_SAFE_RECV_FLAGS(flags, nb);
     for (int tries = 0; tries < max_tries; ++tries) {
         src_len = (socklen_t)sizeof(src_sin);
         memset(&src_sin, 0, sizeof(src_sin));
-        r = recvfrom(rfd, buf, (size_t)len, SOC_SAFE_MSG_FLAGS(flags),
+        r = recvfrom(rfd, buf, (size_t)len, rx_flags,
                      from ? (struct sockaddr *)&src_sin : NULL,
                      from ? &src_len : NULL);
         if (r >= 0)
@@ -1052,7 +1094,7 @@ static int sockets_send(int vfd, const void *buf, unsigned int len, int flags)
     int rfd = s->real_fd;
     soc_unlock();
 
-    ssize_t r = send(rfd, buf, (size_t)len, SOC_SAFE_MSG_FLAGS(flags));
+    ssize_t r = send(rfd, buf, (size_t)len, SOC_SAFE_SEND_FLAGS(flags));
     if (r < 0) {
         last_socket_error = wsa_from_errno(errno);
         return -1;
@@ -1083,6 +1125,7 @@ static int sockets_recv(int vfd, void *buf, unsigned int len, int flags)
         return -1;
     }
     int rfd = s->real_fd;
+    bool nb = s->nonblocking;
     if (s->type == SOCK_DGRAM && s->rx_valid) {
         size_t copy_n = (len < (size_t)s->rx_len) ? len : (size_t)s->rx_len;
         if (copy_n > 0u)
@@ -1097,7 +1140,7 @@ static int sockets_recv(int vfd, void *buf, unsigned int len, int flags)
     }
     soc_unlock();
 
-    ssize_t r = recv(rfd, buf, (size_t)len, SOC_SAFE_MSG_FLAGS(flags));
+    ssize_t r = recv(rfd, buf, (size_t)len, SOC_SAFE_RECV_FLAGS(flags, nb));
     if (r < 0) {
         last_socket_error = wsa_from_errno(errno);
         return -1;

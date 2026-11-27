@@ -75,8 +75,22 @@ void nox_3ds_net_log(const char *fmt, ...)
         return;
 
     static int s_file_log_enabled = -1;
-    if (s_file_log_enabled < 0)
-        s_file_log_enabled = (nox_env_truthy(getenv("NOX_3DS_NET_LOG")) != 0) ? 1 : 0;
+    if (s_file_log_enabled < 0) {
+        if (nox_env_truthy(getenv("NOX_3DS_NET_LOG")) != 0) {
+            s_file_log_enabled = 1;
+        } else {
+            FILE *flag_f = fopen(NOX_3DS_DATA_ROOT "/net_log.txt", "r");
+            if (flag_f) {
+                char fbuf[32] = {0};
+                size_t fn = fread(fbuf, 1, sizeof(fbuf) - 1u, flag_f);
+                fclose(flag_f);
+                fbuf[fn] = '\0';
+                s_file_log_enabled = (fn == 0 || nox_env_truthy(fbuf) != 0) ? 1 : 0;
+            } else {
+                s_file_log_enabled = 0;
+            }
+        }
+    }
 
     if (!g_netlog_lock_inited) {
         RecursiveLock_Init(&g_netlog_lock);
@@ -176,6 +190,13 @@ static uint8_t g_active_ping_cookie[4];
 
 /* Fake 0x0D packet queue drained by GAME5.c:sub_554D70() */
 static fake_srv_pkt_t g_fake_packets[NOX_3DS_LOBBY_FAKE_QUEUE_CAP];
+
+/* Deferred UDP 0x0C ping queue populated on Core 2 and sent strictly on Core 0
+ * so Core 2 never touches Core 0's discovery socket or races with closesocket(). */
+static int                g_pending_udp_ping_sockfd = -1;
+static uint8_t            g_pending_udp_ping_cookie[4];
+static struct sockaddr_in g_pending_udp_ping_addrs[NOX_3DS_LOBBY_MAX_SERVERS];
+static size_t             g_pending_udp_ping_count = 0;
 
 /* Cached serverinfo flags & optional host registration state */
 static uint16_t g_last_serverinfo_flags = 0;
@@ -1371,7 +1392,7 @@ static int soc_http_request(const char *method, const char *initial_url,
                 break;
             }
 
-            ssize_t r = recv(fd, raw + raw_len, (raw_cap - 1u) - raw_len, MSG_DONTWAIT);
+            ssize_t r = recv(fd, raw + raw_len, (raw_cap - 1u) - raw_len, 0);
             if (r > 0) {
                 raw_len += (size_t)r;
                 raw[raw_len] = '\0';
@@ -1595,11 +1616,18 @@ static void worker_do_fetch_list(char *json_buf,
         g_cache_next_try_ms = 0;
         snprintf(g_last_good_base_url, sizeof(g_last_good_base_url), "%s", good_base);
 
-        /* Immediately inject into the 0x0D queue if the player is still in the browser */
+        /* Immediately inject into the 0x0D queue if the player is still in the browser,
+         * and defer the actual UDP 0x0C pings to Core 0 (avoiding cross-core soc:u races). */
         if (nox_3ds_net_get_mode() == NOX_3DS_NET_MODE_WIFI && g_active_ping_valid) {
             ping_count = queue_cached_rows_locked(ping_addrs, NOX_3DS_LOBBY_MAX_SERVERS,
                                                   &ping_sockfd, ping_cookie);
             g_cache_consumed_by_ping = true;
+            if (ping_count > 0 && ping_sockfd >= 0) {
+                g_pending_udp_ping_sockfd = ping_sockfd;
+                memcpy(g_pending_udp_ping_cookie, ping_cookie, 4);
+                memcpy(g_pending_udp_ping_addrs, ping_addrs, ping_count * sizeof(struct sockaddr_in));
+                g_pending_udp_ping_count = ping_count;
+            }
         }
     } else {
         g_cache_next_try_ms = now_ms + NOX_3DS_LOBBY_RETRY_BACKOFF_MS;
@@ -1608,10 +1636,6 @@ static void worker_do_fetch_list(char *json_buf,
     }
     g_fetch_inflight = false;
     RecursiveLock_Unlock(&g_lobby_lock);
-
-    if (ping_count > 0 && ping_sockfd >= 0) {
-        ping_cached_rows_udp(ping_sockfd, ping_cookie, ping_addrs, ping_count);
-    }
 }
 
 static void json_escape_str(const char *src, char *dst, size_t dst_sz)
@@ -1825,6 +1849,8 @@ void nox_3ds_lobby_on_mode_change(nox_3ds_net_mode_t mode)
     if (mode == NOX_3DS_NET_MODE_LOOPBACK) {
         RecursiveLock_Lock(&g_lobby_lock);
         flush_fake_packets_locked(-1);
+        g_pending_udp_ping_sockfd = -1;
+        g_pending_udp_ping_count = 0;
         g_active_ping_valid = false;
         g_active_ping_sockfd = -1;
         g_host_active = false;
@@ -1998,7 +2024,20 @@ int nox_netextras_fake_pending(int sockfd)
         return 0;
 
     int pending = 0;
+    struct sockaddr_in ping_addrs[NOX_3DS_LOBBY_MAX_SERVERS];
+    size_t ping_count = 0;
+    uint8_t ping_cookie[4] = {0};
+
     RecursiveLock_Lock(&g_lobby_lock);
+    if (g_pending_udp_ping_count > 0 && g_pending_udp_ping_sockfd == sockfd) {
+        ping_count = g_pending_udp_ping_count;
+        if (ping_count > NOX_3DS_LOBBY_MAX_SERVERS)
+            ping_count = NOX_3DS_LOBBY_MAX_SERVERS;
+        memcpy(ping_addrs, g_pending_udp_ping_addrs, ping_count * sizeof(struct sockaddr_in));
+        memcpy(ping_cookie, g_pending_udp_ping_cookie, 4);
+        g_pending_udp_ping_count = 0;
+        g_pending_udp_ping_sockfd = -1;
+    }
     for (int i = 0; i < NOX_3DS_LOBBY_FAKE_QUEUE_CAP; ++i) {
         if (g_fake_packets[i].used && g_fake_packets[i].sockfd == sockfd) {
             pending = 1;
@@ -2006,6 +2045,10 @@ int nox_netextras_fake_pending(int sockfd)
         }
     }
     RecursiveLock_Unlock(&g_lobby_lock);
+
+    if (ping_count > 0) {
+        ping_cached_rows_udp(sockfd, ping_cookie, ping_addrs, ping_count);
+    }
     return pending;
 }
 

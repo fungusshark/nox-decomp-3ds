@@ -12436,19 +12436,47 @@ LABEL_8:
       if ( buf[2] < 0x20u )
       {
         qmemcpy(in, &from, fromlen);
-        if ( v3 == 13 || (unsigned int)sub_43B300() == from.sin_addr.s_addr )
-        {
 #ifdef __3DS__
-          if ( (unsigned __int8)v12 != 0xDu )
+        unsigned int expected_ip_3ds = (unsigned int)sub_43B300();
+        int ip_ok_3ds = (v3 == 13 || expected_ip_3ds == (unsigned int)from.sin_addr.s_addr);
+        if ( (unsigned __int8)v12 != 0xDu )
+        {
+          uint32_t sip = (uint32_t)from.sin_addr.s_addr;
+          uint16_t sport = ntohs(from.sin_port);
+          uint16_t exp_port = (uint16_t)sub_43B320();
+          if ( !ip_ok_3ds &&
+               sub_43B6D0() &&
+               sub_43AF80() == 3 &&
+               sport == exp_port &&
+               ((unsigned __int8)v12 == 0xFu || (unsigned __int8)v12 == 0x10u ||
+                (unsigned __int8)v12 == 0x13u || (unsigned __int8)v12 == 0x14u ||
+                (unsigned __int8)v12 == 0x15u) )
           {
-            uint32_t sip = (uint32_t)from.sin_addr.s_addr;
-            nox_3ds_net_log("[join3ds] rx op=0x%02X aux=%u from %u.%u.%u.%u:%u",
+            nox_3ds_net_log("[join3ds] Peer IP rewrite op=0x%02X %u.%u.%u.%u -> %u.%u.%u.%u:%u",
                             (unsigned)(unsigned __int8)v12,
-                            (unsigned)(unsigned __int8)buf[3],
+                            (unsigned)(expected_ip_3ds & 0xFFu), (unsigned)((expected_ip_3ds >> 8) & 0xFFu),
+                            (unsigned)((expected_ip_3ds >> 16) & 0xFFu), (unsigned)((expected_ip_3ds >> 24) & 0xFFu),
                             (unsigned)(sip & 0xFFu), (unsigned)((sip >> 8) & 0xFFu),
                             (unsigned)((sip >> 16) & 0xFFu), (unsigned)((sip >> 24) & 0xFFu),
-                            (unsigned)ntohs(from.sin_port));
+                            (unsigned)sport);
+            nox_3ds_accept_join_peer_ip(sip);
+            ip_ok_3ds = 1;
           }
+          nox_3ds_net_log("[join3ds] rx op=0x%02X aux=%u from %u.%u.%u.%u:%u (exp=%u.%u.%u.%u:%u match=%d)",
+                          (unsigned)(unsigned __int8)v12,
+                          (unsigned)(unsigned __int8)buf[3],
+                          (unsigned)(sip & 0xFFu), (unsigned)((sip >> 8) & 0xFFu),
+                          (unsigned)((sip >> 16) & 0xFFu), (unsigned)((sip >> 24) & 0xFFu),
+                          (unsigned)sport,
+                          (unsigned)(expected_ip_3ds & 0xFFu), (unsigned)((expected_ip_3ds >> 8) & 0xFFu),
+                          (unsigned)((expected_ip_3ds >> 16) & 0xFFu), (unsigned)((expected_ip_3ds >> 24) & 0xFFu),
+                          (unsigned)exp_port, ip_ok_3ds);
+        }
+        if ( ip_ok_3ds )
+        {
+#else
+        if ( v3 == 13 || (unsigned int)sub_43B300() == from.sin_addr.s_addr )
+        {
 #endif
           switch ( (unsigned __int8)v12 )
           {
