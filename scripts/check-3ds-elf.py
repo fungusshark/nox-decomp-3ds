@@ -109,7 +109,14 @@ def main() -> int:
     p3dsx = bdir / "nox.3dsx"
     psmdh = bdir / "nox.smdh"
 
-    errs = check_elf(elf) + check_3dsx_and_smdh(p3dsx, psmdh, args.expect_version)
+    expect_ver = args.expect_version
+    cmake_cache = bdir / "CMakeCache.txt"
+    if expect_ver and cmake_cache.is_file():
+        cache_txt = cmake_cache.read_text(errors="ignore")
+        if "NOX_3DS_SMDH_OMIT_VERSION:BOOL=ON" in cache_txt:
+            expect_ver = ""
+
+    errs = check_elf(elf) + check_3dsx_and_smdh(p3dsx, psmdh, expect_ver)
     if errs:
         print("[check-3ds-elf] FAILED:", file=sys.stderr)
         for e in errs:

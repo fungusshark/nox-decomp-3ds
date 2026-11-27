@@ -36,6 +36,10 @@ Pick the lightest tier that matches your change to keep iteration fast:
 
 - **Feature & Fix Branches:** Branch `feat/<topic>` or `fix/<topic>` off `main` (or stack cleanly onto an active `feat/*` branch when iterating on dependent changes).
 - **Prebuilt -> Hardware Verify -> Merge / Fast-Forward:** Push a tagged pre-release `.3dsx` from the `feat/*` or `fix/*` branch so collaborators can verify on real 3DS hardware, then merge or fast-forward into `main` (and fast-forward downstream stacked branches).
+- **Decoupled Author -> Reviewer -> Scripted Verifier Pipeline:**
+  - Keep **Author** subagents (`Workspace: "share"`) lean (code + `./scripts/verify-3ds.sh quick` only — never dump raw `objdump -d` or debug X11 sessions inside the Author).
+  - Run an **Independent Reviewer** subagent (fresh context inside the local repo) on `git diff origin/main...feat/<topic>` to audit `#ifdef __3DS__` vs. `#else` math equivalence (fuzzing LUT/SWAR/fixed-point rewrites against the `#else` reference), ARM11 alignment safety, and compact `./scripts/audit-3ds-asm.py build-3ds/nox.elf <sym...>` output before publishing prebuilts.
+  - Run Azahar screenshot recipes (`./scripts/azahar-play.py`), inline `_screenshots` uploads (`./scripts/upload-gh-screenshots.py`), and `.3dsx`+`.elf.gz` staging (`./scripts/publish-3ds-prebuilt.sh`) via scripts or a dedicated lightweight verifier step.
 
 ---
 
