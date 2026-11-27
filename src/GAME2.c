@@ -10253,7 +10253,7 @@ static inline int nox_3ds_sb_rows_per_page(void)
 
 static void nox_3ds_sb_draw_book_bg(int bx, int by, int tab_mode, int anim_ptr)
 {
-  enum { CAP_W = 640, CAP_H = 280, CAP_ANCHOR_X = 48, CAP_ANCHOR_Y = 92 };
+  enum { CAP_W = 640, CAP_H = 300, CAP_ANCHOR_X = 48, CAP_ANCHOR_Y = 92 };
   static uint16_t *s_cap_buf = NULL;
   static uint16_t *s_cap_rows[480];
   static int s_cached_bg = 0;
@@ -10341,7 +10341,7 @@ static void nox_3ds_sb_draw_book_bg(int bx, int by, int tab_mode, int anim_ptr)
     return;
   int sw_w = *(_DWORD *)&byte_5D4594[3801784];
   int sw_h = *(_DWORD *)&byte_5D4594[3801788];
-  int max_dst_y = (sw_h > 352) ? 352 : sw_h; /* keep bottom HUD/Spell Bar untouched */
+  int max_dst_y = sw_h; /* render full 2x book cleanly even when dragged */
 
   for ( int sy = s_min_y; sy <= s_max_y; ++sy )
   {

@@ -2065,26 +2065,63 @@ void nox_3ds_ui_takeover_servopts(void *root_wnd)
     int footer_y = new_h - 38;
     uint32_t *go_btn = NULL;
     if (ftr_cnt > 0) {
-        int gap = 20;
-        int btn_w = (new_w - 40 - gap * (ftr_cnt - 1)) / ftr_cnt;
-        if (btn_w > 176) btn_w = 176;
-        if (btn_w < 96)  btn_w = 96;
-        int total_w = ftr_cnt * btn_w + (ftr_cnt - 1) * gap;
+        int gap = 28;
+        int btn_ws[8];
+        int btn_hs[8];
+        int total_w = (ftr_cnt - 1) * gap;
+        for (int i = 0; i < ftr_cnt; ++i) {
+            uint32_t *b = footers[i];
+            int bw = (int)(int32_t)b[2];
+            int bh = (int)(int32_t)b[3];
+            bool is_textured = ((b[1] & 0x80u) != 0) ||
+                               ((uintptr_t)b[95] == (uintptr_t)sub_4A8380);
+            int lw = 0;
+            uint16_t *lbl = (uint16_t *)(b + 27);
+            if (*lbl)
+                sub_43F840((int)b[59], lbl, &lw, NULL, 0);
+            if (is_textured && bw >= lw + 10 && bw > 0 && bh > 0) {
+                /* Keep authentic Westwood textured button sprite & exact dimensions */
+                btn_ws[i] = bw;
+                btn_hs[i] = bh;
+            } else {
+                convert_button_to_resizable(b);
+                int nw = (lw + 24 > 96) ? (lw + 24) : 96;
+                if (nw > 176) nw = 176;
+                btn_ws[i] = nw;
+                btn_hs[i] = 28;
+            }
+            total_w += btn_ws[i];
+        }
         int bx = (new_w - total_w) / 2;
         for (int i = 0; i < ftr_cnt; ++i) {
             uint32_t *b = footers[i];
             if ((int)(int32_t)b[0] == 10145)
                 go_btn = b;
-            convert_button_to_resizable(b);
-            sub_46A9B0(b, bx, footer_y);
-            sub_46AB20(b, btn_w, 28);
-            bx += btn_w + gap;
+            int by = footer_y + (28 - btn_hs[i]) / 2;
+            sub_46A9B0(b, bx, by);
+            sub_46AB20(b, btn_ws[i], btn_hs[i]);
+            bx += btn_ws[i] + gap;
         }
     }
-    if (ok_twin && go_btn) {
-        convert_button_to_resizable(ok_twin);
-        sub_46A9B0(ok_twin, (int)(int32_t)go_btn[4], (int)(int32_t)go_btn[5]);
-        sub_46AB20(ok_twin, (int)(int32_t)go_btn[2], (int)(int32_t)go_btn[3]);
+    if (ok_twin) {
+        int bw = (int)(int32_t)ok_twin[2];
+        int bh = (int)(int32_t)ok_twin[3];
+        bool is_textured = ((ok_twin[1] & 0x80u) != 0) ||
+                           ((uintptr_t)ok_twin[95] == (uintptr_t)sub_4A8380);
+        int lw = 0;
+        uint16_t *lbl = (uint16_t *)(ok_twin + 27);
+        if (*lbl)
+            sub_43F840((int)ok_twin[59], lbl, &lw, NULL, 0);
+        if (!is_textured || bw < lw + 10 || bw <= 0 || bh <= 0) {
+            convert_button_to_resizable(ok_twin);
+            bw = (lw + 24 > 96) ? (lw + 24) : 96;
+            if (bw > 176) bw = 176;
+            bh = 28;
+        }
+        int ox = go_btn ? (int)(int32_t)go_btn[4] : ((new_w - bw) / 2);
+        int oy = footer_y + (28 - bh) / 2;
+        sub_46A9B0(ok_twin, ox, oy);
+        sub_46AB20(ok_twin, bw, bh);
     }
 
     /* Reflow Game wrapper 10150 -> 10153 and any active sub-tab panels */
