@@ -11334,6 +11334,62 @@ int (__cdecl *__cdecl sub_4B0820(int a1, int a2, int a3))(_DWORD)
   return sub_47D5B0((int)v3);
 }
 
+#ifdef __3DS__
+/* 1 KB (256 x uint32_t) Q32 reciprocal table for ARM11 (no hardware SDIV/UDIV).
+ * Exact (((uint64_t)num * s_nox_3ds_recip_u32[d]) >> 32) == num / d for all
+ * num in [0, 16777216] and d in [2, 255] via a single ARM11 UMULL instruction. */
+#define NOX_3DS_R(d) ((uint32_t)(0x100000000ULL / (uint32_t)(d)) + 1u)
+#define NOX_3DS_R8(b) \
+  NOX_3DS_R((b)+0), NOX_3DS_R((b)+1), NOX_3DS_R((b)+2), NOX_3DS_R((b)+3), \
+  NOX_3DS_R((b)+4), NOX_3DS_R((b)+5), NOX_3DS_R((b)+6), NOX_3DS_R((b)+7)
+static const uint32_t s_nox_3ds_recip_u32[256] = {
+  0u, 0xFFFFFFFFu,
+  NOX_3DS_R(2), NOX_3DS_R(3), NOX_3DS_R(4), NOX_3DS_R(5), NOX_3DS_R(6), NOX_3DS_R(7),
+  NOX_3DS_R8(8),   NOX_3DS_R8(16),  NOX_3DS_R8(24),  NOX_3DS_R8(32),
+  NOX_3DS_R8(40),  NOX_3DS_R8(48),  NOX_3DS_R8(56),  NOX_3DS_R8(64),
+  NOX_3DS_R8(72),  NOX_3DS_R8(80),  NOX_3DS_R8(88),  NOX_3DS_R8(96),
+  NOX_3DS_R8(104), NOX_3DS_R8(112), NOX_3DS_R8(120), NOX_3DS_R8(128),
+  NOX_3DS_R8(136), NOX_3DS_R8(144), NOX_3DS_R8(152), NOX_3DS_R8(160),
+  NOX_3DS_R8(168), NOX_3DS_R8(176), NOX_3DS_R8(184), NOX_3DS_R8(192),
+  NOX_3DS_R8(200), NOX_3DS_R8(208), NOX_3DS_R8(216), NOX_3DS_R8(224),
+  NOX_3DS_R8(232), NOX_3DS_R8(240), NOX_3DS_R8(248)
+};
+#undef NOX_3DS_R8
+#undef NOX_3DS_R
+
+static inline uint32_t nox_3ds_udiv_recip(uint32_t num, uint32_t recip)
+{
+  return (uint32_t)(((uint64_t)num * (uint64_t)recip) >> 32);
+}
+
+static inline uint32_t nox_3ds_udiv_u8(uint32_t num, uint32_t d)
+{
+  if (__builtin_expect(d >= 2u && d < 256u && num <= 0x01000000u, 1))
+    return nox_3ds_udiv_recip(num, s_nox_3ds_recip_u32[d]);
+  return (d > 1u) ? (num / d) : num;
+}
+
+static inline int32_t nox_3ds_sdiv_recip(int32_t num, uint32_t recip)
+{
+  uint32_t sign = (uint32_t)(num >> 31);
+  uint32_t unum = ((uint32_t)num ^ sign) - sign;
+  uint32_t q = nox_3ds_udiv_recip(unum, recip);
+  return (int32_t)((q ^ sign) - sign);
+}
+
+static inline int32_t nox_3ds_sdiv_u8(int32_t num, uint32_t d)
+{
+  uint32_t sign = (uint32_t)(num >> 31);
+  uint32_t unum = ((uint32_t)num ^ sign) - sign;
+  if (__builtin_expect(d >= 2u && d < 256u && unum <= 0x01000000u, 1))
+  {
+    uint32_t q = nox_3ds_udiv_recip(unum, s_nox_3ds_recip_u32[d]);
+    return (int32_t)((q ^ sign) - sign);
+  }
+  return (d > 1u) ? (num / (int32_t)d) : num;
+}
+#endif
+
 //----- (004B0870) --------------------------------------------------------
 int __cdecl sub_4B0870(int *a1)
 {
@@ -11396,6 +11452,15 @@ int __cdecl sub_4B0870(int *a1)
   v18 = v32 << 16;
   v7 = -v1;
   v31 = -v1;
+#ifdef __3DS__
+  v27 = nox_3ds_sdiv_u8((int)(((((unsigned int)(v4 * a1[12]) >> 8) & 0xFF) - v32) << 16), (uint32_t)v1);
+  v35 = v29 << 16;
+  v19 = v29 << 16;
+  v28 = nox_3ds_sdiv_u8((int)(((((unsigned int)(v4 * v5) >> 8) & 0xFF) - v29) << 16), (uint32_t)v1);
+  v36 = v25 << 16;
+  v20 = v25 << 16;
+  v30 = nox_3ds_sdiv_u8((int)(((((unsigned int)(v4 * v23) >> 8) & 0xFF) - v25) << 16), (uint32_t)v1);
+#else
   v27 = (int)(((((unsigned int)(v4 * a1[12]) >> 8) & 0xFF) - v32) << 16) / v1;
   v35 = v29 << 16;
   v19 = v29 << 16;
@@ -11403,13 +11468,18 @@ int __cdecl sub_4B0870(int *a1)
   v36 = v25 << 16;
   v20 = v25 << 16;
   v30 = (int)(((((unsigned int)(v4 * v23) >> 8) & 0xFF) - v25) << 16) / v1;
+#endif
   result = 2 * v1;
   if ( 2 * v1 )
   {
     v33 = 2 * v1;
     do
     {
+#ifdef __3DS__
+      v9 = (int)nox_3ds_vsqrtf_pos((float)(v1 * v1 - v7 * v7));
+#else
       v9 = (__int64)sqrt((double)(v1 * v1 - v7 * v7));
+#endif
       if ( v9 < v1 )
       {
         *v6 = 1;
@@ -11427,13 +11497,37 @@ int __cdecl sub_4B0870(int *a1)
         *v11 = 2 * v9;
         v6 = v11 + 1;
         v37 = v36;
+#ifdef __3DS__
+        if (__builtin_expect((uint32_t)v9 >= 2u && (uint32_t)v9 < 256u &&
+                             ((uint32_t)v18 | (uint32_t)v19 | (uint32_t)v20) <= 0x01000000u, 1))
+        {
+          uint32_t recip = s_nox_3ds_recip_u32[(uint32_t)v9];
+          v21 = (int)nox_3ds_udiv_recip((uint32_t)v18, recip);
+          v22 = (int)nox_3ds_udiv_recip((uint32_t)v19, recip);
+          v24 = (int)nox_3ds_udiv_recip((uint32_t)v20, recip);
+        }
+        else if (v9 == 1)
+        {
+          v21 = v18;
+          v22 = v19;
+          v24 = v20;
+        }
+        else
+        {
+          v21 = v18 / v9;
+          v22 = v19 / v9;
+          v24 = v20 / v9;
+        }
+        v14 = -v9;
+#else
         v21 = v18 / v9;
         v22 = v19 / v9;
         v14 = -v9;
         v24 = v20 / v9;
+#endif
         do
         {
-          *(_WORD *)v6 = (v37 >> 19) & 0x1F | (8 * (BYTE2(v13) & 0xFC | (32 * (HIWORD(v12) & 0xFFF8))));
+          nox_write_u16(v6, (uint16_t)(((v37 >> 19) & 0x1F) | (8 * ((BYTE2(v13) & 0xFC) | (32 * (HIWORD(v12) & 0xFFF8))))));
           if ( v14 >= 0 )
           {
             v12 -= v21;
@@ -14469,7 +14563,12 @@ int __cdecl sub_4B6770(int *a1, int a2, int a3, int a4)
     xLeft.field_4 = v13;
     if ( v11 - 10 >= v9 && v13 - 10 >= v10 && v11 + 10 < a1[2] && v13 + 10 < a1[3] )
     {
+#ifdef __3DS__
+      int rnd = sub_415FF0(0, 4, (const char *)&byte_587000[175936], 213);
+      v14 = (v16 > 0) ? (int)nox_3ds_sdiv_u8(v18 * rnd, (uint32_t)v16) : (v18 * rnd / v16);
+#else
       v14 = v18 * sub_415FF0(0, 4, (const char *)&byte_587000[175936], 213) / v16;
+#endif
       v15 = v14;
       if ( v14 )
       {
@@ -14521,8 +14620,24 @@ int __cdecl sub_4B6880(_DWORD *a1, int a2, int a3, int a4)
     xLeft.field_4 = v11;
     if ( !v12 && v11 - 10 >= v10 && v8 + 10 < a1[2] && v11 + 10 < a1[3] )
     {
+#ifdef __3DS__
+      char glow_i;
+      if (__builtin_expect((uint32_t)v5 >= 2u && (uint32_t)v5 < 256u && (uint32_t)v15 <= 0x00300000u, 1))
+      {
+        uint32_t recip = s_nox_3ds_recip_u32[(uint32_t)v5];
+        v13 = (int)nox_3ds_udiv_recip((uint32_t)(4 * v15), recip);
+        glow_i = (char)nox_3ds_udiv_recip((uint32_t)(5 * v15), recip);
+      }
+      else
+      {
+        v13 = 4 * v15 / v5;
+        glow_i = (char)(5 * v15 / v5);
+      }
+      sub_4B6720(&xLeft, a4, 2 * v13 + 1, glow_i);
+#else
       v13 = 4 * v15 / v5;
       sub_4B6720(&xLeft, a4, 2 * v13 + 1, 5 * v15 / v5);
+#endif
       sub_434460(a3);
       sub_499B70(xLeft.field_0, xLeft.field_4, v13);
     }
@@ -14813,9 +14928,24 @@ LABEL_7:
     v12 = v15.field_4 - v10;
     if ( v11 * v11 + v12 * v12 > 400 )
     {
+#ifdef __3DS__
+      int len = (int)nox_3ds_vsqrtf_pos((float)(v11 * v11 + v12 * v12));
+      if (__builtin_expect((uint32_t)len >= 2u && (uint32_t)len < 256u, 1))
+      {
+        uint32_t recip = s_nox_3ds_recip_u32[(uint32_t)len];
+        v9 = v15.field_0 - nox_3ds_sdiv_recip(20 * v11, recip);
+        v10 = v15.field_4 - nox_3ds_sdiv_recip(20 * v12, recip);
+      }
+      else
+      {
+        v9 = v15.field_0 - 20 * v11 / len;
+        v10 = v15.field_4 - 20 * v12 / len;
+      }
+#else
       v13 = (__int64)sqrt((double)(v11 * v11 + v12 * v12));
       v9 = v15.field_0 - 20 * v11 / (int)v13;
       v10 = v15.field_4 - 20 * v12 / (int)v13;
+#endif
     }
     sub_434460(*(int *)&byte_5D4594[1313564]);
     sub_49F500(v15.field_0, v15.field_4);
@@ -14918,11 +15048,32 @@ int __cdecl sub_4B71A0(_DWORD *a1, int a2)
     if ( v11.field_0 - 10 >= *a1 && v11.field_4 - 10 >= a1[1] && v11.field_0 + 10 < a1[2] && v11.field_4 + 10 < a1[3] )
     {
       sub_4B69F0(a2);
+#ifdef __3DS__
+      int q16;
+      char glow_i;
+      if (__builtin_expect((uint32_t)v5 >= 2u && (uint32_t)v5 < 256u && (uint32_t)v6 <= 0x00100000u, 1))
+      {
+        uint32_t recip = s_nox_3ds_recip_u32[(uint32_t)v5];
+        q16 = (int)nox_3ds_udiv_recip((uint32_t)(16 * v6), recip);
+        glow_i = (char)nox_3ds_udiv_recip((uint32_t)(5 * v6), recip);
+      }
+      else
+      {
+        q16 = 16 * v6 / v5;
+        glow_i = (char)(5 * v6 / v5);
+      }
+      v8 = 4 * q16;
+      v12 = *(_DWORD *)&byte_5D4594[v8 + 1313596];
+      v9 = v8 / 16;
+      v10 = v9 >> 1;
+      sub_4B6720(&v11, v12, 2 * v9 + 1, glow_i);
+#else
       v8 = 4 * (16 * v6 / v5);
       v12 = *(_DWORD *)&byte_5D4594[v8 + 1313596];
       v9 = v8 / 16;
       v10 = (v8 / 16) >> 1;
       sub_4B6720(&v11, *(_DWORD *)&byte_5D4594[v8 + 1313596], 2 * (v8 / 16) + 1, 5 * v6 / v5);
+#endif
       sub_434460(v12);
       sub_49CE30(v11.field_0 - v10, v11.field_4 - v10, v9, v9);
     }
@@ -17876,7 +18027,11 @@ int __cdecl sub_4BAE60(int2 *a1, int2 *a2, int a3, __int16 *a4, int a5, int a6, 
     v11 = a1->field_4 - v10;
   else
     v11 = v10 - a1->field_4;
+#ifdef __3DS__
+  v12 = (int)nox_3ds_vsqrtf_pos((float)(v9 * v9 + v11 * v11));
+#else
   v12 = (__int64)sqrt((double)(v9 * v9 + v11 * v11));
+#endif
   if ( (int)v12 >= 512 )
   {
     *(_DWORD *)&byte_5D4594[1316476] = *(_DWORD *)&byte_587000[178204];
@@ -29567,6 +29722,46 @@ void sub_4C94D0()
 //----- (004C96A0) --------------------------------------------------------
 void sub_4C96A0()
 {
+#ifdef __3DS__
+  if (*(_WORD *)&byte_5D4594[3804364] == 0x7C00u)
+  {
+    uint32_t n = *(uint32_t *)&byte_5D4594[3799456];
+    if (n != 0u)
+    {
+      const uint8_t *src_b = *(const uint8_t **)&byte_5D4594[3799444];
+      uint16_t *dst = *(uint16_t **)&byte_5D4594[3799540];
+      do
+      {
+        uint32_t raw = nox_read_u16(src_b);
+        src_b += 2;
+        uint32_t a = (raw & 0x0Fu) << 4;
+        uint32_t d = *dst;
+        if (a != 0u)
+        {
+          int dr = (int)((d >> 7) & 0xF8u);
+          int dg = (int)((d >> 2) & 0xF8u);
+          int db = (int)((d << 3) & 0xF8u);
+          int sr = (int)((raw >> 8) & 0xF0u);
+          int sg = (int)((raw >> 4) & 0xF0u);
+          int sb = (int)(raw & 0xF0u);
+          uint32_t r = (uint32_t)(dr + (((int)a * (sr - dr)) >> 8));
+          uint32_t g = (uint32_t)(dg + (((int)a * (sg - dg)) >> 8));
+          uint32_t b = (uint32_t)(db + (((int)a * (sb - db)) >> 8));
+          *dst = (uint16_t)(((r & 0xF8u) << 7) | ((g & 0xF8u) << 2) | ((b & 0xFFu) >> 3));
+        }
+        else
+        {
+          *dst = (uint16_t)(d & 0x7FFFu);
+        }
+        ++dst;
+      }
+      while (--n != 0u);
+      *(const uint8_t **)&byte_5D4594[3799444] = src_b;
+      *(uint16_t **)&byte_5D4594[3799540] = dst;
+    }
+    return;
+  }
+#endif
   unsigned int result; // eax
   _WORD *v1; // edi
   __int16 v2; // si
@@ -29605,6 +29800,48 @@ void sub_4C96A0()
 //----- (004C97F0) --------------------------------------------------------
 void sub_4C97F0()
 {
+#ifdef __3DS__
+  if (*(_WORD *)&byte_5D4594[3804364] == 0x7C00u)
+  {
+    uint32_t n = *(uint32_t *)&byte_5D4594[3799456];
+    if (n != 0u)
+    {
+      uint32_t ctx = *(uint32_t *)&byte_5D4594[3799572];
+      uint32_t alpha8 = *(const uint8_t *)(ctx + 1036u);
+      const uint8_t *src_b = *(const uint8_t **)&byte_5D4594[3799444];
+      uint16_t *dst = *(uint16_t **)&byte_5D4594[3799540];
+      do
+      {
+        uint32_t raw = nox_read_u16(src_b);
+        src_b += 2;
+        uint32_t a = ((alpha8 * ((raw & 0x0Fu) << 4)) >> 8) & 0xFFu;
+        uint32_t d = *dst;
+        if (a != 0u)
+        {
+          int dr = (int)((d >> 7) & 0xF8u);
+          int dg = (int)((d >> 2) & 0xF8u);
+          int db = (int)((d << 3) & 0xF8u);
+          int sr = (int)((raw >> 8) & 0xF0u);
+          int sg = (int)((raw >> 4) & 0xF0u);
+          int sb = (int)(raw & 0xF0u);
+          uint32_t r = (uint32_t)(dr + (((int)a * (sr - dr)) >> 8));
+          uint32_t g = (uint32_t)(dg + (((int)a * (sg - dg)) >> 8));
+          uint32_t b = (uint32_t)(db + (((int)a * (sb - db)) >> 8));
+          *dst = (uint16_t)(((r & 0xF8u) << 7) | ((g & 0xF8u) << 2) | ((b & 0xFFu) >> 3));
+        }
+        else
+        {
+          *dst = (uint16_t)(d & 0x7FFFu);
+        }
+        ++dst;
+      }
+      while (--n != 0u);
+      *(const uint8_t **)&byte_5D4594[3799444] = src_b;
+      *(uint16_t **)&byte_5D4594[3799540] = dst;
+    }
+    return;
+  }
+#endif
   int result; // eax
   int v1; // ecx
   _WORD *v2; // edi
@@ -29648,6 +29885,50 @@ void sub_4C97F0()
 //----- (004C9970) --------------------------------------------------------
 void sub_4C9970()
 {
+#ifdef __3DS__
+  if (*(_WORD *)&byte_5D4594[3804364] == 0x7C00u)
+  {
+    uint32_t n = *(uint32_t *)&byte_5D4594[3799456];
+    if (n != 0u)
+    {
+      uint32_t ctx = *(uint32_t *)&byte_5D4594[3799572];
+      uint32_t tr = *(const uint8_t *)(ctx + 96u);
+      uint32_t tg = *(const uint8_t *)(ctx + 100u);
+      uint32_t tb = *(const uint8_t *)(ctx + 104u);
+      const uint8_t *src_b = *(const uint8_t **)&byte_5D4594[3799444];
+      uint16_t *dst = *(uint16_t **)&byte_5D4594[3799540];
+      do
+      {
+        uint32_t raw = nox_read_u16(src_b);
+        src_b += 2;
+        uint32_t a = (raw & 0x0Fu) << 4;
+        uint32_t d = *dst;
+        if (a != 0u)
+        {
+          int dr = (int)((d >> 7) & 0xF8u);
+          int dg = (int)((d >> 2) & 0xF8u);
+          int db = (int)((d << 3) & 0xF8u);
+          int sr = (int)((tr * ((raw >> 8) & 0xF0u)) >> 8);
+          int sg = (int)((tg * ((raw >> 4) & 0xF0u)) >> 8);
+          int sb = (int)((tb * (raw & 0xF0u)) >> 8);
+          uint32_t r = (uint32_t)(dr + (((int)a * (sr - dr)) >> 8));
+          uint32_t g = (uint32_t)(dg + (((int)a * (sg - dg)) >> 8));
+          uint32_t b = (uint32_t)(db + (((int)a * (sb - db)) >> 8));
+          *dst = (uint16_t)(((r & 0xF8u) << 7) | ((g & 0xF8u) << 2) | ((b & 0xFFu) >> 3));
+        }
+        else
+        {
+          *dst = (uint16_t)(d & 0x7FFFu);
+        }
+        ++dst;
+      }
+      while (--n != 0u);
+      *(const uint8_t **)&byte_5D4594[3799444] = src_b;
+      *(uint16_t **)&byte_5D4594[3799540] = dst;
+    }
+    return;
+  }
+#endif
   unsigned int result; // eax
   int v1; // ebp
   _WORD *v2; // edi
@@ -29692,6 +29973,79 @@ void sub_4C9970()
 //----- (004C9B20) --------------------------------------------------------
 void sub_4C9B20()
 {
+#ifdef __3DS__
+  if (*(_WORD *)&byte_5D4594[3804364] == 0x7C00u)
+  {
+    uint32_t n = *(uint32_t *)&byte_5D4594[3799456];
+    if (n != 0u)
+    {
+      const uint8_t *src_b = *(const uint8_t **)&byte_5D4594[3799444];
+      uint16_t *dst = *(uint16_t **)&byte_5D4594[3799540];
+      const uint32_t mask_rb = 0x7C1F7C1Fu;
+      const uint32_t mask_r  = 0x7C007C00u;
+      const uint32_t mask_b  = 0x001F001Fu;
+      const uint32_t mask_g  = 0x03E003E0u;
+      const uint32_t ovf_rb  = 0x80208020u;
+      const uint32_t ovf_g   = 0x04000400u;
+
+      /* Peel 1 leading pixel when dst is at an odd X (addr & 2 != 0) so
+       * subsequent uint32_t* 2-pixel SWAR accesses are 100% 4-byte aligned. */
+      if (((uintptr_t)dst & 2u) != 0u)
+      {
+        uint32_t s = nox_read_u16(src_b);
+        uint32_t d = *dst;
+        uint32_t rb = (d & mask_rb) + (((s >> 1) & mask_r) | (s & mask_b));
+        uint32_t ro = rb & ovf_rb;
+        rb = (rb | (ro - (ro >> 5))) & mask_rb;
+        uint32_t g = (d & mask_g) + ((s >> 1) & mask_g);
+        uint32_t go = g & ovf_g;
+        g = (g | (go - (go >> 5))) & mask_g;
+        *dst++ = (uint16_t)(rb | g);
+        src_b += 2;
+        --n;
+      }
+
+      /* 4-byte-aligned 32-bit 2-pixel saturating RGB565->XRGB1555 SWAR loop.
+       * src_b may sit at an odd byte offset inside RLE streams, so read via nox_read_u32. */
+      uint32_t *dst32 = (uint32_t *)(void *)dst;
+      uint32_t pairs = n >> 1;
+      while (pairs != 0u)
+      {
+        uint32_t s2 = nox_read_u32(src_b);
+        uint32_t d2 = *dst32;
+        uint32_t rb = (d2 & mask_rb) + (((s2 >> 1) & mask_r) | (s2 & mask_b));
+        uint32_t ro = rb & ovf_rb;
+        rb = (rb | (ro - (ro >> 5))) & mask_rb;
+        uint32_t g = (d2 & mask_g) + ((s2 >> 1) & mask_g);
+        uint32_t go = g & ovf_g;
+        g = (g | (go - (go >> 5))) & mask_g;
+        *dst32++ = rb | g;
+        src_b += 4;
+        --pairs;
+      }
+      dst = (uint16_t *)(void *)dst32;
+
+      /* Peel 1 trailing odd pixel */
+      if ((n & 1u) != 0u)
+      {
+        uint32_t s = nox_read_u16(src_b);
+        uint32_t d = *dst;
+        uint32_t rb = (d & mask_rb) + (((s >> 1) & mask_r) | (s & mask_b));
+        uint32_t ro = rb & ovf_rb;
+        rb = (rb | (ro - (ro >> 5))) & mask_rb;
+        uint32_t g = (d & mask_g) + ((s >> 1) & mask_g);
+        uint32_t go = g & ovf_g;
+        g = (g | (go - (go >> 5))) & mask_g;
+        *dst++ = (uint16_t)(rb | g);
+        src_b += 2;
+      }
+
+      *(const uint8_t **)&byte_5D4594[3799444] = src_b;
+      *(uint16_t **)&byte_5D4594[3799540] = dst;
+    }
+    return;
+  }
+#endif
   unsigned __int16 *v0; // esi
   _WORD *v1; // edi
   unsigned int v2; // edx
