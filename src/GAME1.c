@@ -47279,6 +47279,7 @@ static uint32_t g_3ds_dip_cookie       = 0;
 
 #define NOX_3DS_LAN_SWEEP_MAX_HOSTS 1024u
 #define NOX_3DS_LAN_SWEEP_PER_TICK  2u
+#define NOX_3DS_LAN_SWEEP_FAST_TICK 3u
 static uint32_t g_3ds_lan_sweep_ips[NOX_3DS_LAN_SWEEP_MAX_HOSTS];
 static uint32_t g_3ds_lan_sweep_count  = 0;
 static uint32_t g_3ds_lan_sweep_cursor = 0;
@@ -47315,6 +47316,22 @@ void nox_3ds_stop_lan_unicast_sweep(void)
   g_3ds_lan_sweep_cursor = 0;
 }
 
+void nox_3ds_accept_join_peer_ip(uint32_t ip_be)
+{
+  int sel_srv = *(int *)&byte_5D4594[814624];
+  if ( !*(_DWORD *)&byte_5D4594[815056] || !sel_srv || ip_be == 0u )
+    return;
+  char ip_str[16];
+  snprintf(ip_str, sizeof(ip_str), "%u.%u.%u.%u",
+           (unsigned)(ip_be & 0xFFu), (unsigned)((ip_be >> 8) & 0xFFu),
+           (unsigned)((ip_be >> 16) & 0xFFu), (unsigned)((ip_be >> 24) & 0xFFu));
+  strncpy((char *)sel_srv + 12, ip_str, 15);
+  ((char *)sel_srv)[27] = 0;
+  if ( g_3ds_last_0e_valid )
+    g_3ds_last_0e_ip = (int)ip_be;
+  nox_3ds_stop_lan_unicast_sweep();
+}
+
 static void nox_3ds_start_lan_unicast_sweep(u_short port, uint32_t cookie)
 {
   g_3ds_lan_sweep_count = 0;
@@ -47331,32 +47348,45 @@ static void nox_3ds_start_lan_unicast_sweep(u_short port, uint32_t cookie)
   if ( (mask_h & 0xFFFFFF00u) == 0 )
     mask_h = 0xFFFFFF00u;
 
-  /* Clamp sweep to at most a /22 (4 x /24 = 1024 addresses) and probe own /24 first. */
+  /* Clamp sweep to at most a /22 (4 x /24 = 1024 addresses), or respect narrower masks (e.g. /28 phone hotspots). */
   if ( mask_h < 0xFFFFFC00u )
     mask_h = 0xFFFFFC00u;
 
-  uint32_t own_24 = ip_h & 0xFFFFFF00u;
-  uint32_t net_base = ip_h & mask_h;
-  uint32_t host_span = (~mask_h) + 1u;
-  uint32_t num_blocks = host_span >> 8;
-  if ( num_blocks == 0u ) num_blocks = 1u;
-  if ( num_blocks > 4u )  num_blocks = 4u;
-
   /* Probe self IPv4 first so same-host PC servers upgrade WAN->LAN immediately. */
   g_3ds_lan_sweep_ips[g_3ds_lan_sweep_count++] = ip_be;
-  for ( uint32_t h = 1u; h <= 254u && g_3ds_lan_sweep_count < NOX_3DS_LAN_SWEEP_MAX_HOSTS; ++h )
+  if ( mask_h >= 0xFFFFFF00u )
   {
-    uint32_t cand = own_24 | h;
-    if ( cand != ip_h )
-      g_3ds_lan_sweep_ips[g_3ds_lan_sweep_count++] = htonl(cand);
+    uint32_t net_lo = (ip_h & mask_h) + 1u;
+    uint32_t net_hi = (ip_h | ~mask_h) - 1u;
+    for ( uint32_t cand = net_lo; cand <= net_hi && g_3ds_lan_sweep_count < NOX_3DS_LAN_SWEEP_MAX_HOSTS; ++cand )
+    {
+      if ( cand != ip_h )
+        g_3ds_lan_sweep_ips[g_3ds_lan_sweep_count++] = htonl(cand);
+    }
   }
-  for ( uint32_t blk = 0u; blk < num_blocks; ++blk )
+  else
   {
-    uint32_t base24 = net_base + (blk << 8);
-    if ( base24 == own_24 )
-      continue;
+    uint32_t own_24 = ip_h & 0xFFFFFF00u;
+    uint32_t net_base = ip_h & mask_h;
+    uint32_t host_span = (~mask_h) + 1u;
+    uint32_t num_blocks = host_span >> 8;
+    if ( num_blocks == 0u ) num_blocks = 1u;
+    if ( num_blocks > 4u )  num_blocks = 4u;
+
     for ( uint32_t h = 1u; h <= 254u && g_3ds_lan_sweep_count < NOX_3DS_LAN_SWEEP_MAX_HOSTS; ++h )
-      g_3ds_lan_sweep_ips[g_3ds_lan_sweep_count++] = htonl(base24 | h);
+    {
+      uint32_t cand = own_24 | h;
+      if ( cand != ip_h )
+        g_3ds_lan_sweep_ips[g_3ds_lan_sweep_count++] = htonl(cand);
+    }
+    for ( uint32_t blk = 0u; blk < num_blocks; ++blk )
+    {
+      uint32_t base24 = net_base + (blk << 8);
+      if ( base24 == own_24 )
+        continue;
+      for ( uint32_t h = 1u; h <= 254u && g_3ds_lan_sweep_count < NOX_3DS_LAN_SWEEP_MAX_HOSTS; ++h )
+        g_3ds_lan_sweep_ips[g_3ds_lan_sweep_count++] = htonl(base24 | h);
+    }
   }
 
   g_3ds_dip_port = port;
@@ -47385,8 +47415,11 @@ static void nox_3ds_pump_lan_unicast_sweep(void)
   ping_pkt[2] = 12;
   nox_write_u32(&ping_pkt[8], g_3ds_dip_cookie);
 
+  uint32_t per_tick = (sub_44A4A0() != 0 || sub_43AF80() == 3)
+                        ? NOX_3DS_LAN_SWEEP_FAST_TICK
+                        : NOX_3DS_LAN_SWEEP_PER_TICK;
   uint32_t sent = 0u;
-  while ( g_3ds_lan_sweep_cursor < g_3ds_lan_sweep_count && sent < NOX_3DS_LAN_SWEEP_PER_TICK )
+  while ( g_3ds_lan_sweep_cursor < g_3ds_lan_sweep_count && sent < per_tick )
   {
     uint32_t dst_ip_be = g_3ds_lan_sweep_ips[g_3ds_lan_sweep_cursor++];
     sub_555010((int)dst_ip_be, g_3ds_dip_port, ping_pkt, 12);
@@ -47430,20 +47463,34 @@ static void nox_3ds_refresh_server_browser_node(int *node)
 
 static void nox_3ds_update_srv_entry(int *ex, const char *ip_str, int a4)
 {
+  bool is_http_3d = (*(const uint8_t *)(a4 + 1) == 0x3Du);
   uint32_t ver = nox_read_u32((const void *)(a4 + 24));
+  uint16_t ext_info = nox_read_u16((const void *)(a4 + 68));
   DWORD ping_ms = timeGetTime() - nox_read_u32((const void *)(a4 + 44));
   if ( ip_str )
   {
     strncpy((char *)ex + 12, ip_str, 15);
     ((char *)ex)[27] = 0;
   }
-  nox_write_u32((char *)ex + 48, ver);
-  nox_write_u32((char *)ex + 96, (uint32_t)ping_ms);
+  if ( !is_http_3d || nox_read_u32((const void *)((const char *)ex + 48)) == 0u )
+    nox_write_u32((char *)ex + 48, ver);
+  if ( is_http_3d )
+  {
+    uint32_t old_ping = nox_read_u32((const void *)((const char *)ex + 96));
+    if ( old_ping == 0u || old_ping >= 9999u )
+      nox_write_u32((char *)ex + 96, 9999u);
+  }
+  else
+  {
+    nox_write_u32((char *)ex + 96, (uint32_t)ping_ms);
+  }
   ((unsigned char *)ex)[103] = *(unsigned char *)(a4 + 3);
   ((unsigned char *)ex)[104] = *(unsigned char *)(a4 + 4);
   strncpy((char *)ex + 111, (const char *)(a4 + 10), 8);
   ((char *)ex)[119] = 0;
   nox_write_u16((char *)ex + 163, nox_read_u16((const void *)(a4 + 28)));
+  if ( !is_http_3d || nox_read_u16((const void *)((const char *)ex + 165)) == 0u )
+    nox_write_u16((char *)ex + 165, ext_info);
   nox_3ds_refresh_server_browser_node(ex);
 }
 
@@ -47505,9 +47552,12 @@ int __cdecl sub_4375F0(const char *a1, __int16 a2, char *a3, int a4)
 
 #ifdef __3DS__
   /* Accept cookie-matched 0x0D replies even after the initial 1 s popup window
-   * closed so async OpenNox HTTP / slow direct_ip replies still populate SelServ. */
+   * closed so async OpenNox HTTP / slow direct_ip replies still populate SelServ.
+   * Also allow WAN->LAN upgrades during active state-3 join (when byte_5D4594[815044]==1)
+   * without permitting new server rows to be inserted while joining. */
+  int join_active_3ds = (*(_DWORD *)&byte_5D4594[815044] != 0);
   if ( *(_DWORD *)&byte_5D4594[815088] < 0x9C4u
-    && !*(_DWORD *)&byte_5D4594[815044]
+    && (!join_active_3ds || *(_DWORD *)&byte_5D4594[814548] == 3)
     && *(_DWORD *)&byte_5D4594[814980]
     && (!*(_DWORD *)&byte_5D4594[815060] || nox_3ds_net_get_mode() == NOX_3DS_NET_MODE_WIFI) )
 #else
@@ -47540,11 +47590,30 @@ int __cdecl sub_4375F0(const char *a1, __int16 a2, char *a3, int a4)
                 nox_3ds_net_log("[net3ds] Upgraded '%s' WAN->LAN %s:%u (ver=0x%X)",
                                 clamped_name, a1, (unsigned)(uint16_t)a2, (unsigned)ver);
                 nox_3ds_update_srv_entry(ex, a1, a4);
+                if ( *(_DWORD *)&byte_5D4594[814548] == 3
+                  && g_3ds_last_0e_valid
+                  && *(int *)&byte_5D4594[814624] == (int)ex )
+                {
+                  g_3ds_last_0e_ip = (int)inet_addr(a1);
+                  g_3ds_last_0e_port = (u_short)(uint16_t)a2;
+                  if ( NOX_IS_COMPAT_PROTO_VER(ver) )
+                  {
+                    nox_write_u32(&g_3ds_last_0e_buf[80], ver);
+                    g_3ds_last_join_ver = ver;
+                  }
+                  g_3ds_next_0e_retry_ms = sub_416BB0() + 1500ULL;
+                  nox_3ds_stop_lan_unicast_sweep();
+                  nox_3ds_net_log("[join3ds] Redirecting active 0x0E join -> LAN %s:%u (ver=0x%X)",
+                                  a1, (unsigned)(uint16_t)a2, (unsigned)g_3ds_last_join_ver);
+                  sub_5550A0(g_3ds_last_0e_ip, g_3ds_last_0e_port, g_3ds_last_0e_buf);
+                }
                 return 0;
               }
             }
           }
         }
+        if ( join_active_3ds )
+          return 0;
 #endif
         if ( sub_4A0410(a1, a2) )
         {
@@ -48155,6 +48224,7 @@ int sub_438770()
         break;
       case 3:
 #ifdef __3DS__
+        nox_3ds_pump_lan_unicast_sweep();
         if ( (unsigned __int64)sub_416BB0() < *(_QWORD *)&byte_5D4594[814956] )
         {
           if ( g_3ds_last_0e_valid && (unsigned __int64)sub_416BB0() >= g_3ds_next_0e_retry_ms )
@@ -48165,6 +48235,7 @@ int sub_438770()
           }
           goto LABEL_29;
         }
+        nox_3ds_net_log("[join3ds] state 3 timed out after 20s -> error 8");
         g_3ds_last_0e_valid = 0;
 #else
         if ( (unsigned __int64)sub_416BB0() < *(_QWORD *)&byte_5D4594[814956] )
@@ -48338,7 +48409,21 @@ int sub_438A90()
         join_ver = g_3ds_join_ver_override;
       }
       g_3ds_last_join_ver = join_ver;
-      nox_3ds_stop_lan_unicast_sweep();
+      if ( sel_srv &&
+           !nox_is_private_ipv4_str((const char *)(sel_srv + 12)) &&
+           nox_read_u32((const void *)(sel_srv + 96)) == 9999u )
+      {
+        u_short srv_port = nox_read_u16((const void *)(sel_srv + 109));
+        if ( !srv_port )
+          srv_port = 18590u;
+        if ( g_3ds_lan_sweep_cursor >= g_3ds_lan_sweep_count )
+          nox_3ds_start_lan_unicast_sweep(srv_port, *(_DWORD *)&byte_5D4594[814964]);
+        sub_554AA0(srv_port, 0, 0, *(_DWORD *)&byte_5D4594[814964]);
+      }
+      else
+      {
+        nox_3ds_stop_lan_unicast_sweep();
+      }
 #endif
       nox_write_u32(&buf[80], join_ver);
       nox_write_u32(&buf[84], nox_read_u32(&byte_5D4594[2660032]));
@@ -49651,6 +49736,10 @@ int __cdecl sub_43AF90(int a1)
 {
   int result; // eax
 
+#ifdef __3DS__
+  if ( *(_DWORD *)&byte_5D4594[814548] == 3 && a1 != 3 )
+    nox_3ds_net_log("[join3ds] state 3 -> %d", a1);
+#endif
   result = a1;
   *(_DWORD *)&byte_5D4594[814548] = a1;
   return result;
@@ -49659,6 +49748,9 @@ int __cdecl sub_43AF90(int a1)
 //----- (0043AFA0) --------------------------------------------------------
 int __cdecl sub_43AFA0(int a1)
 {
+#ifdef __3DS__
+  nox_3ds_net_log("[join3ds] join error code=%d (prev_state=%d)", a1, *(_DWORD *)&byte_5D4594[814548]);
+#endif
   *(_DWORD *)&byte_5D4594[814552] = a1;
   return sub_43AF90(2);
 }

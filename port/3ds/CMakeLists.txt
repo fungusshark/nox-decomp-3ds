@@ -123,8 +123,8 @@ target_link_libraries(nox PRIVATE
 
 # Generate custom 3DS metadata & icon (nox.smdh)
 ctr_generate_smdh("${CMAKE_CURRENT_BINARY_DIR}/nox.smdh"
-    NAME "Nox 3DS"
-    DESCRIPTION "Nox (Westwood Studios) source port"
+    NAME "Nox 3DS (${NOX_3DS_VERSION})"
+    DESCRIPTION "${NOX_3DS_VERSION} - Nox (Westwood Studios) source port"
     AUTHOR "Fungus Shark / Giraffepus"
     ICON "${CMAKE_CURRENT_SOURCE_DIR}/icon.png"
 )
