@@ -50,7 +50,9 @@ network. Commands are unauthenticated in both modes; the source-IP check is
 only a basic filter.
 
 Under Azahar, the guest's HLE sockets map to host sockets, so `host=127.0.0.1`
-should reach WSL (**UNVERIFIED**: smoke-test this). On hardware, use the PC's LAN IP.
+reaches WSL (verified in Azahar 2127.0.1, 2026-11-27: state packets arrive at
+`127.0.0.1:47800` and commands sent to `127.0.0.1:47801` are accepted with
+`accept_any_src=0`). On hardware, use the PC's LAN IP.
 
 If `socInit`, `socket`, `O_NONBLOCK` or `bind` fails, the hook logs one line
 via `nox_3ds_net_log` (`[pt] ...`), stays inert, and retries silently every 10 s. `sendto` errors are
@@ -167,16 +169,64 @@ standing still.
   never call `sub_4DA7xx`, `sub_4ECCB0`, `sub_518EE0` or the server branch of
   `sub_418C80`. Reviewers should grep for these.
 
-## 5. UNVERIFIED fields (confirm in an Azahar field-dump session)
+## 5. Field verification (Azahar, 2026-11-27, issue #36)
 
-- `player_class` enum: 0 Warrior / 1 Wizard / 2 Conjurer (OpenNox convention).
-- `anim` (drawable +276) values: 6 = running is seen in code; death and other values are unknown.
-- `hp_zero` as the death signal: there is no explicit death bit. Opcode `0xE8` clears gear, and HP may read 0 before the first `0xDD`.
-- `observer` = playerInfo+3680 bit0 (it gates the minimap show-all; the exact semantics are not yet confirmed).
-- Ability records `1047764 + 24*a`: whether `a` is the slot or the ability id (the same for a fresh Warrior), and the `cd_remaining` derivation. That derivation assumes `game_frame` and `sub_4252D0` use the same 30 fps frame units.
-- `class_flags` bit names other than `4` = player.
-- Viewport rect from `sub_437250()` and the camera origin `[811084/811088]` under the 3DS 400x240 viewport.
-- Guest-to-host `127.0.0.1` reachability under Azahar HLE soc; real-hardware frame cost (measure with `perf_3ds.h`).
+Verified in an Azahar field-dump session (Xvfb, OpenGL/llvmpipe, Solo Warrior
+and Solo Quest Warrior). Evidence: `playtest-captures/raw/hook_verify/`
+(`state_127.jsonl` plus screenshots).
+
+Verified:
+- Transport: guest `host=127.0.0.1` reaches WSL; host-to-guest commands on
+  `127.0.0.1:47801` are accepted.
+- No `playtest.cfg`: no packets and no `[pt]` log line (inert).
+- Menus: `flags = 0x11` (`menu_shell | is_host`), `player_class = 0xFF`,
+  `n_obj = 0`. `is_host` (`sub_40A5C0(1)`) is also set in the menu shell and in
+  Solo, so it is not an MP signal on its own. Use `is_mp`.
+- Modals: the chapter scroll, the Start menu and Quit confirm clear `in_world`
+  and `cmds_active` (`flags = 0x32`). MOVE sent during the Start menu had no effect.
+  `game_frame` stays frozen while the chapter scroll is up.
+- `player_class`: Warrior = **0** (Solo and Solo Quest). Wizard and Conjurer are not checked yet.
+- HP: a fresh Solo Warrior reads `hp = 20/20` and the HUD vial is full. Solo Quest starts at
+  `150/150`. Mana reads `0/0` for a Warrior.
+- `facing` (drawable +297) is the 3x3 keypad direction code, not 0..7:
+  `0 NW, 1 N, 2 NE, 3 W, 5 E, 6 SW, 7 S, 8 SE` (4 is unused). Observed: N=1,
+  W=3, E=5, S=7, SE=8. When a MOVE latch expires, facing snaps back to 7.
+- `anim` (drawable +276): `0` idle, `4` walk (MOVE b=1), `6` run (MOVE b=3),
+  `3` jump (JUMP), `27` melee swing (ATTACK, seen for one or two packets).
+- `cam_x/cam_y` is the top-left of a **640x384** world view (player - cam =
+  (320,192)). The 3DS draws that view scaled to 400x240, so `clip_viewport`
+  with the `sub_437250()` rect matches what is on screen. Objects up to |dx| 317 and
+  |dy| 192 from the player were reported, and none were outside the rect.
+- Objects: NPC (Airship Captain) `class_flags 0x200002` at the on-screen
+  position, and static props `0x100008`. In a black line-of-sight area next to a
+  cliff, no objects were reported.
+- Commands: MOVE (all 8 directions, walk and run) moves the hero. Input stops
+  within the TTL after the last packet. AIM_DIR turns the hero to face that way.
+  ATTACK swings and JUMP jumps. HEAL is accepted (no potion to drink).
+- Ability records: ids 1..5 with `cd_total` 300/300/150/30/600 frames.
+  **`ready=1` is reported for abilities the character has not learned yet** (a fresh Solo
+  Warrior has an empty quickbar). Pad A and SLOT 1 both do nothing in that
+  state, so the record says nothing about whether an ability is learned.
+
+Still unverified:
+- The `cd_remaining` countdown (no learned ability was available). SLOT/self-cast
+  is not exercised yet.
+- Death (`hp_zero`, death `anim`) and `observer`: not reached.
+- Wizard/Conjurer class values. `class_flags` bit names other than 4 (player), 2 (monster/NPC) and
+  `0x100000` (static prop, observed).
+- Invisibility (bit 0) and infravision (bit 21).
+- Real-hardware frame cost. In the emulator, the FPS counter shows no
+  measurable difference (Solo Quest 21 FPS without cfg vs. 25-26 FPS with the hook, on llvmpipe;
+  the noise is larger than any hook cost).
+
+Known issues found in verification:
+- **Solo Quest: the player is not found.** On Quest stage 1 the drawable list
+  is longer than `PT_MAX_WALK` (2048). `find_local_drawable()` gives up, so
+  `player_valid = 0`, `x = y = 0` and `obj_truncated` are set while the hero is
+  visible and controllable. HP reads `450/450` in that state, not 150. MOVE still works,
+  and `in_world | cmds_active` stays set without `player_valid`.
+- NPC conversation (Airship Captain, GoodBye/Repeat panel) does **not** clear
+  `in_world`: `nox_3ds_input_is_world_mode()` does not count that dialog.
 
 ## 6. TODO
 
