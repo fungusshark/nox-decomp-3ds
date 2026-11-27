@@ -136,9 +136,17 @@ target_link_libraries(nox PRIVATE
 target_link_options(nox PRIVATE -Wl,--gc-sections)
 
 # Generate custom 3DS metadata & icon (nox.smdh)
+option(NOX_3DS_SMDH_OMIT_VERSION "Omit version string from SMDH launcher metadata" OFF)
+if (NOX_3DS_SMDH_OMIT_VERSION)
+    set(_nox_smdh_name "Nox 3DS")
+    set(_nox_smdh_desc "Nox (Westwood Studios) source port")
+else()
+    set(_nox_smdh_name "Nox 3DS (${NOX_3DS_VERSION})")
+    set(_nox_smdh_desc "${NOX_3DS_VERSION} - Nox (Westwood Studios) source port")
+endif()
 ctr_generate_smdh("${CMAKE_CURRENT_BINARY_DIR}/nox.smdh"
-    NAME "Nox 3DS (${NOX_3DS_VERSION})"
-    DESCRIPTION "${NOX_3DS_VERSION} - Nox (Westwood Studios) source port"
+    NAME "${_nox_smdh_name}"
+    DESCRIPTION "${_nox_smdh_desc}"
     AUTHOR "Fungus Shark / Giraffepus"
     ICON "${CMAKE_CURRENT_SOURCE_DIR}/icon.png"
 )
