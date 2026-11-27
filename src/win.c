@@ -12,6 +12,10 @@ extern void nox_ctrl_capture_event(const SDL_Event *ev);
 #endif
 #endif
 
+#ifdef __3DS__
+#include "playtest_hook_3ds.h" /* nox_pt_frame(): no-op inline unless NOX_PLAYTEST_HOOK */
+#endif
+
 #ifdef USE_SDL
 void nox_control_server_init(void);
 void nox_control_server_pump(void);
@@ -541,6 +545,9 @@ int sub_4453A0()
 	//mm_timer_pump_mainthread();
 #ifdef USE_SDL
     nox_gamepad_update();
+#ifdef __3DS__
+    nox_pt_frame(); /* playtest hook: after pad/input_3ds so overrides win this pump */
+#endif
     nox_control_server_pump();
     nox_sdl_assert_window("sub_4453A0 (event pump exit)");
 #endif

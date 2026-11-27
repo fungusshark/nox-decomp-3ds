@@ -124,6 +124,16 @@ target_include_directories(nox PRIVATE
     "${NOX_SRC_DIR}/external/include"
 )
 
+# Gated playtest game-state hook (issue #36). Default OFF: release builds do not
+# compile playtest_hook_3ds.c and the call sites are empty static inlines.
+option(NOX_PLAYTEST_HOOK "Build the UDP playtest game-state hook (dev only)" OFF)
+if (NOX_PLAYTEST_HOOK)
+    target_sources(nox PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/playtest_hook_3ds.c")
+    target_compile_definitions(nox PRIVATE NOX_PLAYTEST_HOOK=1)
+    set_source_files_properties("${CMAKE_CURRENT_SOURCE_DIR}/playtest_hook_3ds.c"
+        PROPERTIES COMPILE_OPTIONS "-O2;-Wall;-Wextra")
+endif()
+
 # Link order matters for static archives: citro2d -> citro3d -> ctru -> zlib
 target_link_libraries(nox PRIVATE
     citro2d

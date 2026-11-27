@@ -7,6 +7,7 @@
  *   - net_sockets_3ds.c  (vFD 2048..2079): Multiplayer menus / Direct IPv4 via soc:u
  */
 #include "platform_3ds.h"
+#include "playtest_hook_3ds.h"
 #include "../../src/windows.h"
 
 /* Undefine src/windows.h socket-remapping macros so struct member names on
@@ -74,6 +75,7 @@ void nox_3ds_net_init(void)
 
 void nox_3ds_net_shutdown(void)
 {
+    nox_pt_shutdown(); /* no-op unless NOX_PLAYTEST_HOOK; must precede socExit() */
     nox_3ds_lobby_shutdown();
     g_nox_3ds_sockets_ops.shutdown();
     g_nox_3ds_loopback_ops.shutdown();
