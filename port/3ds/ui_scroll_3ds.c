@@ -441,11 +441,13 @@ void nox_3ds_ui_scroll_sync_listbox(void *lb)
     }
 
     int wid = (int)(int32_t)w[0];
-    /* Server Browser multi-column listboxes: only 10042 (rightmost) draws scrollbar */
+    /* Server Browser multi-column listboxes: only 10042 (rightmost) draws scrollbar.
+     * Also skip the native GPU scrollbar whenever the listbox already has its own
+     * stock software scrollbar (v5[9] != 0) to avoid duplicate scrollbars. */
     bool hide_sb = (wid >= 10038 && wid <= 10041);
-    if (!hide_sb && s->content_h > s->view_h && s->view_h >= 12 && w[2] >= 20) {
-        bool has_stock_slider = (v5[9] != 0);
-        int sb_x = (int32_t)ax + (int32_t)w[2] - (has_stock_slider ? 14 : 6);
+    bool has_stock_slider = (v5[9] != 0);
+    if (!hide_sb && !has_stock_slider && s->content_h > s->view_h && s->view_h >= 12 && w[2] >= 20) {
+        int sb_x = (int32_t)ax + (int32_t)w[2] - 6;
         bool hi = (s_dragging && s_arm_key == s->key) || (s_last_interacted_key == s->key);
         int scr = nox_3ds_is_bottom_swbuf_active() ? NOX_3DS_SWBUF_BOTTOM : NOX_3DS_SWBUF_TOP;
         nox_3ds_ui_queue_scrollbar(scr, sb_x, (int32_t)ay + 2, 5, (int32_t)w[3] - 4,
@@ -498,7 +500,6 @@ static bool meta_is_pinned(const panel_meta_t *m, const void *child)
 bool nox_3ds_ui_is_scrollable_panel_id(int id)
 {
     return (id == 10150 || id == 10151 || id == 10153 ||
-            id == 10183 || id == 10197 || id == 10199 ||
             id == 10300 || id == 2100);
 }
 
@@ -900,10 +901,16 @@ static void scale_editbox_field_width(uint32_t *c, int new_w, float sx)
     uint16_t *eb = (uint16_t *)(uintptr_t)c[8];
     int ebw = (int)eb[521];
     if (ebw > 0) {
+        int lw = 0;
+        uint16_t *lbl = (uint16_t *)(c + 27);
+        if (*lbl)
+            sub_43F840((int)c[59], lbl, &lw, NULL, 0);
         int scaled = (int)((float)ebw * sx + 0.5f);
         int max_eb = new_w / 2;
-        if (max_eb < 64) max_eb = 64;
-        if (scaled < 64 && new_w >= 140) scaled = 64;
+        if (lw > 0 && new_w - lw - 16 < max_eb)
+            max_eb = new_w - lw - 16;
+        if (max_eb < 56) max_eb = 56;
+        if (scaled < 64 && max_eb >= 64 && new_w >= 140) scaled = 64;
         if (scaled > max_eb) scaled = max_eb;
         eb[521] = (uint16_t)scaled;
     }
@@ -1320,7 +1327,22 @@ static int reflow_form_children(uint32_t **items, int count,
         int oh = (int)(int32_t)c[3];
         int fptr = (int)c[59];
 
-        if (is_checkbox_or_radio(fn)) {
+        if (c[100] && !is_listbox(fn)) {
+            /* Nested sub-container (including static group boxes like servopts
+             * 10183/10197/10199): always reflow its direct children first! */
+            uint32_t *sub_items[MAX_PANEL_CHILDREN];
+            int scnt = 0;
+            for (uint32_t *sc = (uint32_t *)(uintptr_t)c[100]; sc && scnt < MAX_PANEL_CHILDREN;
+                 sc = (uint32_t *)(uintptr_t)sc[97]) {
+                if (!is_lb_aux_widget(sc, aux, aux_count))
+                    sub_items[scnt++] = sc;
+            }
+            sub_46A9B0(c, start_x, cur_y);
+            int sub_end = reflow_form_children(sub_items, scnt, 8, 6, avail_w - 16, aux, aux_count);
+            if (sub_end < 28) sub_end = 28;
+            sub_46AB20(c, avail_w, sub_end + 4);
+            cur_y += sub_end + 10;
+        } else if (is_checkbox_or_radio(fn)) {
             int lw = 0;
             uint16_t *lbl = (uint16_t *)(c + 27);
             if (*lbl)
@@ -1330,6 +1352,7 @@ static int reflow_form_children(uint32_t **items, int count,
 
             /* Pair two short checkboxes/radios side-by-side when both fit half_w */
             if (half_w >= 180 && need_w <= half_w - 6 && i + 1 < count &&
+                !items[i + 1][100] &&
                 is_checkbox_or_radio((uintptr_t)items[i + 1][95])) {
                 uint32_t *c2 = items[i + 1];
                 int lw2 = 0;
@@ -1361,6 +1384,29 @@ static int reflow_form_children(uint32_t **items, int count,
             cur_y += row_h + 6;
         } else if (is_editbox(fn)) {
             int row_h = (oh < 26) ? 26 : oh;
+            /* Pair [editbox, pushbutton] side-by-side if they shared a row in stock .wnd
+             * (e.g. servopts "Lesson [15]" + "Advanced...", "Time Limit [0]" + "Defaults") */
+            if (half_w >= 180 && i + 1 < count && !items[i + 1][100] &&
+                is_pushbutton((uintptr_t)items[i + 1][95])) {
+                uint32_t *c2 = items[i + 1];
+                int dy_orig = (int)(int32_t)c2[5] - (int)(int32_t)c[5];
+                if (dy_orig >= -12 && dy_orig <= 12) {
+                    int h2 = (int)(int32_t)c2[3];
+                    if (h2 > row_h) row_h = h2;
+                    float esx = (ow > 0) ? ((float)half_w / (float)ow) : 1.0f;
+                    if (esx < 1.0f) esx = 1.0f;
+                    scale_editbox_field_width(c, half_w, esx);
+                    if (*(uint16_t *)(c2 + 27))
+                        convert_button_to_resizable(c2);
+                    sub_46A9B0(c, start_x, cur_y);
+                    sub_46AB20(c, half_w, row_h);
+                    sub_46A9B0(c2, col2_x, cur_y);
+                    sub_46AB20(c2, half_w, row_h);
+                    cur_y += row_h + 8;
+                    ++i;
+                    continue;
+                }
+            }
             float esx = (ow > 0) ? ((float)avail_w / (float)ow) : 1.0f;
             if (esx < 1.0f) esx = 1.0f;
             scale_editbox_field_width(c, avail_w, esx);
@@ -1388,8 +1434,8 @@ static int reflow_form_children(uint32_t **items, int count,
             }
             int lb_w = has_aux ? (avail_w - 20) : avail_w;
             int lb_h = oh;
-            if (lb_h < 68) lb_h = 68;
-            if (lb_h > 156) lb_h = 156;
+            if (lb_h < 96) lb_h = 96;
+            if (lb_h > 140) lb_h = 140;
             sub_46A9B0(c, start_x, cur_y);
             sub_46AB20(c, lb_w, lb_h);
             cur_y += lb_h + 8;
@@ -1405,6 +1451,7 @@ static int reflow_form_children(uint32_t **items, int count,
                 convert_button_to_resizable(c);
             }
             if (half_w >= 160 && bw <= half_w && i + 1 < count &&
+                !items[i + 1][100] &&
                 is_pushbutton((uintptr_t)items[i + 1][95])) {
                 uint32_t *c2 = items[i + 1];
                 int bw2 = (int)(int32_t)c2[2];
@@ -1433,20 +1480,6 @@ static int reflow_form_children(uint32_t **items, int count,
             sub_46A9B0(c, start_x, cur_y);
             sub_46AB20(c, bw, row_h);
             cur_y += row_h + 8;
-        } else if (c[100]) {
-            /* Nested sub-container: reflow its direct children too */
-            uint32_t *sub_items[MAX_PANEL_CHILDREN];
-            int scnt = 0;
-            for (uint32_t *sc = (uint32_t *)(uintptr_t)c[100]; sc && scnt < MAX_PANEL_CHILDREN;
-                 sc = (uint32_t *)(uintptr_t)sc[97]) {
-                if (!is_lb_aux_widget(sc, aux, aux_count))
-                    sub_items[scnt++] = sc;
-            }
-            sub_46A9B0(c, start_x, cur_y);
-            int sub_end = reflow_form_children(sub_items, scnt, 6, 6, avail_w - 12, aux, aux_count);
-            if (sub_end < 28) sub_end = 28;
-            sub_46AB20(c, avail_w, sub_end + 4);
-            cur_y += sub_end + 10;
         } else {
             int row_h = (oh < 20) ? 20 : oh;
             int nw = (ow < avail_w && !(c[1] & 0x80u)) ? avail_w : ow;
@@ -1622,12 +1655,135 @@ void nox_3ds_ui_takeover_servopts(void *root_wnd)
     sub_46AB20(w, new_w, new_h);
     sub_46A9B0(w, new_x, new_y);
 
-    /* Expand all direct children of servopts root (10100) edge-to-edge across 624x472 */
+    /* Partition servopts direct children into:
+     *  - Top tab buttons (10134 Game, 10135 Server): keep exact stock sprite width
+     *    so tab text stays dead-center inside its Westwood tab art.
+     *  - Bottom footer buttons (GO!, Cancel): resizable centered medieval buttons.
+     *  - Tab body containers (10150, 10153, etc.): full-width scrollable band
+     *    between tabs and footer, recursively reflowing nested group boxes.
+     *  - Other controls (e.g. 10120 game-mode dropdown): clamped inside frame. */
+    uint32_t *tabs[8];
+    int tab_cnt = 0;
+    uint32_t *footers[8];
+    int ftr_cnt = 0;
+    uint32_t *panels[16];
+    int pnl_cnt = 0;
+    uint32_t *others[MAX_PANEL_CHILDREN];
+    int oth_cnt = 0;
+
     for (uint32_t *c = (uint32_t *)(uintptr_t)w[100]; c; c = (uint32_t *)(uintptr_t)c[97]) {
         if (is_lb_aux_widget(c, aux, aux_count))
             continue;
         int cid = (int)(int32_t)c[0];
         uintptr_t fn = (uintptr_t)c[95];
+        int oy = (int)(int32_t)c[5];
+        int oh = (int)(int32_t)c[3];
+
+        if ((cid == 10134 || cid == 10135 ||
+             (!c[100] && oy < min_y + 28 && oh <= 36 && cid != 10120)) &&
+            tab_cnt < 8) {
+            tabs[tab_cnt++] = c;
+        } else if (is_pushbutton(fn) && !c[100] && oy >= max_b - 48 && ftr_cnt < 8) {
+            footers[ftr_cnt++] = c;
+        } else if (c[100] && pnl_cnt < 16) {
+            panels[pnl_cnt++] = c;
+        } else if (oth_cnt < MAX_PANEL_CHILDREN) {
+            others[oth_cnt++] = c;
+        }
+    }
+
+    /* Sort & place top tabs side-by-side at stock sprite width so tab text
+     * aligns cleanly on top of the Westwood tab art. */
+    for (int i = 1; i < tab_cnt; ++i) {
+        uint32_t *k = tabs[i];
+        int j = i - 1;
+        while (j >= 0 && (int32_t)tabs[j][4] > (int32_t)k[4]) {
+            tabs[j + 1] = tabs[j];
+            --j;
+        }
+        tabs[j + 1] = k;
+    }
+    int tab_x = 16;
+    int tab_bottom = 38;
+    for (int i = 0; i < tab_cnt; ++i) {
+        uint32_t *t = tabs[i];
+        int tw = (int)(int32_t)t[2];
+        int th = (int)(int32_t)t[3];
+        if (tw < 48) tw = 48;
+        if (th < 22) th = 22;
+        sub_46A9B0(t, tab_x, 12);
+        sub_46AB20(t, tw, th);
+        tab_x += tw + 8;
+        if (12 + th + 4 > tab_bottom)
+            tab_bottom = 12 + th + 4;
+    }
+
+    /* Sort & place footer buttons cleanly inside the bottom stone border */
+    for (int i = 1; i < ftr_cnt; ++i) {
+        uint32_t *k = footers[i];
+        int j = i - 1;
+        while (j >= 0 && (int32_t)footers[j][4] > (int32_t)k[4]) {
+            footers[j + 1] = footers[j];
+            --j;
+        }
+        footers[j + 1] = k;
+    }
+    int footer_y = (ftr_cnt > 0) ? (new_h - 42) : (new_h - 12);
+    if (ftr_cnt > 0) {
+        int gap = 16;
+        int btn_w = (new_w - 40 - gap * (ftr_cnt - 1)) / ftr_cnt;
+        if (btn_w > 168) btn_w = 168;
+        if (btn_w < 84)  btn_w = 84;
+        int total_w = ftr_cnt * btn_w + (ftr_cnt - 1) * gap;
+        int bx = (new_w - total_w) / 2;
+        for (int i = 0; i < ftr_cnt; ++i) {
+            uint32_t *b = footers[i];
+            if (*(uint16_t *)(b + 27))
+                convert_button_to_resizable(b);
+            sub_46A9B0(b, bx, footer_y);
+            sub_46AB20(b, btn_w, 30);
+            bx += btn_w + gap;
+        }
+    }
+
+    /* Place main tab body panels (10150 Game, 10153 Server) cleanly between
+     * tabs and footer, and recursively reflow all nested controls & group boxes. */
+    int body_x = 12;
+    int body_y = tab_bottom;
+    int body_w = new_w - 24;
+    int body_h = footer_y - body_y - 8;
+    if (body_h < 120) body_h = 120;
+
+    for (int i = 0; i < pnl_cnt; ++i) {
+        uint32_t *c = panels[i];
+        c[1] &= ~0x80u;
+        c[14] = (uint32_t)sub_4344A0(26, 22, 18);
+        c[16] = (uint32_t)sub_4344A0(112, 88, 54);
+        sub_46A9B0(c, body_x, body_y);
+        sub_46AB20(c, body_w, body_h);
+
+        uint32_t *sub_items[MAX_PANEL_CHILDREN];
+        int scnt = 0;
+        for (uint32_t *sc = (uint32_t *)(uintptr_t)c[100]; sc && scnt < MAX_PANEL_CHILDREN;
+             sc = (uint32_t *)(uintptr_t)sc[97]) {
+            if (!is_lb_aux_widget(sc, aux, aux_count))
+                sub_items[scnt++] = sc;
+        }
+        if (scnt > 0) {
+            reflow_form_children(sub_items, scnt, 8, 6, body_w - 24, aux, aux_count);
+            panel_meta_t *meta = alloc_panel_meta(c);
+            memset(meta, 0, sizeof(*meta));
+            meta->panel_wnd  = c;
+            meta->pad_top    = 0;
+            meta->pad_bottom = 0;
+            invalidate_panel_slot(c);
+        }
+    }
+
+    /* Handle any remaining direct controls (such as 10120 game-mode dropdown) */
+    for (int i = 0; i < oth_cnt; ++i) {
+        uint32_t *c = others[i];
+        int cid = (int)(int32_t)c[0];
         int ox = (int)(int32_t)c[4];
         int oy = (int)(int32_t)c[5];
         int ow = (int)(int32_t)c[2];
@@ -1639,7 +1795,6 @@ void nox_3ds_ui_takeover_servopts(void *root_wnd)
         int nh = (int)((float)oh * sy + 0.5f);
 
         if (cid == 10120) {
-            /* Game-mode dropdown sized by sub_457A10: keep at least stock width */
             if (nw < ow) nw = ow;
             if (nh < oh) nh = oh;
             if (nx + nw > new_w - pad_x) nx = new_w - pad_x - nw;
@@ -1648,77 +1803,12 @@ void nox_3ds_ui_takeover_servopts(void *root_wnd)
             sub_46AB20(c, nw, nh);
             continue;
         }
-
         if (nx < pad_x) nx = pad_x;
-        if (ny < pad_y) ny = pad_y;
+        if (ny < body_y) ny = body_y;
         if (nx + nw > new_w - pad_x) nw = new_w - pad_x - nx;
-        if (ny + nh > new_h - pad_y) nh = new_h - pad_y - ny;
+        if (ny + nh > footer_y - 4) nh = footer_y - 4 - ny;
         if (nw < 16) nw = (ow > 16) ? ow : 16;
         if (nh < 16) nh = (oh > 16) ? oh : 16;
-
-        if (is_pushbutton(fn)) {
-            uint16_t *lbl = (uint16_t *)(c + 27);
-            if (!*lbl && ((c[1] & 0x80u) || fn == (uintptr_t)sub_4A8380)) {
-                /* Icon-only button: keep stock icon size at scaled position */
-                sub_46A9B0(c, nx, ny);
-                continue;
-            }
-            /* Convert any text button to resizable solid button so its box matches
-             * its widened width and the text overlays dead-center inside it. */
-            if (*lbl)
-                convert_button_to_resizable(c);
-            sub_46A9B0(c, nx, ny);
-            sub_46AB20(c, nw, (nh > 32 && oh <= 28) ? 30 : nh);
-            continue;
-        }
-
-        if (is_editbox(fn)) {
-            scale_editbox_field_width(c, nw, sx);
-            sub_46A9B0(c, nx, ny);
-            sub_46AB20(c, nw, (nh < 24) ? 24 : ((nh > 30 && oh <= 26) ? 26 : nh));
-            continue;
-        }
-
-        if (is_listbox(fn)) {
-            bool has_aux = false;
-            for (int a = 0; a < aux_count; ++a) {
-                if (aux[a].lb == c) { has_aux = true; break; }
-            }
-            if (has_aux && nx + nw + 18 > new_w - pad_x)
-                nw = new_w - pad_x - 18 - nx;
-            sub_46A9B0(c, nx, ny);
-            sub_46AB20(c, nw, nh);
-            continue;
-        }
-
-        /* Sub-container panels (e.g. 10150, 10153, 10183, 10197, 10199) */
-        if (c[100]) {
-            c[1] &= ~0x80u;
-            c[14] = (uint32_t)sub_4344A0(26, 22, 18);
-            c[16] = (uint32_t)sub_4344A0(96, 76, 48);
-            sub_46A9B0(c, nx, ny);
-            sub_46AB20(c, nw, nh);
-
-            /* Reflow children inside this widened sub-panel across its full width */
-            uint32_t *sub_items[MAX_PANEL_CHILDREN];
-            int scnt = 0;
-            for (uint32_t *sc = (uint32_t *)(uintptr_t)c[100]; sc && scnt < MAX_PANEL_CHILDREN;
-                 sc = (uint32_t *)(uintptr_t)sc[97]) {
-                if (!is_lb_aux_widget(sc, aux, aux_count))
-                    sub_items[scnt++] = sc;
-            }
-            if (scnt > 0) {
-                reflow_form_children(sub_items, scnt, 8, 6, nw - 22, aux, aux_count);
-                panel_meta_t *meta = alloc_panel_meta(c);
-                memset(meta, 0, sizeof(*meta));
-                meta->panel_wnd  = c;
-                meta->pad_top    = 0;
-                meta->pad_bottom = 0;
-                invalidate_panel_slot(c);
-            }
-            continue;
-        }
-
         sub_46A9B0(c, nx, ny);
         sub_46AB20(c, nw, nh);
     }

@@ -8270,7 +8270,12 @@ int __cdecl sub_458500(_DWORD *a1, int a2)
 
   v1 = sub_4309F0();
   sub_46AA60(a1, &xLeft, &v5);
+#ifdef __3DS__
+  sub_434460(sub_4344A0(22, 18, 15));
+  sub_49CE30(xLeft, v5, a1[2], a1[3]);
+#else
   sub_49CF10(xLeft, v5 + 25, a1[2], a1[3] - 25);
+#endif
   v2 = sub_46B0C0(*(_DWORD **)&byte_5D4594[1046492], 10120);
   if ( !sub_46ACC0((int)v2) && !sub_46AAB0(v2, v1->field_0, v1->field_4) )
   {
@@ -10240,9 +10245,9 @@ static inline int nox_3ds_sb_rows_per_page(void)
   return (r < 4) ? 4 : r;
 }
 
-static void nox_3ds_sb_draw_book_bg(int bx, int by, int tab_mode)
+static void nox_3ds_sb_draw_book_bg(int bx, int by, int tab_mode, int anim_ptr)
 {
-  enum { CAP_W = 640, CAP_H = 264, CAP_ANCHOR_X = 48, CAP_ANCHOR_Y = 84 };
+  enum { CAP_W = 640, CAP_H = 280, CAP_ANCHOR_X = 48, CAP_ANCHOR_Y = 92 };
   static uint16_t *s_cap_buf = NULL;
   static uint16_t *s_cap_rows[480];
   static int s_cached_bg = 0;
@@ -10263,9 +10268,11 @@ static void nox_3ds_sb_draw_book_bg(int bx, int by, int tab_mode)
       s_cap_rows[y] = s_cap_buf + (size_t)((y < CAP_H) ? y : (CAP_H - 1)) * CAP_W;
   }
 
-  /* Capture the authentic Westwood Spellbook sprites into an offscreen scratch
-   * buffer using bit 15 (0x8000) as a lossless transparency sentinel. */
-  if ( spr_bg != s_cached_bg || spr_tab != s_cached_tab )
+  /* Capture the authentic Westwood Spellbook sprites (plus active page-turn
+   * animation frame when flipping) into an offscreen scratch buffer using
+   * bit 15 (0x8000) as a lossless transparency sentinel. Static pages stay
+   * cached; animated flips re-capture each frame and invalidate the cache. */
+  if ( anim_ptr != 0 || spr_bg != s_cached_bg || spr_tab != s_cached_tab )
   {
     size_t n = (size_t)CAP_W * (size_t)CAP_H;
     for ( size_t i = 0; i < n; ++i )
@@ -10284,6 +10291,8 @@ static void nox_3ds_sb_draw_book_bg(int bx, int by, int tab_mode)
       sub_47D2C0(spr_bg, sv1, sv2);
       if ( spr_tab )
         sub_47D2C0(spr_tab, sv1, sv2);
+      if ( anim_ptr )
+        sub_4BE6D0(anim_ptr, sv1, sv2);
     }
     nox_3ds_clip_pop(&cg);
 
@@ -10306,8 +10315,16 @@ static void nox_3ds_sb_draw_book_bg(int bx, int by, int tab_mode)
         }
       }
     }
-    s_cached_bg  = spr_bg;
-    s_cached_tab = spr_tab;
+    if ( anim_ptr != 0 )
+    {
+      s_cached_bg  = 0;
+      s_cached_tab = 0;
+    }
+    else
+    {
+      s_cached_bg  = spr_bg;
+      s_cached_tab = spr_tab;
+    }
   }
 
   if ( s_max_x < s_min_x || s_max_y < s_min_y )
@@ -11171,12 +11188,20 @@ int __cdecl sub_45BD40(int a1)
   v3 = sub_43F320(0);
 #ifdef __3DS__
   *(_DWORD *)&byte_5D4594[1046656] = nox_3ds_sb_row_h();
-  if ( *(_DWORD *)&byte_5D4594[1046868] == 2 || *(_DWORD *)&byte_5D4594[1046868] == 3 )
-    *(_DWORD *)&byte_5D4594[1046868] = *(_DWORD *)&byte_5D4594[1046872] ? 1 : 0;
-  nox_3ds_sb_draw_book_bg(v66, v67, *(_DWORD *)&byte_5D4594[1046872]);
   sub_434390(*(int *)&byte_5D4594[1046880]);
   (void)v1;
   (void)v2;
+  if ( *(_DWORD *)&byte_5D4594[1046868] == 3 )
+  {
+    nox_3ds_sb_draw_book_bg(v66, v67, *(_DWORD *)&byte_5D4594[1046872], *(int *)&byte_5D4594[1046928]);
+    goto LABEL_75;
+  }
+  if ( *(_DWORD *)&byte_5D4594[1046868] == 2 )
+  {
+    nox_3ds_sb_draw_book_bg(v66, v67, *(_DWORD *)&byte_5D4594[1046872], *(int *)&byte_5D4594[1046924]);
+    goto LABEL_75;
+  }
+  nox_3ds_sb_draw_book_bg(v66, v67, *(_DWORD *)&byte_5D4594[1046872], 0);
 #else
   *(_DWORD *)&byte_5D4594[1046656] = v3 + 2;
   sub_434390(*(int *)&byte_5D4594[1046880]);

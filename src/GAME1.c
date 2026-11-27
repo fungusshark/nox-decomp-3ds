@@ -47864,24 +47864,35 @@ int sub_4379F0()
           if ( pop )
           {
             /* Clear fixed-size 130x120 sprite frame (0x80) so resizing pop to
-             * 184x144 renders a single clean 9-slice medieval stone frame. */
+             * 190x148 renders a single clean 9-slice medieval stone frame. */
             pop[1] &= ~0x80u;
             pop[1] |= 0x1000u;
             pop[11] |= 2048u;
             pop[14] = sub_4344A0(22, 18, 15);
-            sub_46AB20(pop, 184, 144);
+            pop[15] = 0;
+            pop[21] = 0;
+            sub_46AB20(pop, 190, 148);
+            for ( _DWORD *ch = (_DWORD *)pop[100]; ch; ch = (_DWORD *)ch[97] )
+            {
+              if ( ch != desc && ch != joinb && ch != upb && ch != dnb && ch != sld )
+                sub_46AC00((int)ch, 1);
+            }
           }
           if ( desc )
           {
-            /* Suppress inner duplicate stone frame on desc listbox inside pop */
-            desc[1] &= ~0x1000u;
-            sub_46A9B0(desc, 6, 6);
-            sub_46AB20(desc, 158, 104);
+            /* Suppress fixed-size 114x90 listbox sprite (sub_4A3FC0 desc[15])
+             * and inner outline/stone frame so only pop's single frame draws. */
+            desc[1] &= ~(0x80u | 0x1000u);
+            desc[15] = 0;
+            desc[21] = 0;
+            desc[16] = 0x80000000u;
+            sub_46A9B0(desc, 10, 10);
+            sub_46AB20(desc, 152, 100);
           }
-          if ( upb ) sub_46A9B0(upb, 166, 6);
-          if ( sld ) { sub_46A9B0(sld, 166, 22); sub_46AB20(sld, 16, 72); }
-          if ( dnb ) sub_46A9B0(dnb, 166, 94);
-          if ( joinb ) sub_46A9B0(joinb, (184 - (int)joinb[2]) / 2, 115);
+          if ( upb ) sub_46A9B0(upb, 164, 10);
+          if ( sld ) { sub_46A9B0(sld, 164, 26); sub_46AB20(sld, 16, 68); }
+          if ( dnb ) sub_46A9B0(dnb, 164, 94);
+          if ( joinb ) sub_46A9B0(joinb, (190 - (int)joinb[2]) / 2, 114);
         }
 #endif
         v2 = sub_46B0C0(*(_DWORD **)&byte_5D4594[814980], 10002);
@@ -53002,7 +53013,8 @@ LABEL_24:
           else
           {
             nox_3ds_swbuf_begin_bottom(NOX_3DS_BOT_BG_RGB555);
-            if ( minimap_on )
+            if ( minimap_on
+              && !(*(_DWORD *)&byte_5D4594[1046860] && !sub_46ACC0(*(int *)&byte_5D4594[1046860])) )
             {
               _DWORD *player_drw = sub_45A6F0(*(int *)&byte_5D4594[2616328]);
               if ( player_drw )
