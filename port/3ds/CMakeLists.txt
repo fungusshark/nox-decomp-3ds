@@ -23,8 +23,16 @@ if (NOT NOX_3DS_VERSION)
         set(NOX_3DS_VERSION "3ds-dev")
     endif()
 endif()
-file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/nox_3ds_version.h"
-    "#pragma once\n#define NOX_3DS_VERSION_STR \"${NOX_3DS_VERSION}\"\n")
+set(_nox_ver_hdr "${CMAKE_CURRENT_BINARY_DIR}/nox_3ds_version.h")
+set(_nox_ver_content "#pragma once\n#define NOX_3DS_VERSION_STR \"${NOX_3DS_VERSION}\"\n")
+set(_nox_ver_prev "")
+if (EXISTS "${_nox_ver_hdr}")
+    file(READ "${_nox_ver_hdr}" _nox_ver_prev)
+endif()
+if (NOT _nox_ver_prev STREQUAL _nox_ver_content)
+    file(WRITE "${_nox_ver_hdr}" "${_nox_ver_content}")
+    file(REMOVE "${CMAKE_CURRENT_BINARY_DIR}/nox.smdh")
+endif()
 
 # Mandatory ARM11 / Nox decomp diagnostics and ABI flags
 # NOTE: -fsigned-char is CRITICAL on ARM (where plain char defaults to unsigned)
@@ -134,15 +142,21 @@ ctr_create_3dsx(nox
     SMDH "${CMAKE_CURRENT_BINARY_DIR}/nox.smdh"
 )
 
-# Post-build copy to /mnt/c/3ds-dev/nox.3dsx for emulator / SD staging
-add_custom_target(copy-nox-3dsx ALL
-    COMMAND ${CMAKE_COMMAND} -E make_directory /mnt/c/3ds-dev
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${CMAKE_CURRENT_BINARY_DIR}/nox.3dsx"
-        "/mnt/c/3ds-dev/nox.3dsx"
-    DEPENDS nox_3dsx
-    COMMENT "Copying nox.3dsx to /mnt/c/3ds-dev/nox.3dsx"
-)
+# Optional post-build staging to /mnt/c/3ds-dev (WSL2) when present.
+# Named ~/nox_prebuilts/nox-<tag>.3dsx archives are staged explicitly by scripts/publish-3ds-prebuilt.sh
+# so switching branches never overwrites an archived tag from a cached CMakeCache.txt value.
+if (EXISTS "/mnt/c" AND IS_DIRECTORY "/mnt/c")
+    add_custom_target(copy-nox-3dsx ALL
+        COMMAND ${CMAKE_COMMAND} -E make_directory /mnt/c/3ds-dev
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_CURRENT_BINARY_DIR}/nox.3dsx"
+            "/mnt/c/3ds-dev/nox.3dsx"
+        DEPENDS nox_3dsx
+        COMMENT "Staging nox.3dsx to /mnt/c/3ds-dev/nox.3dsx"
+    )
+else()
+    add_custom_target(copy-nox-3dsx ALL DEPENDS nox_3dsx)
+endif()
 
 # Wireless hardware push via 3dslink
 find_program(CTR_3DSLINK_EXE NAMES 3dslink HINTS "${DEVKITPRO}/tools/bin")
