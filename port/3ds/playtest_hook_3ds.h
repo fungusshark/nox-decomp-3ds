@@ -113,6 +113,8 @@ _Static_assert(sizeof(nox_pt_cmd_t)       == 20, "nox_pt_cmd_t wire size");
 void nox_pt_frame(void);
 /* Close the hook socket; must run before soc:u socExit(). */
 void nox_pt_shutdown(void);
+/* GAME2.c opcode 0xB0 (client): server name just received from the server. */
+void nox_pt_note_server_name(const char *name);
 /* net_sockets_3ds.c: socInit regardless of the current net mode. */
 bool nox_3ds_soc_ensure_ready_any_mode(void);
 
@@ -120,6 +122,7 @@ bool nox_3ds_soc_ensure_ready_any_mode(void);
 
 static inline void nox_pt_frame(void) {}
 static inline void nox_pt_shutdown(void) {}
+static inline void nox_pt_note_server_name(const char *name) { (void)name; }
 
 #endif /* NOX_PLAYTEST_HOOK */
 

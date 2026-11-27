@@ -43,6 +43,7 @@ extern int   sub_43C700(void);          /* map loaded */
 extern int   sub_40A5C0(int a1);        /* game flags test; 1 = hosting server */
 extern char *sub_40A4C0(void);          /* host's server name (byte_5D4594[1324]) */
 extern char *sub_437250(void);          /* gameplay viewport rect [l,t,r,b] */
+extern int   sub_4984B0(int a1);        /* client draw-visibility test (view polygon/LOS), read-only */
 
 extern void nox_ctrl_set_thumbstick_move(int active, int orientation, int move_cmd, double mag);
 extern void nox_ctrl_set_radial_aim(int active, int orientation, int screen_x, int screen_y);
@@ -64,7 +65,6 @@ extern void nox_ctrl_inject_key_scancode(int sdl_scancode, int down);
 #define OFF_CAM_Y             811088u
 #define OFF_ABILITY_BASE      1047764u  /* record a (1..5) at base + 24*a, sub_461090 */
 #define OFF_ABILITY_DELAY     599160u   /* sub_4252D0(id) = [52*id + 599160] */
-#define OFF_SRV_NAME_CLIENT   371389u   /* sub_416590(0)+9, written by opcode 0xB0 */
 
 /* playerInfo fields */
 #define PI_CLASS              2251u     /* u8, GAME2.c:2214 */
@@ -75,11 +75,14 @@ extern void nox_ctrl_inject_key_scancode(int sdl_scancode, int down);
 #define DR_Y                  16u
 #define DR_TYPE               108u
 #define DR_CLASS              112u
+#define DR_ENCHANT            124u      /* enchant bitmask, sub_4356C0(d, bit) */
 #define DR_NETCODE            128u
 #define DR_ANIM               276u
 #define DR_FACING             297u
 #define DR_NEXT               368u
 #define DR_CLASS_NONNET       0x20400000u /* skipped by sub_45A6F0 netcode lookup */
+#define ENCH_INVISIBLE_BIT    (1u << 0)   /* GAME2.c:30355 renderer skips invisible non-allies */
+#define ENCH_INFRAVISION_BIT  (1u << 21)  /* GAME2.c:32368 local enchant 21 reveals invisible */
 
 #define PT_CFG_PATH           NOX_3DS_DATA_ROOT "/playtest.cfg"
 #define PT_DEFAULT_PORT       47800u
@@ -91,8 +94,9 @@ extern void nox_ctrl_inject_key_scancode(int sdl_scancode, int down);
 #define PT_TTL_MAX_MS         2000u
 #define PT_AIM_DIR_RADIUS     64.0f
 #define PT_BOTS_OK_TAG        "[bots-ok]"
+#define PT_RETRY_MS           10000u
 
-enum { PT_UNINIT = 0, PT_DISABLED, PT_ACTIVE };
+enum { PT_UNINIT = 0, PT_DISABLED, PT_RETRY, PT_ACTIVE };
 
 typedef struct {
     uint32_t host_ip_be;
@@ -135,6 +139,15 @@ static uint32_t   g_aim_until_ms;
 
 static pt_tap_t   g_taps[PT_MAX_TAPS];
 static bool       g_was_cmds_active;
+static uint32_t   g_retry_at_ms;
+static bool       g_open_err_logged;
+
+/* Client server-name snapshot, filled ONLY by a fresh opcode 0xB0 in this
+ * session (nox_pt_note_server_name) and cleared when the player returns to the
+ * menu shell from a map or leaves WIFI mode. Fail closed while empty. */
+static char       g_srv_name[16];
+static bool       g_srv_name_valid;
+static bool       g_was_map_loaded;
 
 /* Static send buffer: header + max objects. No per-frame allocation. */
 static uint8_t    g_txbuf[sizeof(nox_pt_state_hdr_t) + NOX_PT_MAX_OBJECTS * sizeof(nox_pt_obj_t)];
@@ -271,21 +284,24 @@ static void close_sock(void)
     }
 }
 
+/* Log open failures once; retries stay silent. */
+#define PT_OPEN_LOG(...) do { if (!g_open_err_logged) { g_open_err_logged = true; nox_3ds_net_log(__VA_ARGS__); } } while (0)
+
 static bool open_sock(void)
 {
     if (!nox_3ds_soc_ensure_ready_any_mode()) {
-        nox_3ds_net_log("[pt] soc:u init failed; hook disabled");
+        PT_OPEN_LOG("[pt] soc:u init failed; retrying every %us", (unsigned)(PT_RETRY_MS / 1000u));
         return false;
     }
     int fd = socket(AF_INET, SOCK_DGRAM, 0);
     if (fd < 0) {
-        nox_3ds_net_log("[pt] socket() failed errno=%d; hook disabled", errno);
+        PT_OPEN_LOG("[pt] socket() failed errno=%d; retrying", errno);
         return false;
     }
     int fl = fcntl(fd, F_GETFL, 0);
     if (fl < 0 || fcntl(fd, F_SETFL, fl | O_NONBLOCK) != 0) {
         /* Never risk a blocking recv on the main loop. */
-        nox_3ds_net_log("[pt] fcntl(O_NONBLOCK) failed errno=%d; hook disabled", errno);
+        PT_OPEN_LOG("[pt] fcntl(O_NONBLOCK) failed errno=%d; retrying", errno);
         close(fd);
         return false;
     }
@@ -295,7 +311,7 @@ static bool open_sock(void)
     local.sin_port = htons(g_cfg.listen_port);
     local.sin_addr.s_addr = htonl(INADDR_ANY);
     if (bind(fd, (struct sockaddr *)&local, sizeof(local)) != 0) {
-        nox_3ds_net_log("[pt] bind(:%u) failed errno=%d; hook disabled", (unsigned)g_cfg.listen_port, errno);
+        PT_OPEN_LOG("[pt] bind(:%u) failed errno=%d; retrying", (unsigned)g_cfg.listen_port, errno);
         close(fd);
         return false;
     }
@@ -303,13 +319,28 @@ static bool open_sock(void)
     return true;
 }
 
+static void pt_log_active(void);
+
+static void pt_try_open(void)
+{
+    if (!open_sock()) {
+        g_pt_state = PT_RETRY;
+        g_retry_at_ms = nox_3ds_get_ticks_ms() + PT_RETRY_MS;
+        return;
+    }
+    pt_log_active();
+}
+
 static void pt_init(void)
 {
     g_pt_state = PT_DISABLED;
     if (!load_cfg())
         return; /* no cfg: fully inert, no log */
-    if (!open_sock())
-        return;
+    pt_try_open();
+}
+
+static void pt_log_active(void)
+{
     const uint8_t *ip = (const uint8_t *)&g_cfg.host_ip_be;
     nox_3ds_net_log("[pt] playtest hook ACTIVE -> %u.%u.%u.%u:%u, cmd port %u, every %u, commands %s",
                     ip[0], ip[1], ip[2], ip[3], (unsigned)g_cfg.port, (unsigned)g_cfg.listen_port,
@@ -320,15 +351,30 @@ static void pt_init(void)
 /* ---- session / gating -------------------------------------------------- */
 static bool session_is_mp(void)
 {
-    return nox_3ds_net_get_mode() == NOX_3DS_NET_MODE_WIFI;
+    /* WIFI net mode and not Solo campaign (0x800, GAME3.c:36001). */
+    return nox_3ds_net_get_mode() == NOX_3DS_NET_MODE_WIFI && !sub_40A5C0(2048);
+}
+
+void nox_pt_note_server_name(const char *name)
+{
+    if (g_pt_state != PT_ACTIVE || !name)
+        return;
+    size_t n = strnlen(name, 15);
+    memcpy(g_srv_name, name, n);
+    g_srv_name[n] = '\0';
+    g_srv_name_valid = true;
 }
 
 static bool server_bots_ok(void)
 {
-    /* Host: own configured server name. Client: name received in opcode 0xB0
-     * (GAME2.c:52317 strncpy(sub_416590(0)+9, ..., 15)). Both are <=15 chars. */
-    const char *name = sub_40A5C0(1) ? sub_40A4C0() : (const char *)&byte_5D4594[OFF_SRV_NAME_CLIENT];
-    return name && ci_contains(name, 15, PT_BOTS_OK_TAG);
+    /* Host: its own configured server name (always current).
+     * Client: only the snapshot from a 0xB0 received this session; the engine
+     * copy at byte_5D4594[371389] survives across sessions, so it is not used. */
+    if (sub_40A5C0(1)) {
+        const char *name = sub_40A4C0();
+        return name && ci_contains(name, 15, PT_BOTS_OK_TAG);
+    }
+    return g_srv_name_valid && ci_contains(g_srv_name, 15, PT_BOTS_OK_TAG);
 }
 
 /* ---- local-player + visible-object snapshot ---------------------------- */
@@ -367,7 +413,8 @@ static uint32_t find_local_drawable(uint32_t netcode)
     return 0;
 }
 
-static uint32_t collect_objects(uint32_t self_d, const pt_view_t *v, uint32_t max, bool *truncated)
+static uint32_t collect_objects(uint32_t self_d, const pt_view_t *v, uint32_t max, bool clip,
+                                bool *truncated)
 {
     uint32_t count = 0, worst = 0;
     *truncated = false;
@@ -377,15 +424,27 @@ static uint32_t collect_objects(uint32_t self_d, const pt_view_t *v, uint32_t ma
     int32_t wx0 = v->cam_x, wy0 = v->cam_y;
     int32_t wx1 = wx0 + (v->vp_r - v->vp_l), wy1 = wy0 + (v->vp_b - v->vp_t);
 
+    bool infravision = self_d && (dr_u32(self_d, DR_ENCHANT) & ENCH_INFRAVISION_BIT);
+
     uint32_t d = rd_u32(OFF_DRAWABLE_LIST);
-    for (int n = 0; d && n < PT_MAX_WALK; ++n, d = dr_u32(d, DR_NEXT)) {
+    int n = 0;
+    for (; d && n < PT_MAX_WALK; ++n, d = dr_u32(d, DR_NEXT)) {
         if (d == self_d)
             continue;
         uint32_t cls = dr_u32(d, DR_CLASS);
         if (cls & DR_CLASS_NONNET)
             continue;
         int32_t x = dr_s32(d, DR_X), y = dr_s32(d, DR_Y);
-        if (g_cfg.clip_viewport && (x < wx0 || x > wx1 || y < wy0 || y > wy1))
+        if (clip && (x < wx0 || x > wx1 || y < wy0 || y > wy1))
+            continue;
+        /* Invisible objects: the renderer hides them (GAME2.c:30355) unless
+         * allied; we drop them unless the local player has infravision. Allies
+         * are dropped too (conservative; ally test needs sub_418C80). */
+        if (!infravision && (dr_u32(d, DR_ENCHANT) & ENCH_INVISIBLE_BIT))
+            continue;
+        /* Same draw-visibility test the renderer uses before drawing
+         * (GAME2.c:30306): view polygon / line of sight from the last frame. */
+        if (clip && !sub_4984B0((int)d))
             continue;
 
         uint32_t tier = (cls & 4u) ? 0u : (cls & 2u) ? 1u : (cls & 1u) ? 2u : 3u;
@@ -410,6 +469,8 @@ static uint32_t collect_objects(uint32_t self_d, const pt_view_t *v, uint32_t ma
             }
         }
     }
+    if (d && n >= PT_MAX_WALK)
+        *truncated = true;
     /* insertion sort: nearest players first */
     for (uint32_t i = 1; i < count; ++i) {
         pt_cand_t c = g_cand[i];
@@ -420,7 +481,8 @@ static uint32_t collect_objects(uint32_t self_d, const pt_view_t *v, uint32_t ma
     return count;
 }
 
-static void publish_state(uint16_t flags_in, uint32_t netcode, uint32_t self_d, const pt_view_t *v)
+static void publish_state(uint16_t flags_in, uint32_t netcode, uint32_t self_d, const pt_view_t *v,
+                          bool export_objects, bool clip)
 {
     nox_pt_state_hdr_t h;
     memset(&h, 0, sizeof(h));
@@ -479,7 +541,7 @@ static void publish_state(uint16_t flags_in, uint32_t netcode, uint32_t self_d, 
         }
 
         bool trunc = false;
-        n_obj = collect_objects(self_d, v, g_cfg.max_objects, &trunc);
+        n_obj = export_objects ? collect_objects(self_d, v, g_cfg.max_objects, clip, &trunc) : 0;
         if (trunc)
             flags |= NOX_PT_F_OBJ_TRUNCATED;
         uint8_t *o = g_txbuf + sizeof(h);
@@ -701,9 +763,11 @@ static void apply_overrides(const pt_view_t *v, uint32_t now_ms)
 void nox_pt_frame(void)
 {
     if (g_pt_state != PT_ACTIVE) {
-        if (g_pt_state != PT_UNINIT)
-            return;
-        pt_init();
+        if (g_pt_state == PT_UNINIT)
+            pt_init();
+        else if (g_pt_state == PT_RETRY &&
+                 (int32_t)(nox_3ds_get_ticks_ms() - g_retry_at_ms) >= 0)
+            pt_try_open();
         if (g_pt_state != PT_ACTIVE)
             return;
     }
@@ -715,6 +779,10 @@ void nox_pt_frame(void)
     bool map_loaded = !menu_shell && sub_43C700();
     bool in_world = map_loaded && nox_3ds_input_is_world_mode();
     bool is_mp = session_is_mp();
+    /* Session boundary: back to the menu shell after a map, or out of MP. */
+    if ((menu_shell && g_was_map_loaded) || !is_mp)
+        g_srv_name_valid = false;
+    g_was_map_loaded = map_loaded;
     bool bots_ok = is_mp && server_bots_ok();
     if (menu_shell) flags |= NOX_PT_F_MENU_SHELL;
     if (map_loaded) flags |= NOX_PT_F_MAP_LOADED;
@@ -750,7 +818,9 @@ void nox_pt_frame(void)
     g_was_cmds_active = cmds_active;
 
     if ((g_tick % g_cfg.every) == 0)
-        publish_state(flags, netcode, self_d, &v);
+        /* MP without opt-in: header + local player only. In MP the viewport
+         * and visibility clip is forced on regardless of cfg. */
+        publish_state(flags, netcode, self_d, &v, !is_mp || bots_ok, is_mp || g_cfg.clip_viewport);
 }
 
 void nox_pt_shutdown(void)
@@ -759,4 +829,5 @@ void nox_pt_shutdown(void)
         taps_release_all();
     close_sock();
     g_pt_state = PT_DISABLED;
+    g_srv_name_valid = false;
 }

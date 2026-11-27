@@ -9,6 +9,7 @@ Files:
 - `port/3ds/playtest_hook_3ds.c` / `.h`: the hook (wire structs live in the header).
 - `scripts/playtest_hook_client.py`: stdlib host client (`listen`, `send`, `--selftest`).
 - Call sites: `src/win.c` `sub_4453A0` (right after `nox_gamepad_update()`),
+  `src/GAME2.c` opcode `0xB0` handler (`nox_pt_note_server_name`),
   `port/3ds/net_3ds.c` `nox_3ds_net_shutdown()` (closes the socket before `socExit`).
 - `port/3ds/net_sockets_3ds.c`: `nox_3ds_soc_ensure_ready_any_mode()` (hook builds only).
 
@@ -43,11 +44,16 @@ clip_viewport=1     # only objects inside the camera rect (default 1)
 accept_any_src=0    # 1 = accept commands from any IP, not only host= (default 0)
 ```
 
+**LAN risk:** with `accept_any_src=1`, any device on the network that can reach
+`listen_port` can drive your character. Use it only on an isolated or trusted
+network. Commands are unauthenticated in both modes; the source-IP check is
+only a basic filter.
+
 Under Azahar, the guest's HLE sockets map to host sockets, so `host=127.0.0.1`
 should reach WSL (**UNVERIFIED**: smoke-test this). On hardware, use the PC's LAN IP.
 
 If `socInit`, `socket`, `O_NONBLOCK` or `bind` fails, the hook logs one line
-via `nox_3ds_net_log` (`[pt] ...`) and disables itself. `sendto` errors are
+via `nox_3ds_net_log` (`[pt] ...`), stays inert, and retries silently every 10 s. `sendto` errors are
 logged once and otherwise ignored. In Solo, the hook pays the same 1 MB soc:u
 buffer the Multiplayer path uses. `socExit` still happens only at shutdown.
 
@@ -82,7 +88,7 @@ The C `_Static_assert`s and the Python `*_SIZE` constants must agree. Run
 
 Flags: `0x1` menu_shell, `0x2` map_loaded, `0x4` in_world
 (`nox_3ds_input_is_world_mode()`: map loaded, no menu, modal, chat or dialog),
-`0x8` is_mp (net mode WIFI), `0x10` is_host (`sub_40A5C0(1)`), `0x20`
+`0x8` is_mp (net mode WIFI and not Solo, `!sub_40A5C0(0x800)`), `0x10` is_host (`sub_40A5C0(1)`), `0x20`
 player_valid, `0x40` observer (playerInfo+3680 bit0), `0x80` hp_zero, `0x100`
 bots_ok, `0x200` cmds_active, `0x400` obj_truncated.
 
@@ -92,9 +98,17 @@ i32 x (+12), i32 y (+16), u8 facing (+297), u8 hp_pct (0xFF = unknown), u16 0`.
 Objects come **only** from the client drawable list `byte_5D4594[1046572]`
 (next = +368). That is the set the server chose to send. Entries with class
 `& 0x20400000` (non-network, as skipped by `sub_45A6F0`) and the local player
-are excluded. With `clip_viewport=1`, only objects inside the camera rect are
-kept. The list is sorted players, then monsters, then missiles, then others,
-nearest first, and capped at `max_objects`. The walk is bounded at 2048 nodes.
+are excluded. Objects with the invisibility enchant (drawable +124 bit 0, the
+check the renderer makes at GAME2.c:30355) are dropped unless the local player
+has enchant bit 21 (infravision, which reveals them at GAME2.c:32368). Invisible
+allies are dropped too, because the ally test needs `sub_418C80`. With clipping
+on, an object must also be inside the camera rect **and** pass `sub_4984B0()`.
+That is the client's own draw-visibility test (view polygon / line of sight,
+read-only), and the renderer calls it before drawing each drawable
+(GAME2.c:30306). It uses the polygon from the last rendered frame. Clipping is
+**forced on in MP**; `clip_viewport=0` only works in Solo. The list is sorted players, then monsters, then missiles, then others,
+nearest first, and capped at `max_objects`. The walk is bounded at 2048 nodes;
+hitting the cap sets `obj_truncated`.
 
 ### Command packet (host to 3DS): 20 B
 
@@ -134,8 +148,15 @@ standing still.
   contain `[bots-ok]` (case-insensitive). The host checks its own name
   (`sub_40A4C0()`, `byte_5D4594[1324]`). A client checks the name received in
   opcode `0xB0` (`sub_416590(0)+9` = `byte_5D4594[371389]`, GAME2.c:52317).
+  The client never reads the engine copy at `byte_5D4594[371389]` for the gate.
+  That copy persists across sessions, so a stale `[bots-ok]` name could leak
+  into the next server. Instead, `GAME2.c` forwards each fresh `0xB0` to
+  `nox_pt_note_server_name()`, which keeps a hook-owned snapshot. The snapshot
+  is cleared when the player returns to the menu shell from a map, or when the
+  game leaves MP. The gate fails closed until a new `0xB0` arrives.
   Nox server names are at most 15 chars, so the tag uses 9 of them.
-  State-out still runs without the tag. If the gate closes, all overrides drop
+- Without the tag, MP state-out sends the header and local player only
+  (`n_obj = 0`). If the gate closes, all overrides drop
   and held keys are released.
 - HP, mana and position are server-authoritative. The client only stores what
   it receives, and the hook never writes game state. Commands are the same
@@ -163,5 +184,6 @@ standing still.
   (wchar, GAME2.c:19544) and is chosen before join (character creation and
   the `.plr` load). The injection point in the join packet is still to be located.
 - Ally HP% for objects (`0x41/0x42` to `sub_495150`/`sub_49A650`); `hp_pct` is always 0xFF for now.
-- Optional invisibility-enchant filtering (drawable +124); the bit is unconfirmed.
+- Invisibility bit 0 / infravision bit 21 are read from renderer code; confirm them in a dump. Allow invisible allies once a client-only team test exists.
+- Session-boundary heuristic for clearing the server-name snapshot (menu shell after a map): confirm that `0xB0` is resent after each join.
 - Gear and inventory fields (playerInfo +4 / +2328).

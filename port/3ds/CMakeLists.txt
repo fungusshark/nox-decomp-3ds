@@ -131,7 +131,7 @@ if (NOX_PLAYTEST_HOOK)
     target_sources(nox PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/playtest_hook_3ds.c")
     target_compile_definitions(nox PRIVATE NOX_PLAYTEST_HOOK=1)
     set_source_files_properties("${CMAKE_CURRENT_SOURCE_DIR}/playtest_hook_3ds.c"
-        PROPERTIES COMPILE_OPTIONS "-O2;-Wall;-Wextra")
+        PROPERTIES COMPILE_OPTIONS "-O2;-Wall;-Wextra;-Wno-comment")  # platform_3ds.h has "src/*.c" in a comment
 endif()
 
 # Link order matters for static archives: citro2d -> citro3d -> ctru -> zlib
