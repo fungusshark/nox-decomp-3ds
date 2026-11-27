@@ -495,6 +495,46 @@ void nox_ctrl_inject_key_scancode(int sdl_scancode, int down)
     keyboard_event_widx = (keyboard_event_widx + 1) % 256;
 }
 
+/** Trigger a multiplayer emote: 0 = Shake Fist (Taunt), 1 = Laugh, 2 = Point. */
+void nox_ctrl_trigger_emote(int emote)
+{
+    if ( !sub_40A5C0(0x2000) )
+        return;
+
+    switch (emote) {
+        case 0:
+            if ( sub_4160F0(0x15u, *(unsigned int *)&byte_5D4594[2649704]) )
+            {
+                sub_4160D0(21);
+                sub_42E670(47, 0);
+            }
+            break;
+        case 1:
+            if ( sub_4160F0(0x14u, 2 * *(_DWORD *)&byte_5D4594[2649704]) )
+            {
+                sub_4160D0(20);
+                sub_42E670(48, 0);
+            }
+            break;
+        case 2:
+            if ( sub_4160F0(0x16u, *(unsigned int *)&byte_5D4594[2649704]) )
+            {
+                sub_4160D0(22);
+                sub_42E670(49, 0);
+            }
+            break;
+        default:
+            break;
+    }
+}
+
+/** Toggle/cycle the multiplayer scoreboard (action 0x32 -> 51). */
+void nox_ctrl_toggle_scoreboard(void)
+{
+    if ( sub_40A5C0(0x2000) )
+        sub_42E670(51, 0);
+}
+
 void nox_ctrl_inject_text_utf8(const char *utf8)
 {
     NOX_CTRL_INJECT_LOG( "[inj] text '%s'\n", utf8 ? utf8 : "(null)");
@@ -1556,32 +1596,19 @@ int __cdecl sub_42D6B0(_DWORD *a3, int a4)
           sub_42E670(46, 0);
           break;
         case 0x2E:
-          if ( sub_40A5C0(0x2000) && sub_4160F0(0x15u, *(unsigned int *)&byte_5D4594[2649704]) )
-          {
-            sub_4160D0(21);
-            sub_42E670(47, 0);
-          }
+          nox_ctrl_trigger_emote(0);
           break;
         case 0x2F:
-          if ( sub_40A5C0(0x2000) && sub_4160F0(0x14u, 2 * *(_DWORD *)&byte_5D4594[2649704]) )
-          {
-            sub_4160D0(20);
-            sub_42E670(48, 0);
-          }
+          nox_ctrl_trigger_emote(1);
           break;
         case 0x30:
-          if ( sub_40A5C0(0x2000) && sub_4160F0(0x16u, *(unsigned int *)&byte_5D4594[2649704]) )
-          {
-            sub_4160D0(22);
-            sub_42E670(49, 0);
-          }
+          nox_ctrl_trigger_emote(2);
           break;
         case 0x31:
           sub_42E670(50, 0);
           break;
         case 0x32:
-          if ( sub_40A5C0(0x2000) )
-            sub_42E670(51, 0);
+          nox_ctrl_toggle_scoreboard();
           break;
         case 0x33:
           if ( !sub_413A50() )
