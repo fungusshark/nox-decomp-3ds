@@ -98,6 +98,20 @@ uint64_t nox_3ds_get_perf_freq(void);    /* SYSCLOCK_ARM11 (268111856ULL) */
 void     nox_3ds_sleep_ms(uint32_t ms);  /* svcSleepThread */
 const nox_3ds_state_t *nox_3ds_get_state(void);
 nox_3ds_state_t       *nox_3ds_state_mut(void);
+static inline bool     nox_3ds_is_new_3ds(void) { return nox_3ds_get_state()->is_new_3ds; }
+
+/* Single-precision VFPv2 hardware square root for known non-negative inputs (x >= 0.0f).
+ * Avoids double-precision promotion (vsqrt.f64 + __aeabi_d2lz) and libm errno branches. */
+static inline float nox_3ds_vsqrtf_pos(float x)
+{
+#if defined(__arm__) && defined(__VFP_FP__)
+    float r;
+    __asm__ ("vsqrt.f32 %0, %1" : "=t"(r) : "t"(x));
+    return r;
+#else
+    return __builtin_sqrtf(x);
+#endif
+}
 
 /* =========================================================================
  * 2b. SD Card File System & Persistence Hooks (fs_3ds.c)

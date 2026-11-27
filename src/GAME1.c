@@ -43368,6 +43368,10 @@ int __cdecl sub_4317B0(char *a1, int a2)
       if ( sub_4331E0(v5, a2) )
       {
         fclose(v5);
+#ifdef __3DS__
+        if ( !nox_3ds_is_new_3ds() )
+          *(_DWORD *)&byte_5D4594[805852] = 0;
+#endif
         sub_433290("nox.cfg");
         result = 1;
       }
@@ -58542,7 +58546,13 @@ LABEL_27:
     *(_DWORD *)&byte_587000[80824] = 1;
 LABEL_28:
     v7 = *(_DWORD *)&byte_5D4594[2650636];
+#ifdef __3DS__
+    /* Default RenderGlow OFF on Old 3DS (268 MHz, no L2) on first boot only;
+     * keep ON for New 3DS (804 MHz + 2 MB L2). Explicit Options.wnd / nox.cfg always wins. */
+    *(_DWORD *)&byte_5D4594[805852] = nox_3ds_is_new_3ds() ? 1 : 0;
+#else
     *(_DWORD *)&byte_5D4594[805852] = 1;
+#endif
     BYTE1(v7) |= 4u;
     *(_DWORD *)&byte_587000[80836] = 1;
     *(_DWORD *)&byte_5D4594[2650636] = v7;
