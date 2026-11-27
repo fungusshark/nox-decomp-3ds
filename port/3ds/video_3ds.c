@@ -105,7 +105,9 @@ static bool prepare_frame_slot(nox_3ds_tex_slot_t *slot,
                                const nox_3ds_screen_frame_t *frame,
                                const char *label,
                                const void **out_xfer_src,
-                               GX_TRANSFER_FORMAT *out_gx_fmt)
+                               GX_TRANSFER_FORMAT *out_gx_fmt,
+                               int *out_y0,
+                               int *out_h_aligned)
 {
     if (!frame || !frame->pixels || frame->w <= 0 || frame->h <= 0 || frame->pitch <= 0)
         return false;
@@ -120,9 +122,19 @@ static bool prepare_frame_slot(nox_3ds_tex_slot_t *slot,
     if (w > NOX_3DS_TEX_W) w = NOX_3DS_TEX_W;
     if (h > NOX_3DS_TEX_H) h = NOX_3DS_TEX_H;
 
+    int fy = (frame->crop_h > 0) ? (frame->crop_y - 2) : 0;
+    int fe = (frame->crop_h > 0) ? (frame->crop_y + frame->crop_h + 2) : h;
+    if (fy < 0) fy = 0;
+    if (fe > h) fe = h;
+
     const void *xfer_src = NULL;
     if (frame->is_linear && frame->pitch == NOX_3DS_TEX_W * 2) {
-        GSPGPU_FlushDataCache((void *)frame->pixels, (u32)(frame->pitch * h));
+        if (fe > fy) {
+            GSPGPU_FlushDataCache(
+                (uint8_t *)frame->pixels + (size_t)fy * (size_t)frame->pitch,
+                (u32)((size_t)(fe - fy) * (size_t)frame->pitch)
+            );
+        }
         xfer_src = frame->pixels;
     } else {
         if (!slot->staging) {
@@ -131,26 +143,44 @@ static bool prepare_frame_slot(nox_3ds_tex_slot_t *slot,
                 return false;
             memset(slot->staging, 0, (size_t)NOX_3DS_TEX_W * (size_t)NOX_3DS_TEX_H * 2u);
         }
-        const uint8_t *src_row = (const uint8_t *)frame->pixels;
-        uint8_t *dst_row = (uint8_t *)slot->staging;
+        const uint8_t *src_row = (const uint8_t *)frame->pixels + (size_t)fy * (size_t)frame->pitch;
+        uint8_t *dst_row = (uint8_t *)slot->staging + (size_t)fy * (size_t)NOX_3DS_TEX_W * 2u;
         const size_t copy_bytes = (size_t)w * 2u;
-        for (int y = 0; y < h; ++y) {
+        for (int y = fy; y < fe; ++y) {
             memcpy(dst_row, src_row, copy_bytes);
             src_row += frame->pitch;
             dst_row += NOX_3DS_TEX_W * 2;
         }
-        GSPGPU_FlushDataCache(slot->staging, (u32)(NOX_3DS_TEX_W * h * 2));
+        if (fe > fy) {
+            GSPGPU_FlushDataCache(
+                (uint8_t *)slot->staging + (size_t)fy * (size_t)NOX_3DS_TEX_W * 2u,
+                (u32)((size_t)NOX_3DS_TEX_W * (size_t)(fe - fy) * 2u)
+            );
+        }
         xfer_src = slot->staging;
+    }
+
+    /* Morton swizzle tiles are 8x8: restrict GX DMA to the 8-row aligned active sub-strip. */
+    int y0 = fy & ~7;
+    int y1 = (fe + 7) & ~7;
+    if (y1 > NOX_3DS_TEX_H) y1 = NOX_3DS_TEX_H;
+    if (y1 <= y0) {
+        y0 = 0;
+        y1 = NOX_3DS_TEX_H;
     }
 
     *out_xfer_src = xfer_src;
     *out_gx_fmt = gx_fmt;
+    *out_y0 = y0;
+    *out_h_aligned = y1 - y0;
     return true;
 }
 
 static void enqueue_frame_upload(nox_3ds_tex_slot_t *slot,
                                  const void *xfer_src,
-                                 GX_TRANSFER_FORMAT gx_fmt)
+                                 GX_TRANSFER_FORMAT gx_fmt,
+                                 int y0,
+                                 int h_aligned)
 {
     const u32 xfer_flags =
         GX_TRANSFER_FLIP_VERT(0) |
@@ -160,11 +190,12 @@ static void enqueue_frame_upload(nox_3ds_tex_slot_t *slot,
         GX_TRANSFER_OUT_FORMAT(gx_fmt) |
         GX_TRANSFER_SCALING(GX_TRANSFER_SCALE_NO);
 
+    const size_t byte_off = (size_t)y0 * (size_t)NOX_3DS_TEX_W * 2u;
     C3D_SyncDisplayTransfer(
-        (u32 *)xfer_src,
-        GX_BUFFER_DIM(NOX_3DS_TEX_W, NOX_3DS_TEX_H),
-        (u32 *)slot->tex.data,
-        GX_BUFFER_DIM(NOX_3DS_TEX_W, NOX_3DS_TEX_H),
+        (u32 *)((const uint8_t *)xfer_src + byte_off),
+        GX_BUFFER_DIM(NOX_3DS_TEX_W, h_aligned),
+        (u32 *)((uint8_t *)slot->tex.data + byte_off),
+        GX_BUFFER_DIM(NOX_3DS_TEX_W, h_aligned),
         xfer_flags
     );
     slot->has_content = true;
@@ -408,11 +439,13 @@ void nox_3ds_video_present_dual(const nox_3ds_screen_frame_t *top,
     const void *bot_src = NULL;
     GX_TRANSFER_FORMAT top_gx_fmt = GX_TRANSFER_FMT_RGB5A1;
     GX_TRANSFER_FORMAT bot_gx_fmt = GX_TRANSFER_FMT_RGB5A1;
-    bool top_ready = prepare_frame_slot(&s_top_slot, top, "Top", &top_src, &top_gx_fmt);
+    int top_y0 = 0, top_h_al = NOX_3DS_TEX_H;
+    int bot_y0 = 0, bot_h_al = NOX_3DS_TEX_H;
+    bool top_ready = prepare_frame_slot(&s_top_slot, top, "Top", &top_src, &top_gx_fmt, &top_y0, &top_h_al);
     bool bot_reuse = (bottom && bottom->reuse_tex && s_bot_slot.inited && s_bot_slot.has_content);
     bool bot_upload = bot_reuse
         ? false
-        : prepare_frame_slot(&s_bot_slot, bottom, "Bottom", &bot_src, &bot_gx_fmt);
+        : prepare_frame_slot(&s_bot_slot, bottom, "Bottom", &bot_src, &bot_gx_fmt, &bot_y0, &bot_h_al);
     bool bot_draw = bot_reuse || bot_upload;
 
     if (s_have_last_vb0) {
@@ -430,9 +463,9 @@ void nox_3ds_video_present_dual(const nox_3ds_screen_frame_t *top,
     if (C3D_FrameBegin(0)) {
         nox_3ds_font_upload_pending();
         if (top_ready)
-            enqueue_frame_upload(&s_top_slot, top_src, top_gx_fmt);
+            enqueue_frame_upload(&s_top_slot, top_src, top_gx_fmt, top_y0, top_h_al);
         if (bot_upload)
-            enqueue_frame_upload(&s_bot_slot, bot_src, bot_gx_fmt);
+            enqueue_frame_upload(&s_bot_slot, bot_src, bot_gx_fmt, bot_y0, bot_h_al);
 
         draw_screen_pass(
             s_top_target, &s_top_slot,
@@ -506,7 +539,8 @@ void nox_3ds_video_present_movie(const void *pixels, int w, int h, int pitch,
 
     const void *top_src = NULL;
     GX_TRANSFER_FORMAT top_gx_fmt = GX_TRANSFER_FMT_RGB5A1;
-    bool top_ready = prepare_frame_slot(&s_top_slot, &top, "MovieTop", &top_src, &top_gx_fmt);
+    int top_y0 = 0, top_h_al = NOX_3DS_TEX_H;
+    bool top_ready = prepare_frame_slot(&s_top_slot, &top, "MovieTop", &top_src, &top_gx_fmt, &top_y0, &top_h_al);
 
     /* Ensure full brightness during cutscenes regardless of prior menu fade gamma. */
     float prev_gamma = s_gamma;
@@ -519,7 +553,7 @@ void nox_3ds_video_present_movie(const void *pixels, int w, int h, int pitch,
     if (C3D_FrameBegin(0)) {
         nox_3ds_font_upload_pending();
         if (top_ready)
-            enqueue_frame_upload(&s_top_slot, top_src, top_gx_fmt);
+            enqueue_frame_upload(&s_top_slot, top_src, top_gx_fmt, top_y0, top_h_al);
 
         draw_screen_pass(
             s_top_target, &s_top_slot,
