@@ -5047,7 +5047,16 @@ int __cdecl sub_4A8380(_DWORD *a1, int a2)
         v10 = 0;
 #endif
       v8 = sub_43F320(*(_DWORD *)(v2 + 200));
+#ifdef __3DS__
+      {
+        int ty = a2 - v8 / 2;
+        if ( nox_3ds_font_is_enabled() && (int)v3[0] >= 10159 && (int)v3[0] <= 10163 )
+          ty += 3;
+        sub_43FAF0(*(_DWORD *)(v2 + 200), (_WORD *)(v2 + 72), (int)a1 - v11 / 2, ty, v10, 0);
+      }
+#else
       sub_43FAF0(*(_DWORD *)(v2 + 200), (_WORD *)(v2 + 72), (int)a1 - v11 / 2, a2 - v8 / 2, v10, 0);
+#endif
     }
     sub_43F670(0);
   }

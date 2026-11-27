@@ -8280,7 +8280,7 @@ int __cdecl sub_458500(_DWORD *a1, int a2)
   if ( nox_3ds_font_is_enabled() )
   {
     sub_434460(sub_4344A0(22, 18, 15));
-    sub_49CE30(xLeft, v5, a1[2], a1[3]);
+    sub_49CE30(xLeft + 10, v5 + 26, a1[2] - 20, a1[3] - 32);
   }
   else
   {

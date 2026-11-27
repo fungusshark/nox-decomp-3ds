@@ -72,6 +72,12 @@ typedef struct {
     int16_t  pad_bottom;
     void    *pinned[16];
     uint8_t  pinned_count;
+    /* Persistent unshifted child Y snapshot so switching tabs (>16 frames)
+     * never loses original child coordinates when s_slots times out. */
+    void    *orig_children[MAX_PANEL_CHILDREN];
+    int32_t  orig_y[MAX_PANEL_CHILDREN];
+    uint8_t  orig_child_count;
+    uint8_t  has_orig_snapshot;
 } panel_meta_t;
 
 typedef struct {
@@ -562,11 +568,14 @@ bool nox_3ds_ui_panel_begin(void *panel_wnd, nox_3ds_panel_guard_t *guard)
     bool same_layout = (s->shifted && s->child_count == cnt &&
                         (cnt == 0 || s->children[0] == (void *)first_c));
     if (!same_layout) {
+        panel_meta_t *m = find_panel_meta(panel_wnd);
+        bool use_meta_snap = (m && m->has_orig_snapshot && m->orig_child_count == cnt &&
+                              (cnt == 0 || m->orig_children[0] == (void *)first_c));
         int idx = 0;
         uint8_t any_pin = 0;
         for (uint32_t *c = first_c; c && idx < MAX_PANEL_CHILDREN; c = (uint32_t *)(uintptr_t)c[97]) {
             s->children[idx] = (void *)c;
-            s->orig_y[idx] = (int32_t)c[5];
+            s->orig_y[idx] = use_meta_snap ? m->orig_y[idx] : (int32_t)c[5];
             uint8_t pin = meta_is_pinned(meta, (void *)c) ? 1u : 0u;
             s->pinned[idx] = pin;
             if (pin) any_pin = 1;
@@ -576,6 +585,20 @@ bool nox_3ds_ui_panel_begin(void *panel_wnd, nox_3ds_panel_guard_t *guard)
         s->has_pinned = any_pin;
         s->scroll_y = 0;
         s->shifted = 1;
+        /* Persist the first unshifted snapshot in panel_meta_t so future
+         * hide/show tab switches always restore exact unshifted child Ys. */
+        if (!use_meta_snap) {
+            if (!m)
+                m = alloc_panel_meta(panel_wnd);
+            if (m) {
+                for (int i = 0; i < idx; ++i) {
+                    m->orig_children[i] = s->children[i];
+                    m->orig_y[i] = s->orig_y[i];
+                }
+                m->orig_child_count = (uint8_t)idx;
+                m->has_orig_snapshot = 1;
+            }
+        }
     }
 
     int max_bottom = view_h;
@@ -983,6 +1006,9 @@ static void invalidate_panel_slot(const void *panel_wnd)
         s->shifted = 0;
         s->scroll_y = 0;
     }
+    panel_meta_t *m = find_panel_meta(panel_wnd);
+    if (m)
+        m->has_orig_snapshot = 0;
 }
 
 const uint16_t *nox_3ds_ui_fit_ellipsis(int font_ptr, const uint16_t *src,
@@ -1919,18 +1945,21 @@ void nox_3ds_ui_takeover_form_dialog(void *root_wnd)
     invalidate_panel_slot(root_wnd);
 }
 
-/* Unobstructed interior viewport inside servopts.wnd (10100) Main Border (10195):
- * 10195 sits at (16, 40, 592, 382), whose +/-10px 9-slice stone bars span
- * x = 6..26, 598..618 and y = 30..50, 412..432.
- * - Game tab (10150/10153) hides Row-2 sub-tabs and uses full (28, 52, 568, 358).
- * - Server sub-tab panels (General/Access/Teams) sit below Row-2 sub-tabs
- *   (y = 50..72) at (28, 76, 568, 334). */
-#define SERVOPTS_BODY_X      28
-#define SERVOPTS_BODY_Y      52
-#define SERVOPTS_BODY_W      568
-#define SERVOPTS_BODY_H      358
-#define SERVOPTS_SUB_BODY_Y  76
-#define SERVOPTS_SUB_BODY_H  334
+/* Unobstructed interior viewports inside servopts.wnd (10100):
+ * - Primary tabs (Game | Server) sit OUTSIDE at y=2..26, attached flush to
+ *   Main Border 10195 at (10, 34, 604, 426) (stone bars y=24..44, 450..470).
+ * - Game tab (10150/10153) hides Row-2 sub-tabs & 10196, using (24, 46, 576, 366).
+ * - Server sub-tabs (General | Access | Teams) sit at y=48..70, attached flush
+ *   to Nested Border 10196 at (30, 78, 564, 326) (stone bars y=68..88, 394..414).
+ * - Server sub-tab panels sit cleanly inside 10196 at (42, 88, 540, 304). */
+#define SERVOPTS_BODY_X      24
+#define SERVOPTS_BODY_Y      46
+#define SERVOPTS_BODY_W      576
+#define SERVOPTS_BODY_H      366
+#define SERVOPTS_SUB_BODY_X  42
+#define SERVOPTS_SUB_BODY_Y  88
+#define SERVOPTS_SUB_BODY_W  540
+#define SERVOPTS_SUB_BODY_H  304
 
 /* Position a popup dropdown listbox (e.g. 10120 Game Type, 10317 Conn Type)
  * directly over its trigger button's live screen coordinates. Overlapping the
@@ -1994,8 +2023,9 @@ void nox_3ds_ui_reflow_servopts_subpanel(void *panel_wnd)
 
     uint32_t *parent = valid_u32_ptr(c[99]) ? (uint32_t *)(uintptr_t)c[99] : NULL;
     bool inside_10150 = (parent && (int)(int32_t)parent[0] == 10150);
-    int px = inside_10150 ? 0 : SERVOPTS_BODY_X;
+    int px = inside_10150 ? 0 : SERVOPTS_SUB_BODY_X;
     int py = inside_10150 ? 0 : SERVOPTS_SUB_BODY_Y;
+    int pw = inside_10150 ? SERVOPTS_BODY_W : SERVOPTS_SUB_BODY_W;
     int ph = inside_10150 ? SERVOPTS_BODY_H : SERVOPTS_SUB_BODY_H;
 
     c[1] &= ~(0x80u | 0x1000u);
@@ -2003,7 +2033,7 @@ void nox_3ds_ui_reflow_servopts_subpanel(void *panel_wnd)
     c[14] = (uint32_t)sub_4344A0(22, 18, 15);
     c[16] = 0x80000000u;
     sub_46A9B0(c, px, py);
-    sub_46AB20(c, SERVOPTS_BODY_W, ph);
+    sub_46AB20(c, pw, ph);
 
     lb_aux_t aux[16];
     int aux_count = 0;
@@ -2018,7 +2048,7 @@ void nox_3ds_ui_reflow_servopts_subpanel(void *panel_wnd)
     }
 
     if (scnt > 0) {
-        reflow_form_children(sub_items, scnt, 8, 6, SERVOPTS_BODY_W - 24, aux, aux_count);
+        reflow_form_children(sub_items, scnt, 8, 6, pw - 24, aux, aux_count);
         panel_meta_t *meta = alloc_panel_meta(c);
         memset(meta, 0, sizeof(*meta));
         meta->panel_wnd  = c;
@@ -2069,7 +2099,12 @@ void nox_3ds_ui_takeover_servopts(void *root_wnd)
     int aux_count = 0;
     collect_lb_aux_rec(w, aux, &aux_count, 16);
 
-    convert_to_stone_takeover_bg(w);
+    /* Root window has no outer stone frame so Game | Server tabs sit outside
+     * attached cleanly to Main Border (10195), matching stock servopts.wnd. */
+    w[1] &= ~(0x80u | 0x1000u);
+    w[11] &= ~2048u;
+    w[14] = 0x80000000u;
+    w[16] = 0x80000000u;
     sub_46AB20(w, new_w, new_h);
     sub_46A9B0(w, new_x, new_y);
     sub_46A8C0((int)(uintptr_t)w);
@@ -2093,18 +2128,20 @@ void nox_3ds_ui_takeover_servopts(void *root_wnd)
             if (tab_cnt < 8)
                 tabs[tab_cnt++] = c;
         } else if (cid == 10195) {
-            /* Main Border around tab viewport (stone bars span +/-10px of edges) */
-            sub_46A9B0(c, 16, 40);
-            sub_46AB20(c, 592, 382);
+            /* Main Border: top stone bar (y=24..44) attaches directly under Game | Server,
+             * bottom stone bar (y=450..470) wraps GO! | Cancel cleanly inside. */
+            c[11] |= 2048u;
+            sub_46A9B0(c, 10, 34);
+            sub_46AB20(c, 604, 426);
         } else if (cid == 10196) {
-            /* Suppress duplicate inner Game Border so unhiding 10196 on Server tab
-             * never draws a second stone border across General/Access controls. */
+            /* Nested Server Sub-Border (shown by Nox only on Server tab): top stone bar
+             * (y=68..88) attaches directly under General | Access | Teams sub-tabs. */
             c[1] &= ~(0x80u | 0x1000u);
-            c[11] &= ~2048u;
+            c[11] |= 2048u;
             c[14] = 0x80000000u;
             c[16] = 0x80000000u;
-            sub_46A9B0(c, SERVOPTS_BODY_X, SERVOPTS_BODY_Y);
-            sub_46AB20(c, SERVOPTS_BODY_W, SERVOPTS_BODY_H);
+            sub_46A9B0(c, 30, 78);
+            sub_46AB20(c, 564, 326);
         } else if (cid == 10149) {
             /* Hidden "Ok" button shares the exact left-footer slot with "GO!" (10145) */
             ok_twin = c;
@@ -2115,9 +2152,9 @@ void nox_3ds_ui_takeover_servopts(void *root_wnd)
         }
     }
 
-    /* Row 1 (y = 8): primary tabs (Game | Server).
-     * Row 2 (y = 50, inside top of 10195): Server sub-tabs (General | Access | Teams),
-     * which Nox automatically hides on Game tab and shows on Server tab. */
+    /* Row 1 (y = 2): primary tabs (Game | Server) sitting outside Main Border 10195.
+     * Row 2 (y = 48): Server sub-tabs (General | Access | Teams) sitting outside
+     * Nested Border 10196, automatically hidden by Nox on Game tab. */
     for (int i = 1; i < tab_cnt; ++i) {
         uint32_t *k = tabs[i];
         int ko = servopts_tab_order((int)(int32_t)k[0]);
@@ -2128,8 +2165,8 @@ void nox_3ds_ui_takeover_servopts(void *root_wnd)
         }
         tabs[j + 1] = k;
     }
-    int row1_x = 16;
-    int row2_x = SERVOPTS_BODY_X + 2;
+    int row1_x = 24;
+    int row2_x = 40;
     for (int i = 0; i < tab_cnt; ++i) {
         uint32_t *t = tabs[i];
         int tid = (int)(int32_t)t[0];
@@ -2140,17 +2177,17 @@ void nox_3ds_ui_takeover_servopts(void *root_wnd)
         if (th < 20) th = 20;
         t[1] |= 0x20u; /* ABOVE so tabs always win child hit-testing */
         if (is_subtab) {
-            sub_46A9B0(t, row2_x, 50);
+            sub_46A9B0(t, row2_x, 48);
             sub_46AB20(t, tw, th);
-            row2_x += tw + 8;
+            row2_x += tw + 6;
         } else {
-            sub_46A9B0(t, row1_x, 8);
+            sub_46A9B0(t, row1_x, 2);
             sub_46AB20(t, tw, th);
-            row1_x += tw + 8;
+            row1_x += tw + 6;
         }
     }
 
-    /* Sort & place footer buttons cleanly inside the bottom stone border */
+    /* Sort & place footer buttons cleanly inside the bottom of Main Border 10195 */
     for (int i = 1; i < ftr_cnt; ++i) {
         uint32_t *k = footers[i];
         int j = i - 1;
@@ -2160,7 +2197,7 @@ void nox_3ds_ui_takeover_servopts(void *root_wnd)
         }
         footers[j + 1] = k;
     }
-    int footer_y = new_h - 38;
+    int footer_y = 418;
     uint32_t *go_btn = NULL;
     if (ftr_cnt > 0) {
         int gap = 28;
