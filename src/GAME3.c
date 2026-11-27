@@ -5267,9 +5267,15 @@ int __cdecl sub_4A8820(int a1, int a2)
       if ( mh > v13 )
         v3ds_y = v5 + 5 - mh / 2;
     }
-#endif
+    nox_3ds_clip_guard_t cb_cg;
+    sub_434390(*(_DWORD *)(v2 + 68));
+    if ( nox_3ds_clip_push(&cb_cg, v4 + 12, v15 - 3, v3ds_w + 4, *(_DWORD *)(v3 + 12) + 6) )
+      sub_43FAF0(*(_DWORD *)(v2 + 200), (_WORD *)(v2 + 72), v4 + 14, v3ds_y, v3ds_w, 0);
+    nox_3ds_clip_pop(&cb_cg);
+#else
     sub_434390(*(_DWORD *)(v2 + 68));
     sub_43FAF0(*(_DWORD *)(v2 + 200), (_WORD *)(v2 + 72), v4 + 14, v3ds_y, v3ds_w, 0);
+#endif
   }
   sub_43F670(0);
   return 1;
@@ -5348,6 +5354,7 @@ int __cdecl sub_4A8A20(int a1, int a2)
       int v3ds_w = *(_DWORD *)(a1 + 8);
       int v3ds_y = v14;
 #ifdef __3DS__
+      int box_y = v14 - v9 / 2;
       if ( nox_3ds_font_is_enabled() && nox_3ds_font_slot_from_ptr(*(_DWORD *)(v2 + 200)) != 1 )
       {
         int avail_w = v3ds_w - 32;
@@ -5359,9 +5366,15 @@ int __cdecl sub_4A8A20(int a1, int a2)
         if ( mh > lh )
           v3ds_y = v14 + lh / 2 - mh / 2;
       }
-#endif
+      nox_3ds_clip_guard_t cb_cg;
+      sub_434390(v10);
+      if ( nox_3ds_clip_push(&cb_cg, v13 - 2, box_y - 3, v3ds_w + 4, *(_DWORD *)(a1 + 12) + 6) )
+        sub_43FAF0(*(_DWORD *)(v2 + 200), (_WORD *)(v2 + 72), v13, v3ds_y, v3ds_w, 0);
+      nox_3ds_clip_pop(&cb_cg);
+#else
       sub_434390(v10);
       sub_43FAF0(*(_DWORD *)(v2 + 200), (_WORD *)(v2 + 72), v13, v3ds_y, v3ds_w, 0);
+#endif
     }
   }
   sub_43F670(0);
@@ -5543,9 +5556,15 @@ int __cdecl sub_4A8EA0(int a1, int a2)
       if ( mh > lh )
         v3ds_y = v4 + 5 - mh / 2;
     }
-#endif
+    nox_3ds_clip_guard_t rb_cg;
+    sub_434390(*(_DWORD *)(v2 + 68));
+    if ( nox_3ds_clip_push(&rb_cg, v7 - 2, yTop - 3, v3ds_w + 4, *(_DWORD *)(a1 + 12) + 6) )
+      sub_43FAF0(*(_DWORD *)(v2 + 200), (_WORD *)(v2 + 72), v7, v3ds_y, v3ds_w, 0);
+    nox_3ds_clip_pop(&rb_cg);
+#else
     sub_434390(*(_DWORD *)(v2 + 68));
     sub_43FAF0(*(_DWORD *)(v2 + 200), (_WORD *)(v2 + 72), v7, v3ds_y, v3ds_w, 0);
+#endif
     sub_43F670(0);
   }
   return 1;
@@ -5620,9 +5639,15 @@ LABEL_12:
       if ( mh > lh )
         v3ds_y = v5 + 5 - mh / 2;
     }
-#endif
+    nox_3ds_clip_guard_t rb_cg;
+    sub_434390(*(_DWORD *)(v2 + 68));
+    if ( nox_3ds_clip_push(&rb_cg, v9 - 2, v13 - 3, v3ds_w + 4, v3[3] + 6) )
+      sub_43FAF0(*(_DWORD *)(v2 + 200), (_WORD *)(v2 + 72), v9, v3ds_y, v3ds_w, 0);
+    nox_3ds_clip_pop(&rb_cg);
+#else
     sub_434390(*(_DWORD *)(v2 + 68));
     sub_43FAF0(*(_DWORD *)(v2 + 200), (_WORD *)(v2 + 72), v9, v3ds_y, v3ds_w, 0);
+#endif
     sub_43F670(0);
   }
   return 1;
@@ -6284,6 +6309,18 @@ __int16 __cdecl sub_4AA030(_DWORD *a1, int a2)
             if ( !v11 )
             {
               sub_43F840(*(_DWORD *)(a2 + 200), (unsigned __int16 *)(a2 + 72), &v18, 0, 0);
+#ifdef __3DS__
+              {
+                int eb_min = (*(_WORD *)(v10 + 1042) > 0) ? (int)*(_WORD *)(v10 + 1042) : (v12 / 3);
+                if ( eb_min < 44 && v12 > 80 )
+                  eb_min = 44;
+                int max_lbl = v12 - eb_min - 6;
+                if ( max_lbl < 20 )
+                  max_lbl = v12 / 2;
+                if ( v18 > max_lbl )
+                  v18 = max_lbl;
+              }
+#endif
               v13 = (_DWORD *)((char *)v13 + v18 + 6);
               v9 = a1;
               v12 += -6 - v18;
@@ -8451,6 +8488,9 @@ int __cdecl sub_4AD320(int a1)
     v10 = sub_46B0C0(*(_DWORD **)&byte_5D4594[1309812], 10304);
     sub_46ABB0((int)v10, 0);
   }
+#ifdef __3DS__
+  nox_3ds_ui_takeover_form_dialog(*(_DWORD **)&byte_5D4594[1309812]);
+#endif
   return *(_DWORD *)&byte_5D4594[1309812];
 }
 
@@ -20396,7 +20436,15 @@ int sub_4BDFD0()
     v7 = sub_46B0C0(*(_DWORD **)&byte_5D4594[1316972], 2119);
     sub_46B280((int)v7, *(int *)&byte_5D4594[1316972]);
   }
+#ifdef __3DS__
+  {
+    int r = sub_4BE120(v2);
+    nox_3ds_ui_takeover_form_dialog(*(_DWORD **)&byte_5D4594[1316972]);
+    return r;
+  }
+#else
   return sub_4BE120(v2);
+#endif
 }
 
 //----- (004BE120) --------------------------------------------------------

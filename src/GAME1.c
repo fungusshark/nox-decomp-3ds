@@ -61907,6 +61907,9 @@ _DWORD *__cdecl sub_449A10(int a1, int a2, int a3, int a4, int (*a5)(void), int 
     result = (_DWORD *)a3;
     if ( a3 )
       result = (_DWORD *)sub_449E30(a3);
+#ifdef __3DS__
+    nox_3ds_ui_expand_modal_dialog(*(_DWORD **)&byte_5D4594[830224]);
+#endif
   }
   else
   {
@@ -61945,6 +61948,9 @@ _DWORD *__cdecl sub_449A10(int a1, int a2, int a3, int a4, int (*a5)(void), int 
         (*(int *)&byte_5D4594[3805496] - *(int *)(*(_DWORD *)&byte_5D4594[830224] + 8)) / 2,
         (*(int *)&byte_5D4594[3807120] - *(int *)(*(_DWORD *)&byte_5D4594[830224] + 12)) / 2);
       sub_449EA0(a4);
+#ifdef __3DS__
+      nox_3ds_ui_expand_modal_dialog(*(_DWORD **)&byte_5D4594[830224]);
+#endif
       result = (_DWORD *)sub_46AE00();
       *(_DWORD *)&byte_5D4594[830236] = result;
       if ( result )

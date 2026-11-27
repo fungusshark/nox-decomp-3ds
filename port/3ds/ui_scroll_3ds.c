@@ -10,11 +10,29 @@
 extern unsigned char byte_5D4594[];
 extern int sub_46AA60(uint32_t *a1, uint32_t *a2, uint32_t *a3);
 extern int sub_46A9B0(uint32_t *a1, int a2, int a3);
+extern int sub_46AB20(uint32_t *a1, int a2, int a3);
 extern int sub_46B490(int a1, int a2, int a3, int a4);
 extern int sub_4A2D10(int a1, int a2, int a3);
+extern int sub_4344A0(int a1, int a2, int a3);
+extern int sub_43F320(int a1);
+extern int sub_43F840(int a1, uint16_t *a2, int *a3, uint32_t *a4, int a5);
+extern int sub_488160(int a1, int a2);
+extern int sub_488870(int a1, int a2);
+extern int sub_488D00(int a1, int a2);
+extern int sub_489550(uint32_t *a1, uint32_t *a2);
+extern int sub_4A3C50(uint32_t *a1, int a2);
+extern int sub_4A3FC0(uint32_t *a1, int a2);
+extern int sub_4A81D0(int a1, int a2);
+extern int sub_4A8380(int a1, int a2);
+extern int sub_4A8820(int a1, int a2);
+extern int sub_4A8A20(int a1, int a2);
+extern int sub_4A8EA0(int a1, int a2);
+extern int sub_4A9050(int a1, int a2);
 
 #define MAX_SCROLL_SLOTS     64
 #define MAX_PANEL_CHILDREN   64
+#define MAX_PANEL_METAS      24
+#define MAX_MODAL_SNAPS      8
 #define SCROLL_DRAG_THRESH   7
 #define SCROLL_DPAD_STEP     28
 
@@ -31,6 +49,7 @@ typedef struct {
     uint8_t  kind;
     uint8_t  active_highlight;
     int16_t  abs_x, abs_y, view_w, view_h;
+    int16_t  pad_top, pad_bottom;
     int32_t  content_h;
     int32_t  scroll_y;
     uint32_t last_frame;
@@ -39,11 +58,39 @@ typedef struct {
     uint8_t  paired_count;
     void    *children[MAX_PANEL_CHILDREN];
     int32_t  orig_y[MAX_PANEL_CHILDREN];
+    uint8_t  pinned[MAX_PANEL_CHILDREN];
     uint8_t  child_count;
     uint8_t  shifted;
+    uint8_t  has_pinned;
 } scroll_slot_t;
 
+typedef struct {
+    void    *panel_wnd;
+    int16_t  pad_top;
+    int16_t  pad_bottom;
+    void    *pinned[16];
+    uint8_t  pinned_count;
+} panel_meta_t;
+
+typedef struct {
+    void    *wnd;
+    int16_t  orig_w, orig_h;
+    uint32_t orig_flags;
+    uint32_t orig_style;
+    uint32_t orig_bg_color;
+    uint8_t  child_count;
+    void    *c_ptr[MAX_PANEL_CHILDREN];
+    int16_t  c_x[MAX_PANEL_CHILDREN];
+    int16_t  c_y[MAX_PANEL_CHILDREN];
+    int16_t  c_w[MAX_PANEL_CHILDREN];
+    int16_t  c_h[MAX_PANEL_CHILDREN];
+    uint32_t c_flags[MAX_PANEL_CHILDREN];
+    uint32_t c_bg[MAX_PANEL_CHILDREN];
+} modal_snap_t;
+
 static scroll_slot_t s_slots[MAX_SCROLL_SLOTS];
+static panel_meta_t  s_panel_metas[MAX_PANEL_METAS];
+static modal_snap_t  s_modal_snaps[MAX_MODAL_SNAPS];
 static uint32_t      s_frame = 1;
 static uint32_t      s_last_interacted_key = 0;
 
@@ -233,7 +280,7 @@ static void apply_slot_scroll(scroll_slot_t *s, int new_scroll_y)
     } else if (s->kind == KIND_PANEL && s->widget) {
         for (int i = 0; i < s->child_count; ++i) {
             uint32_t *c = (uint32_t *)s->children[i];
-            if (!c)
+            if (!c || s->pinned[i])
                 continue;
             int target_y = s->orig_y[i] - clamped;
             if ((int32_t)c[5] != target_y)
@@ -278,6 +325,8 @@ void nox_3ds_ui_scroll_begin_frame(void)
 void nox_3ds_ui_scroll_reset_all(void)
 {
     memset(s_slots, 0, sizeof(s_slots));
+    memset(s_panel_metas, 0, sizeof(s_panel_metas));
+    memset(s_modal_snaps, 0, sizeof(s_modal_snaps));
     s_arm_key = 0;
     s_armed = false;
     s_dragging = false;
@@ -403,9 +452,53 @@ void nox_3ds_ui_scroll_sync_listbox(void *lb)
     }
 }
 
+static panel_meta_t *find_panel_meta(const void *panel_wnd)
+{
+    if (!panel_wnd)
+        return NULL;
+    for (int i = 0; i < MAX_PANEL_METAS; ++i) {
+        if (s_panel_metas[i].panel_wnd == panel_wnd)
+            return &s_panel_metas[i];
+    }
+    return NULL;
+}
+
+static panel_meta_t *alloc_panel_meta(void *panel_wnd)
+{
+    panel_meta_t *m = find_panel_meta(panel_wnd);
+    if (m)
+        return m;
+    for (int i = 0; i < MAX_PANEL_METAS; ++i) {
+        if (!s_panel_metas[i].panel_wnd) {
+            m = &s_panel_metas[i];
+            memset(m, 0, sizeof(*m));
+            m->panel_wnd = panel_wnd;
+            return m;
+        }
+    }
+    /* Overwrite oldest slot 0 */
+    m = &s_panel_metas[0];
+    memset(m, 0, sizeof(*m));
+    m->panel_wnd = panel_wnd;
+    return m;
+}
+
+static bool meta_is_pinned(const panel_meta_t *m, const void *child)
+{
+    if (!m || !child)
+        return false;
+    for (int i = 0; i < m->pinned_count; ++i) {
+        if (m->pinned[i] == child)
+            return true;
+    }
+    return false;
+}
+
 bool nox_3ds_ui_is_scrollable_panel_id(int id)
 {
-    return (id == 10151 || id == 10300 || id == 2100 || id == 10153);
+    return (id == 10150 || id == 10151 || id == 10153 ||
+            id == 10183 || id == 10197 || id == 10199 ||
+            id == 10300 || id == 2100);
 }
 
 bool nox_3ds_ui_panel_begin(void *panel_wnd, nox_3ds_panel_guard_t *guard)
@@ -416,7 +509,10 @@ bool nox_3ds_ui_panel_begin(void *panel_wnd, nox_3ds_panel_guard_t *guard)
     guard->slot_idx = -1;
 
     uint32_t *w = (uint32_t *)panel_wnd;
-    if (!w || !nox_3ds_ui_is_scrollable_panel_id((int)(int32_t)w[0]))
+    if (!w)
+        return true;
+    const panel_meta_t *meta = find_panel_meta(panel_wnd);
+    if (!meta && !nox_3ds_ui_is_scrollable_panel_id((int)(int32_t)w[0]))
         return true;
 
     uint32_t ax = 0, ay = 0;
@@ -431,13 +527,26 @@ bool nox_3ds_ui_panel_begin(void *panel_wnd, nox_3ds_panel_guard_t *guard)
     if (eff_h < 24)
         eff_h = ph;
 
+    int pad_top = meta ? (int)meta->pad_top : 0;
+    int pad_bot = meta ? (int)meta->pad_bottom : 0;
+    if (pad_top < 0) pad_top = 0;
+    if (pad_bot < 0) pad_bot = 0;
+    if (pad_top + pad_bot >= eff_h - 24) {
+        pad_top = 0;
+        pad_bot = 0;
+    }
+    int view_y = py + pad_top;
+    int view_h = eff_h - pad_top - pad_bot;
+
     uint32_t key = ptr_key(panel_wnd);
     scroll_slot_t *s = alloc_slot(key, KIND_PANEL);
     s->widget = panel_wnd;
     s->abs_x = (int16_t)px;
-    s->abs_y = (int16_t)py;
+    s->abs_y = (int16_t)view_y;
     s->view_w = (int16_t)pw;
-    s->view_h = (int16_t)eff_h;
+    s->view_h = (int16_t)view_h;
+    s->pad_top = (int16_t)pad_top;
+    s->pad_bottom = (int16_t)pad_bot;
     s->last_frame = s_frame;
 
     /* Count direct children and check whether this slot owns the exact same chain */
@@ -450,22 +559,27 @@ bool nox_3ds_ui_panel_begin(void *panel_wnd, nox_3ds_panel_guard_t *guard)
                         (cnt == 0 || s->children[0] == (void *)first_c));
     if (!same_layout) {
         int idx = 0;
+        uint8_t any_pin = 0;
         for (uint32_t *c = first_c; c && idx < MAX_PANEL_CHILDREN; c = (uint32_t *)(uintptr_t)c[97]) {
             s->children[idx] = (void *)c;
             s->orig_y[idx] = (int32_t)c[5];
+            uint8_t pin = meta_is_pinned(meta, (void *)c) ? 1u : 0u;
+            s->pinned[idx] = pin;
+            if (pin) any_pin = 1;
             ++idx;
         }
         s->child_count = (uint8_t)idx;
+        s->has_pinned = any_pin;
         s->scroll_y = 0;
         s->shifted = 1;
     }
 
-    int max_bottom = eff_h;
+    int max_bottom = view_h;
     for (int i = 0; i < s->child_count; ++i) {
         uint32_t *c = (uint32_t *)s->children[i];
-        if (!c || (c[1] & 0x10u))
+        if (!c || (c[1] & 0x10u) || s->pinned[i])
             continue;
-        int bottom = s->orig_y[i] + (int32_t)c[3] + 6;
+        int bottom = (s->orig_y[i] - pad_top) + (int32_t)c[3] + 8;
         if (bottom > max_bottom)
             max_bottom = bottom;
     }
@@ -474,7 +588,22 @@ bool nox_3ds_ui_panel_begin(void *panel_wnd, nox_3ds_panel_guard_t *guard)
 
     guard->slot_idx = (int32_t)(s - s_slots);
     guard->active = true;
-    return nox_3ds_clip_push(&guard->clip, px, py, pw, eff_h);
+    guard->has_pinned = (s->has_pinned != 0);
+    return nox_3ds_clip_push(&guard->clip, px, view_y, pw, view_h);
+}
+
+bool nox_3ds_ui_panel_child_is_pinned(const nox_3ds_panel_guard_t *guard, const void *child_wnd)
+{
+    if (!guard || !guard->has_pinned || !child_wnd)
+        return false;
+    if (guard->slot_idx < 0 || guard->slot_idx >= MAX_SCROLL_SLOTS)
+        return false;
+    const scroll_slot_t *s = &s_slots[guard->slot_idx];
+    for (int i = 0; i < s->child_count; ++i) {
+        if (s->children[i] == child_wnd)
+            return s->pinned[i] != 0;
+    }
+    return false;
 }
 
 void nox_3ds_ui_panel_end(void *panel_wnd, nox_3ds_panel_guard_t *guard)
@@ -490,7 +619,7 @@ void nox_3ds_ui_panel_end(void *panel_wnd, nox_3ds_panel_guard_t *guard)
         if (s->content_h > s->view_h && s->view_h >= 24 && s->view_w >= 24) {
             bool hi = (s_dragging && s_arm_key == s->key) || (s_last_interacted_key == s->key);
             int scr = nox_3ds_is_bottom_swbuf_active() ? NOX_3DS_SWBUF_BOTTOM : NOX_3DS_SWBUF_TOP;
-            nox_3ds_ui_queue_scrollbar(scr, s->abs_x + s->view_w - 6, s->abs_y + 2, 5,
+            nox_3ds_ui_queue_scrollbar(scr, s->abs_x + s->view_w - 8, s->abs_y + 2, 5,
                                        s->view_h - 4, s->content_h, s->view_h,
                                        s->scroll_y, hi);
         }
@@ -696,4 +825,850 @@ void nox_3ds_ui_scroll_pump_dpad(void)
 bool nox_3ds_ui_scroll_is_dragging(void)
 {
     return s_dragging;
+}
+
+/* =========================================================================
+ * Single-Line Ellipsis Truncation & Bottom-Screen Takeover / Auto-Expand
+ * ========================================================================= */
+
+static inline bool valid_u32_ptr(uint32_t p)
+{
+    return p >= 0x00100000u && (p & 3u) == 0u;
+}
+
+static bool is_static_draw(uintptr_t fn)
+{
+    return fn == (uintptr_t)sub_488D00 || fn == (uintptr_t)sub_489550;
+}
+
+static bool is_checkbox_or_radio(uintptr_t fn)
+{
+    return fn == (uintptr_t)sub_4A8820 || fn == (uintptr_t)sub_4A8A20 ||
+           fn == (uintptr_t)sub_4A8EA0 || fn == (uintptr_t)sub_4A9050;
+}
+
+static bool is_pushbutton(uintptr_t fn)
+{
+    return fn == (uintptr_t)sub_4A81D0 || fn == (uintptr_t)sub_4A8380;
+}
+
+static bool is_editbox(uintptr_t fn)
+{
+    return fn == (uintptr_t)sub_488160 || fn == (uintptr_t)sub_488870;
+}
+
+static bool is_listbox(uintptr_t fn)
+{
+    return fn == (uintptr_t)sub_4A3C50 || fn == (uintptr_t)sub_4A3FC0;
+}
+
+static void convert_to_stone_takeover_bg(uint32_t *w)
+{
+    if (!w)
+        return;
+    /* Switch from fixed-size sprite background (0x80) to resizable solid fill +
+     * Nox's native 9-slice medieval stone border (sub_4AA030 / sub_4A9E90). */
+    w[1] &= ~0x80u;
+    w[1] |= 0x1000u;
+    w[11] |= 2048u;
+    w[14] = (uint32_t)sub_4344A0(22, 18, 15);
+    w[16] = (uint32_t)sub_4344A0(112, 88, 54);
+}
+
+static void invalidate_panel_slot(const void *panel_wnd)
+{
+    scroll_slot_t *s = find_slot(ptr_key(panel_wnd));
+    if (s) {
+        s->shifted = 0;
+        s->scroll_y = 0;
+    }
+}
+
+const uint16_t *nox_3ds_ui_fit_ellipsis(int font_ptr, const uint16_t *src,
+                                        uint16_t *dst, int dst_cap, int max_w)
+{
+    if (!src || !*src || !dst || dst_cap < 5 || max_w <= 0)
+        return src;
+
+    int full_w = 0;
+    sub_43F840(font_ptr, (uint16_t *)src, &full_w, NULL, 0);
+    if (full_w <= max_w)
+        return src;
+
+    static uint16_t s_dots[4] = { '.', '.', '.', 0 };
+    int dots_w = 0;
+    sub_43F840(font_ptr, s_dots, &dots_w, NULL, 0);
+
+    int len = 0;
+    while (src[len] && len < dst_cap - 4)
+        ++len;
+
+    /* Binary search longest prefix that fits alongside "..." */
+    int lo = 0, hi = len, best = 0;
+    while (lo <= hi) {
+        int mid = (lo + hi) / 2;
+        for (int i = 0; i < mid; ++i)
+            dst[i] = src[i];
+        dst[mid] = 0;
+        int pw = 0;
+        if (mid > 0)
+            sub_43F840(font_ptr, dst, &pw, NULL, 0);
+        if (pw + dots_w <= max_w) {
+            best = mid;
+            lo = mid + 1;
+        } else {
+            hi = mid - 1;
+        }
+    }
+
+    while (best > 0 && (src[best - 1] == ' ' || src[best - 1] == '\t'))
+        --best;
+    for (int i = 0; i < best; ++i)
+        dst[i] = src[i];
+    dst[best]     = '.';
+    dst[best + 1] = '.';
+    dst[best + 2] = '.';
+    dst[best + 3] = 0;
+    return dst;
+}
+
+static modal_snap_t *get_or_create_modal_snap(uint32_t *w)
+{
+    int cnt = 0;
+    for (uint32_t *c = (uint32_t *)(uintptr_t)w[100]; c && cnt < MAX_PANEL_CHILDREN;
+         c = (uint32_t *)(uintptr_t)c[97])
+        ++cnt;
+
+    for (int i = 0; i < MAX_MODAL_SNAPS; ++i) {
+        modal_snap_t *sn = &s_modal_snaps[i];
+        if (sn->wnd == (void *)w) {
+            if (sn->child_count == cnt &&
+                (cnt == 0 || sn->c_ptr[0] == (void *)(uintptr_t)w[100])) {
+                /* Restore pristine stock layout before re-expanding */
+                w[1]  = sn->orig_flags;
+                w[11] = sn->orig_style;
+                w[14] = sn->orig_bg_color;
+                sub_46AB20(w, sn->orig_w, sn->orig_h);
+                for (int k = 0; k < sn->child_count; ++k) {
+                    uint32_t *c = (uint32_t *)sn->c_ptr[k];
+                    if (!c) continue;
+                    c[1]  = sn->c_flags[k];
+                    c[14] = sn->c_bg[k];
+                    sub_46A9B0(c, sn->c_x[k], sn->c_y[k]);
+                    sub_46AB20(c, sn->c_w[k], sn->c_h[k]);
+                }
+                return sn;
+            }
+            /* Window pointer reused for a different child tree: re-snapshot */
+            memset(sn, 0, sizeof(*sn));
+            sn->wnd = (void *)w;
+            break;
+        }
+    }
+
+    modal_snap_t *sn = NULL;
+    for (int i = 0; i < MAX_MODAL_SNAPS; ++i) {
+        if (s_modal_snaps[i].wnd == (void *)w || !s_modal_snaps[i].wnd) {
+            sn = &s_modal_snaps[i];
+            break;
+        }
+    }
+    if (!sn)
+        sn = &s_modal_snaps[0];
+
+    memset(sn, 0, sizeof(*sn));
+    sn->wnd           = (void *)w;
+    sn->orig_w        = (int16_t)(int32_t)w[2];
+    sn->orig_h        = (int16_t)(int32_t)w[3];
+    sn->orig_flags    = w[1];
+    sn->orig_style    = w[11];
+    sn->orig_bg_color = w[14];
+    int idx = 0;
+    for (uint32_t *c = (uint32_t *)(uintptr_t)w[100]; c && idx < MAX_PANEL_CHILDREN;
+         c = (uint32_t *)(uintptr_t)c[97]) {
+        sn->c_ptr[idx]   = (void *)c;
+        sn->c_x[idx]     = (int16_t)(int32_t)c[4];
+        sn->c_y[idx]     = (int16_t)(int32_t)c[5];
+        sn->c_w[idx]     = (int16_t)(int32_t)c[2];
+        sn->c_h[idx]     = (int16_t)(int32_t)c[3];
+        sn->c_flags[idx] = c[1];
+        sn->c_bg[idx]    = c[14];
+        ++idx;
+    }
+    sn->child_count = (uint8_t)idx;
+    return sn;
+}
+
+void nox_3ds_ui_expand_modal_dialog(void *dlg_wnd)
+{
+    uint32_t *w = (uint32_t *)dlg_wnd;
+    if (!w || !nox_3ds_font_is_enabled())
+        return;
+
+    modal_snap_t *sn = get_or_create_modal_snap(w);
+    int orig_w = (int)sn->orig_w;
+    int orig_h = (int)sn->orig_h;
+    if (orig_w <= 0 || orig_h <= 0 || orig_w >= 600)
+        return;
+
+    /* Detect overflowing text/checkbox/button children */
+    bool need_expand = false;
+    int  want_w = orig_w;
+    int  body_idx = -1;
+    int  best_body_area = 0;
+
+    for (int i = 0; i < sn->child_count; ++i) {
+        uint32_t *c = (uint32_t *)sn->c_ptr[i];
+        if (!c || (c[1] & 0x10u))
+            continue;
+        uintptr_t fn = (uintptr_t)c[95];
+        int cw = (int)sn->c_w[i];
+        int ch = (int)sn->c_h[i];
+        int fptr = (int)c[59];
+
+        if (fn == (uintptr_t)sub_488D00 && valid_u32_ptr(c[8])) {
+            uint16_t *st = *(uint16_t **)(uintptr_t)c[8];
+            if (st && *st) {
+                int mw = 0;
+                uint32_t mh = 0;
+                sub_43F840(fptr, st, &mw, &mh, cw);
+                if (ch >= 28 && cw * ch > best_body_area) {
+                    best_body_area = cw * ch;
+                    body_idx = i;
+                }
+                if ((int)mh > ch || (ch <= 24 && mw > cw)) {
+                    need_expand = true;
+                    if (want_w < 560)
+                        want_w = 560;
+                }
+            }
+        } else if (is_checkbox_or_radio(fn)) {
+            uint16_t *lbl = (uint16_t *)(c + 27);
+            if (*lbl) {
+                int lw = 0;
+                sub_43F840(fptr, lbl, &lw, NULL, 0);
+                int req_cw = lw + 42;
+                if (req_cw > cw) {
+                    need_expand = true;
+                    int req_dw = req_cw + 44;
+                    if (req_dw > want_w)
+                        want_w = req_dw;
+                }
+            }
+        } else if (is_pushbutton(fn)) {
+            uint16_t *lbl = (uint16_t *)(c + 27);
+            if (*lbl) {
+                int lw = 0;
+                sub_43F840(fptr, lbl, &lw, NULL, 0);
+                if (lw + 14 > cw) {
+                    need_expand = true;
+                    if (want_w < orig_w + 80)
+                        want_w = orig_w + 80;
+                }
+            }
+        }
+    }
+
+    if (!need_expand)
+        return;
+
+    if (want_w > 580) want_w = 580;
+    if (want_w < orig_w) want_w = orig_w;
+    int dw = want_w - orig_w;
+
+    /* Compute needed height growth from main body static text after widening */
+    int dh = 0;
+    int body_bottom_orig = orig_h / 2;
+    if (body_idx >= 0) {
+        uint32_t *bc = (uint32_t *)sn->c_ptr[body_idx];
+        int bcw_new = (int)sn->c_w[body_idx] + dw;
+        int bch_orig = (int)sn->c_h[body_idx];
+        body_bottom_orig = (int)sn->c_y[body_idx] + bch_orig;
+        if (valid_u32_ptr(bc[8])) {
+            uint16_t *st = *(uint16_t **)(uintptr_t)bc[8];
+            if (st && *st) {
+                uint32_t mh2 = 0;
+                sub_43F840((int)bc[59], st, NULL, &mh2, bcw_new);
+                if ((int)mh2 + 12 > bch_orig)
+                    dh = (int)mh2 + 12 - bch_orig;
+            }
+        }
+    }
+
+    int want_h = orig_h + dh;
+    if (want_h > 432) {
+        want_h = 432;
+        dh = want_h - orig_h;
+        if (dh < 0) dh = 0;
+    }
+
+    if (dw > 0 || dh > 0) {
+        convert_to_stone_takeover_bg(w);
+        sub_46AB20(w, want_w, want_h);
+        sub_46A9B0(w, (NOX_3DS_LOGICAL_W - want_w) / 2, (NOX_3DS_LOGICAL_H - want_h) / 2);
+
+        for (int i = 0; i < sn->child_count; ++i) {
+            uint32_t *c = (uint32_t *)sn->c_ptr[i];
+            if (!c)
+                continue;
+            uintptr_t fn = (uintptr_t)c[95];
+            int ox = (int)sn->c_x[i];
+            int oy = (int)sn->c_y[i];
+            int ow = (int)sn->c_w[i];
+            int oh = (int)sn->c_h[i];
+
+            if (i == body_idx) {
+                sub_46A9B0(c, ox, oy);
+                sub_46AB20(c, ow + dw, oh + dh);
+            } else if (oy < body_bottom_orig - 8 && oy < orig_h / 3) {
+                /* Header / title near top */
+                if (is_static_draw(fn) && ow >= orig_w / 2) {
+                    sub_46A9B0(c, ox, oy);
+                    sub_46AB20(c, ow + dw, oh);
+                } else {
+                    sub_46A9B0(c, ox + dw / 2, oy);
+                }
+            } else if (is_checkbox_or_radio(fn)) {
+                int nx = (ox > 20) ? 20 : ox;
+                int nw = want_w - 2 * nx;
+                if (nw < ow) nw = ow;
+                sub_46A9B0(c, nx, oy + dh);
+                sub_46AB20(c, nw, (oh < 22) ? 22 : oh);
+            } else if (is_editbox(fn)) {
+                sub_46A9B0(c, ox, oy + dh);
+                sub_46AB20(c, ow + dw, oh);
+            } else if (is_pushbutton(fn)) {
+                int nw = ow;
+                uint16_t *lbl = (uint16_t *)(c + 27);
+                if (*lbl) {
+                    int lw = 0;
+                    sub_43F840((int)c[59], lbl, &lw, NULL, 0);
+                    if (lw + 18 > nw) {
+                        nw = lw + 18;
+                        if (nw > want_w / 2 - 12)
+                            nw = want_w / 2 - 12;
+                        if (c[1] & 0x80u) {
+                            c[1] &= ~0x80u;
+                            c[14] = (uint32_t)sub_4344A0(52, 38, 26);
+                            c[16] = (uint32_t)sub_4344A0(148, 118, 72);
+                        }
+                    }
+                }
+                int nx = ox + dw / 2 - (nw - ow) / 2;
+                if (nx < 10) nx = 10;
+                if (nx + nw > want_w - 10) nx = want_w - 10 - nw;
+                sub_46A9B0(c, nx, oy + dh);
+                sub_46AB20(c, nw, oh);
+            } else {
+                /* Any other lower control */
+                sub_46A9B0(c, ox + dw / 2, oy + dh);
+            }
+        }
+    }
+}
+
+/* Collect listbox auxiliary slider/arrow pointers in a subtree so reflow
+ * keeps them anchored flush against their owning listbox. */
+typedef struct {
+    uint32_t *lb;
+    uint32_t *up;
+    uint32_t *down;
+    uint32_t *slider;
+} lb_aux_t;
+
+static void collect_lb_aux_rec(uint32_t *node, lb_aux_t *out, int *count, int cap)
+{
+    if (!node || !out || !count || *count >= cap)
+        return;
+    for (uint32_t *c = (uint32_t *)(uintptr_t)node[100]; c; c = (uint32_t *)(uintptr_t)c[97]) {
+        if (is_listbox((uintptr_t)c[95]) && valid_u32_ptr(c[8])) {
+            uint32_t *v5 = (uint32_t *)(uintptr_t)c[8];
+            if (v5[7] || v5[8] || v5[9]) {
+                if (*count < cap) {
+                    lb_aux_t *a = &out[(*count)++];
+                    a->lb     = c;
+                    a->up     = valid_u32_ptr(v5[7]) ? (uint32_t *)(uintptr_t)v5[7] : NULL;
+                    a->down   = valid_u32_ptr(v5[8]) ? (uint32_t *)(uintptr_t)v5[8] : NULL;
+                    a->slider = valid_u32_ptr(v5[9]) ? (uint32_t *)(uintptr_t)v5[9] : NULL;
+                }
+            }
+        }
+        if (c[100])
+            collect_lb_aux_rec(c, out, count, cap);
+    }
+}
+
+static bool is_lb_aux_widget(const uint32_t *w, const lb_aux_t *aux, int aux_count)
+{
+    for (int i = 0; i < aux_count; ++i) {
+        if (w == aux[i].up || w == aux[i].down || w == aux[i].slider)
+            return true;
+    }
+    return false;
+}
+
+static void anchor_lb_aux(const lb_aux_t *a)
+{
+    if (!a || !a->lb)
+        return;
+    uint32_t *lb = a->lb;
+    uint32_t lb_ax = 0, lb_ay = 0;
+    sub_46AA60(lb, &lb_ax, &lb_ay);
+    int lbx = (int)(int32_t)lb_ax;
+    int lby = (int)(int32_t)lb_ay;
+    int lbw = (int)(int32_t)lb[2];
+    int lbh = (int)(int32_t)lb[3];
+
+    int up_h = a->up ? (int)(int32_t)a->up[3] : 0;
+    int dn_h = a->down ? (int)(int32_t)a->down[3] : 0;
+    if (up_h < 12 && a->up) up_h = 16;
+    if (dn_h < 12 && a->down) dn_h = 16;
+
+    if (a->up) {
+        uint32_t *p = (uint32_t *)(uintptr_t)a->up[99];
+        uint32_t px = 0, py = 0;
+        if (p) sub_46AA60(p, &px, &py);
+        sub_46A9B0(a->up, lbx + lbw - (int)(int32_t)px, lby - (int)(int32_t)py);
+    }
+    if (a->down) {
+        uint32_t *p = (uint32_t *)(uintptr_t)a->down[99];
+        uint32_t px = 0, py = 0;
+        if (p) sub_46AA60(p, &px, &py);
+        sub_46A9B0(a->down, lbx + lbw - (int)(int32_t)px, lby + lbh - dn_h - (int)(int32_t)py);
+    }
+    if (a->slider) {
+        uint32_t *p = (uint32_t *)(uintptr_t)a->slider[99];
+        uint32_t px = 0, py = 0;
+        if (p) sub_46AA60(p, &px, &py);
+        int sh = lbh - up_h - dn_h;
+        if (sh < 16) sh = 16;
+        int sw = (int)(int32_t)a->slider[2];
+        if (sw < 12 || sw > 24) sw = 16;
+        sub_46A9B0(a->slider, lbx + lbw - (int)(int32_t)px, lby + up_h - (int)(int32_t)py);
+        sub_46AB20(a->slider, sw, sh);
+    }
+}
+
+/* Reflow a list of form child controls cleanly into spacious 1- or 2-column
+ * rows inside [start_x .. start_x + avail_w], starting at start_y.
+ * Returns total bottom Y reached. */
+static int reflow_form_children(uint32_t **items, int count,
+                                int start_x, int start_y, int avail_w,
+                                const lb_aux_t *aux, int aux_count)
+{
+    /* Sort into natural reading order: top-to-bottom, left-to-right */
+    for (int i = 1; i < count; ++i) {
+        uint32_t *key = items[i];
+        int ky = (int)(int32_t)key[5];
+        int kx = (int)(int32_t)key[4];
+        int j = i - 1;
+        while (j >= 0) {
+            int jy = (int)(int32_t)items[j][5];
+            int jx = (int)(int32_t)items[j][4];
+            /* Group controls within 8px vertically as same row */
+            bool after = (jy > ky + 8) || ((jy >= ky - 8 && jy <= ky + 8) && jx > kx);
+            if (!after)
+                break;
+            items[j + 1] = items[j];
+            --j;
+        }
+        items[j + 1] = key;
+    }
+
+    int cur_y = start_y;
+    int half_w = (avail_w - 10) / 2;
+    int col2_x = start_x + half_w + 10;
+
+    for (int i = 0; i < count; ++i) {
+        uint32_t *c = items[i];
+        if (!c)
+            continue;
+        uintptr_t fn = (uintptr_t)c[95];
+        int ow = (int)(int32_t)c[2];
+        int oh = (int)(int32_t)c[3];
+        int fptr = (int)c[59];
+
+        if (is_checkbox_or_radio(fn)) {
+            int lw = 0;
+            uint16_t *lbl = (uint16_t *)(c + 27);
+            if (*lbl)
+                sub_43F840(fptr, lbl, &lw, NULL, 0);
+            int need_w = lw + 38;
+            int row_h = (oh < 24) ? 24 : oh;
+
+            /* Pair two short checkboxes/radios side-by-side when both fit half_w */
+            if (half_w >= 180 && need_w <= half_w - 6 && i + 1 < count &&
+                is_checkbox_or_radio((uintptr_t)items[i + 1][95])) {
+                uint32_t *c2 = items[i + 1];
+                int lw2 = 0;
+                uint16_t *lbl2 = (uint16_t *)(c2 + 27);
+                if (*lbl2)
+                    sub_43F840((int)c2[59], lbl2, &lw2, NULL, 0);
+                if (lw2 + 38 <= half_w - 6) {
+                    int oh2 = (int)(int32_t)c2[3];
+                    if (oh2 > row_h) row_h = oh2;
+                    sub_46A9B0(c, start_x, cur_y);
+                    sub_46AB20(c, half_w, row_h);
+                    sub_46A9B0(c2, col2_x, cur_y);
+                    sub_46AB20(c2, half_w, row_h);
+                    cur_y += row_h + 6;
+                    ++i;
+                    continue;
+                }
+            }
+
+            /* Otherwise full-width row */
+            if (need_w > avail_w) {
+                uint32_t mh = (uint32_t)row_h;
+                sub_43F840(fptr, lbl, NULL, &mh, avail_w - 34);
+                if ((int)mh + 6 > row_h)
+                    row_h = (int)mh + 6;
+            }
+            sub_46A9B0(c, start_x, cur_y);
+            sub_46AB20(c, avail_w, row_h);
+            cur_y += row_h + 6;
+        } else if (is_editbox(fn)) {
+            int row_h = (oh < 26) ? 26 : oh;
+            sub_46A9B0(c, start_x, cur_y);
+            sub_46AB20(c, avail_w, row_h);
+            cur_y += row_h + 8;
+        } else if (is_static_draw(fn)) {
+            int row_h = (oh < 20) ? 20 : oh;
+            if (valid_u32_ptr(c[8])) {
+                uint16_t *st = *(uint16_t **)(uintptr_t)c[8];
+                if (st && *st) {
+                    uint32_t mh = 0;
+                    sub_43F840(fptr, st, NULL, &mh, avail_w - 4);
+                    if ((int)mh + 6 > row_h)
+                        row_h = (int)mh + 6;
+                }
+            }
+            sub_46A9B0(c, start_x, cur_y);
+            sub_46AB20(c, avail_w, row_h);
+            cur_y += row_h + 6;
+        } else if (is_listbox(fn)) {
+            bool has_aux = false;
+            for (int a = 0; a < aux_count; ++a) {
+                if (aux[a].lb == c) { has_aux = true; break; }
+            }
+            int lb_w = has_aux ? (avail_w - 20) : avail_w;
+            int lb_h = oh;
+            if (lb_h < 68) lb_h = 68;
+            if (lb_h > 156) lb_h = 156;
+            sub_46A9B0(c, start_x, cur_y);
+            sub_46AB20(c, lb_w, lb_h);
+            cur_y += lb_h + 8;
+        } else if (is_pushbutton(fn)) {
+            int row_h = (oh < 26) ? 26 : oh;
+            int bw = ow;
+            uint16_t *lbl = (uint16_t *)(c + 27);
+            if (*lbl) {
+                int lw = 0;
+                sub_43F840(fptr, lbl, &lw, NULL, 0);
+                if (lw + 18 > bw) {
+                    bw = lw + 18;
+                    if (c[1] & 0x80u) {
+                        c[1] &= ~0x80u;
+                        c[14] = (uint32_t)sub_4344A0(52, 38, 26);
+                        c[16] = (uint32_t)sub_4344A0(148, 118, 72);
+                    }
+                }
+            }
+            if (half_w >= 160 && bw <= half_w && i + 1 < count &&
+                is_pushbutton((uintptr_t)items[i + 1][95])) {
+                uint32_t *c2 = items[i + 1];
+                int bw2 = (int)(int32_t)c2[2];
+                uint16_t *lbl2 = (uint16_t *)(c2 + 27);
+                if (*lbl2) {
+                    int lw2 = 0;
+                    sub_43F840((int)c2[59], lbl2, &lw2, NULL, 0);
+                    if (lw2 + 18 > bw2) {
+                        bw2 = lw2 + 18;
+                        if (c2[1] & 0x80u) {
+                            c2[1] &= ~0x80u;
+                            c2[14] = (uint32_t)sub_4344A0(52, 38, 26);
+                            c2[16] = (uint32_t)sub_4344A0(148, 118, 72);
+                        }
+                    }
+                }
+                if (bw2 <= half_w) {
+                    int h2 = (int)(int32_t)c2[3];
+                    if (h2 > row_h) row_h = h2;
+                    sub_46A9B0(c, start_x, cur_y);
+                    sub_46AB20(c, half_w, row_h);
+                    sub_46A9B0(c2, col2_x, cur_y);
+                    sub_46AB20(c2, half_w, row_h);
+                    cur_y += row_h + 8;
+                    ++i;
+                    continue;
+                }
+            }
+            if (bw > avail_w) bw = avail_w;
+            if (bw < avail_w && !(c[1] & 0x80u)) bw = avail_w;
+            sub_46A9B0(c, start_x, cur_y);
+            sub_46AB20(c, bw, row_h);
+            cur_y += row_h + 8;
+        } else if (c[100]) {
+            /* Nested sub-container: reflow its direct children too */
+            uint32_t *sub_items[MAX_PANEL_CHILDREN];
+            int scnt = 0;
+            for (uint32_t *sc = (uint32_t *)(uintptr_t)c[100]; sc && scnt < MAX_PANEL_CHILDREN;
+                 sc = (uint32_t *)(uintptr_t)sc[97]) {
+                if (!is_lb_aux_widget(sc, aux, aux_count))
+                    sub_items[scnt++] = sc;
+            }
+            sub_46A9B0(c, start_x, cur_y);
+            int sub_end = reflow_form_children(sub_items, scnt, 6, 6, avail_w - 12, aux, aux_count);
+            if (sub_end < 28) sub_end = 28;
+            sub_46AB20(c, avail_w, sub_end + 4);
+            cur_y += sub_end + 10;
+        } else {
+            int row_h = (oh < 20) ? 20 : oh;
+            int nw = (ow < avail_w && !(c[1] & 0x80u)) ? avail_w : ow;
+            if (nw > avail_w) nw = avail_w;
+            sub_46A9B0(c, start_x, cur_y);
+            sub_46AB20(c, nw, row_h);
+            cur_y += row_h + 6;
+        }
+    }
+    return cur_y;
+}
+
+void nox_3ds_ui_takeover_form_dialog(void *root_wnd)
+{
+    uint32_t *w = (uint32_t *)root_wnd;
+    if (!w || !nox_3ds_font_is_enabled())
+        return;
+
+    int orig_w = (int)(int32_t)w[2];
+    int orig_h = (int)(int32_t)w[3];
+    if (orig_w <= 0 || orig_h <= 0)
+        return;
+
+    const int new_x = 12;
+    const int new_y = 12;
+    const int new_w = 616;
+    const int new_h = 456;
+
+    convert_to_stone_takeover_bg(w);
+    sub_46AB20(w, new_w, new_h);
+    sub_46A9B0(w, new_x, new_y);
+
+    lb_aux_t aux[12];
+    int aux_count = 0;
+    collect_lb_aux_rec(w, aux, &aux_count, 12);
+
+    uint32_t *headers[8];
+    int hdr_cnt = 0;
+    uint32_t *footers[8];
+    int ftr_cnt = 0;
+    uint32_t *body[MAX_PANEL_CHILDREN];
+    int body_cnt = 0;
+
+    for (uint32_t *c = (uint32_t *)(uintptr_t)w[100]; c; c = (uint32_t *)(uintptr_t)c[97]) {
+        if (is_lb_aux_widget(c, aux, aux_count))
+            continue;
+        uintptr_t fn = (uintptr_t)c[95];
+        int oy = (int)(int32_t)c[5];
+        int oh = (int)(int32_t)c[3];
+
+        if (is_static_draw(fn) && oy < 36 && oh <= 36 && hdr_cnt < 8) {
+            headers[hdr_cnt++] = c;
+        } else if (is_pushbutton(fn) && oy >= orig_h - 56 && ftr_cnt < 8) {
+            footers[ftr_cnt++] = c;
+        } else if (body_cnt < MAX_PANEL_CHILDREN) {
+            body[body_cnt++] = c;
+        }
+    }
+
+    int pad_top = (hdr_cnt > 0) ? 40 : 12;
+    int pad_bot = (ftr_cnt > 0) ? 48 : 12;
+
+    panel_meta_t *meta = alloc_panel_meta(root_wnd);
+    memset(meta, 0, sizeof(*meta));
+    meta->panel_wnd  = root_wnd;
+    meta->pad_top    = (int16_t)pad_top;
+    meta->pad_bottom = (int16_t)pad_bot;
+
+    /* Position pinned headers */
+    for (int i = 0; i < hdr_cnt; ++i) {
+        sub_46A9B0(headers[i], 14, 10);
+        sub_46AB20(headers[i], new_w - 28, 24);
+        if (meta->pinned_count < 16)
+            meta->pinned[meta->pinned_count++] = headers[i];
+    }
+
+    /* Position pinned footer buttons (sorted left-to-right) */
+    for (int i = 1; i < ftr_cnt; ++i) {
+        uint32_t *k = footers[i];
+        int j = i - 1;
+        while (j >= 0 && (int32_t)footers[j][4] > (int32_t)k[4]) {
+            footers[j + 1] = footers[j];
+            --j;
+        }
+        footers[j + 1] = k;
+    }
+    if (ftr_cnt > 0) {
+        int gap = 14;
+        int btn_w = (new_w - 32 - gap * (ftr_cnt - 1)) / ftr_cnt;
+        if (btn_w > 168) btn_w = 168;
+        if (btn_w < 84)  btn_w = 84;
+        int total_w = ftr_cnt * btn_w + (ftr_cnt - 1) * gap;
+        int bx = (new_w - total_w) / 2;
+        int by = new_h - pad_bot + 8;
+        for (int i = 0; i < ftr_cnt; ++i) {
+            uint32_t *b = footers[i];
+            if (b[1] & 0x80u) {
+                b[1] &= ~0x80u;
+                b[14] = (uint32_t)sub_4344A0(56, 40, 28);
+                b[16] = (uint32_t)sub_4344A0(158, 126, 76);
+            }
+            sub_46A9B0(b, bx, by);
+            sub_46AB20(b, btn_w, 30);
+            bx += btn_w + gap;
+            if (meta->pinned_count < 16)
+                meta->pinned[meta->pinned_count++] = b;
+        }
+    }
+
+    /* Reflow interior body controls into the scrollable band */
+    reflow_form_children(body, body_cnt, 16, pad_top + 6, new_w - 36, aux, aux_count);
+
+    for (int a = 0; a < aux_count; ++a)
+        anchor_lb_aux(&aux[a]);
+
+    invalidate_panel_slot(root_wnd);
+}
+
+void nox_3ds_ui_takeover_servopts(void *root_wnd)
+{
+    uint32_t *w = (uint32_t *)root_wnd;
+    if (!w || !nox_3ds_font_is_enabled())
+        return;
+
+    int orig_w = (int)(int32_t)w[2];
+    int orig_h = (int)(int32_t)w[3];
+    if (orig_w <= 0 || orig_h <= 0)
+        return;
+
+    const int new_x = 8;
+    const int new_y = 4;
+    const int new_w = 624;
+    const int new_h = 472;
+
+    float sx = (float)new_w / (float)orig_w;
+    float sy = (float)new_h / (float)orig_h;
+    if (sx < 1.0f) sx = 1.0f;
+    if (sy < 1.0f) sy = 1.0f;
+
+    convert_to_stone_takeover_bg(w);
+    sub_46AB20(w, new_w, new_h);
+    sub_46A9B0(w, new_x, new_y);
+
+    lb_aux_t aux[12];
+    int aux_count = 0;
+    collect_lb_aux_rec(w, aux, &aux_count, 12);
+
+    /* First pass: scale direct children of servopts root (10100) across 624x472 */
+    for (uint32_t *c = (uint32_t *)(uintptr_t)w[100]; c; c = (uint32_t *)(uintptr_t)c[97]) {
+        if (is_lb_aux_widget(c, aux, aux_count))
+            continue;
+        int cid = (int)(int32_t)c[0];
+        uintptr_t fn = (uintptr_t)c[95];
+        int ox = (int)(int32_t)c[4];
+        int oy = (int)(int32_t)c[5];
+        int ow = (int)(int32_t)c[2];
+        int oh = (int)(int32_t)c[3];
+
+        int nx = (int)(ox * sx + 0.5f);
+        int ny = (int)(oy * sy + 0.5f);
+        int nw = (int)(ow * sx + 0.5f);
+        int nh = (int)(oh * sy + 0.5f);
+
+        if (cid == 10120) {
+            /* Game-mode dropdown sized by sub_457A10: preserve at least stock width */
+            if (nw < ow) nw = ow;
+            if (nh < oh) nh = oh;
+            if (nx + nw > new_w - 8) nx = new_w - 8 - nw;
+            if (nx < 8) nx = 8;
+            sub_46A9B0(c, nx, ny);
+            sub_46AB20(c, nw, nh);
+            continue;
+        }
+
+        if (nx + nw > new_w - 8) nw = new_w - 8 - nx;
+        if (ny + nh > new_h - 6) nh = new_h - 6 - ny;
+        if (nw < 16) nw = (ow > 16) ? ow : 16;
+        if (nh < 16) nh = (oh > 16) ? oh : 16;
+
+        if (is_pushbutton(fn)) {
+            uint16_t *lbl = (uint16_t *)(c + 27);
+            if (!*lbl && (c[1] & 0x80u)) {
+                /* Icon-only button: keep stock size, scaled position */
+                sub_46A9B0(c, nx, ny);
+                continue;
+            }
+            if (*lbl && (c[1] & 0x80u)) {
+                int lw = 0;
+                sub_43F840((int)c[59], lbl, &lw, NULL, 0);
+                if (lw + 12 > ow || nw > ow + 16) {
+                    c[1] &= ~0x80u;
+                    c[14] = (uint32_t)sub_4344A0(54, 38, 26);
+                    c[16] = (uint32_t)sub_4344A0(152, 122, 74);
+                }
+            }
+            sub_46A9B0(c, nx, ny);
+            sub_46AB20(c, nw, (nh > 34 && oh <= 30) ? 30 : nh);
+            continue;
+        }
+
+        if (is_listbox(fn)) {
+            bool has_aux = false;
+            for (int a = 0; a < aux_count; ++a) {
+                if (aux[a].lb == c) { has_aux = true; break; }
+            }
+            if (has_aux && nx + nw + 18 > new_w - 8)
+                nw = new_w - 8 - 18 - nx;
+            sub_46A9B0(c, nx, ny);
+            sub_46AB20(c, nw, nh);
+            continue;
+        }
+
+        /* Sub-container panels (e.g. 10150, 10153, 10183, 10197, 10199) */
+        if (c[100]) {
+            if (c[1] & 0x80u) {
+                c[1] &= ~0x80u;
+                c[14] = (uint32_t)sub_4344A0(26, 22, 18);
+                c[16] = (uint32_t)sub_4344A0(96, 76, 48);
+            }
+            sub_46A9B0(c, nx, ny);
+            sub_46AB20(c, nw, nh);
+
+            /* Reflow children inside this widened sub-panel into spacious
+             * vertically scrollable rows! */
+            uint32_t *sub_items[MAX_PANEL_CHILDREN];
+            int scnt = 0;
+            for (uint32_t *sc = (uint32_t *)(uintptr_t)c[100]; sc && scnt < MAX_PANEL_CHILDREN;
+                 sc = (uint32_t *)(uintptr_t)sc[97]) {
+                if (!is_lb_aux_widget(sc, aux, aux_count))
+                    sub_items[scnt++] = sc;
+            }
+            if (scnt > 0) {
+                reflow_form_children(sub_items, scnt, 8, 6, nw - 24, aux, aux_count);
+                panel_meta_t *meta = alloc_panel_meta(c);
+                memset(meta, 0, sizeof(*meta));
+                meta->panel_wnd  = c;
+                meta->pad_top    = 0;
+                meta->pad_bottom = 0;
+                invalidate_panel_slot(c);
+            }
+            continue;
+        }
+
+        sub_46A9B0(c, nx, ny);
+        sub_46AB20(c, nw, nh);
+    }
+
+    for (int a = 0; a < aux_count; ++a)
+        anchor_lb_aux(&aux[a]);
 }

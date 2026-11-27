@@ -7865,6 +7865,9 @@ int sub_457500()
       }
     }
     *(_DWORD *)&byte_587000[129656] = 0;
+#ifdef __3DS__
+    nox_3ds_ui_takeover_servopts(*(_DWORD **)&byte_5D4594[1046492]);
+#endif
   }
   return 1;
 }
@@ -10202,6 +10205,143 @@ unsigned int __cdecl sub_45AD70(int a1)
   return result;
 }
 
+#ifdef __3DS__
+/* Upper Bottom-Screen Takeover geometry for the Spellbook (600x336 at 20,12),
+ * leaving y=348..480 clear so the HUD, HP/Mana orbs, and Spell Bar stay
+ * visible for direct drag-and-drop slotting. */
+#define NOX_3DS_SB_X           20
+#define NOX_3DS_SB_Y           12
+#define NOX_3DS_SB_W           600
+#define NOX_3DS_SB_H           336
+#define NOX_3DS_SB_LPAGE_X     24
+#define NOX_3DS_SB_RPAGE_X     298
+#define NOX_3DS_SB_PAGE_W      240
+#define NOX_3DS_SB_SPINE_X     280
+#define NOX_3DS_SB_LIST_TOP    28
+#define NOX_3DS_SB_LIST_H      256
+#define NOX_3DS_SB_DESC_X      296
+#define NOX_3DS_SB_DESC_Y      24
+#define NOX_3DS_SB_DESC_W      242
+#define NOX_3DS_SB_DESC_H      264
+
+static inline int nox_3ds_sb_row_h(void)
+{
+  return sub_43F320(0) + 6;
+}
+
+static inline int nox_3ds_sb_rows_per_page(void)
+{
+  int rh = nox_3ds_sb_row_h();
+  int r = (rh > 0) ? (NOX_3DS_SB_LIST_H / rh) : 12;
+  return (r < 4) ? 4 : r;
+}
+
+static void nox_3ds_sb_draw_tab(int tx, int ty, int tw, int th,
+                                const uint16_t *label, bool active, bool dim)
+{
+  int c_border = sub_4344A0(34, 20, 12);
+  int c_fill = active ? sub_4344A0(218, 194, 146)
+                      : (dim ? sub_4344A0(62, 44, 30) : sub_4344A0(118, 82, 50));
+  int c_trim = active ? sub_4344A0(168, 134, 78) : sub_4344A0(80, 54, 34);
+  int c_txt  = active ? sub_4344A0(22, 14, 8)
+                      : (dim ? sub_4344A0(120, 104, 84) : sub_4344A0(232, 212, 172));
+  sub_434460(c_border);
+  sub_49CE30(tx, ty, tw, th);
+  sub_434460(c_fill);
+  sub_49CE30(tx + (active ? 0 : 2), ty + 2, tw - (active ? 2 : 4), th - 4);
+  sub_434460(c_trim);
+  sub_49CE30(tx + 2, ty + 2, tw - 4, 2);
+  sub_49CE30(tx + 2, ty + th - 4, tw - 4, 2);
+  if ( label && *label )
+  {
+    int lw = 0;
+    int lh = sub_43F320(0);
+    sub_43F840(0, (unsigned __int16 *)label, &lw, 0, 0);
+    int dx = tx + (tw - lw) / 2;
+    if ( dx < tx + 2 ) dx = tx + 2;
+    sub_434390(c_txt);
+    nox_3ds_clip_guard_t tcg;
+    if ( nox_3ds_clip_push(&tcg, tx + 2, ty + 4, tw - 4, th - 8) )
+      sub_43F6E0(0, (__int16 *)label, dx, ty + (th - lh) / 2);
+    nox_3ds_clip_pop(&tcg);
+  }
+}
+
+static void nox_3ds_sb_draw_book_bg(int bx, int by, int bw, int bh,
+                                    int mode, int player_class, int is_index)
+{
+  int book_w = 548;
+  /* Outer dark leather cover */
+  sub_434460(sub_4344A0(28, 16, 10));
+  sub_49CE30(bx, by, book_w, bh);
+  sub_434460(sub_4344A0(76, 46, 26));
+  sub_49CE30(bx + 3, by + 3, book_w - 6, bh - 6);
+  sub_434460(sub_4344A0(52, 32, 18));
+  sub_49CE30(bx + 7, by + 7, book_w - 14, bh - 14);
+
+  /* Right-edge bookmark tabs (match child widgets 1320 and 1310) */
+  static const uint16_t lbl_traps[]  = { 'T','R','A','P', 0 };
+  static const uint16_t lbl_spells[] = { 'S','P','E','L','L', 0 };
+  static const uint16_t lbl_abil[]   = { 'A','B','I','L', 0 };
+  static const uint16_t lbl_index[]  = { 'I','N','D','E','X', 0 };
+  const uint16_t *top_lbl = (mode == 1 && !is_index) ? lbl_index : lbl_traps;
+  const uint16_t *bot_lbl = (mode == 0 && !is_index) ? lbl_index
+                            : ((player_class == 0) ? lbl_abil : lbl_spells);
+  nox_3ds_sb_draw_tab(bx + 548, by + 22, 50, 74, top_lbl, mode == 1, player_class == 0);
+  nox_3ds_sb_draw_tab(bx + 548, by + 104, 50, 74, bot_lbl, mode == 0, false);
+
+  /* Page-edge shadow stacks */
+  sub_434460(sub_4344A0(172, 146, 106));
+  sub_49CE30(bx + 11, by + 11, book_w - 22, bh - 22);
+
+  /* Left & right parchment pages */
+  int c_page  = sub_4344A0(222, 200, 156);
+  int c_rule  = sub_4344A0(176, 146, 100);
+  int c_hi    = sub_4344A0(234, 214, 174);
+  sub_434460(c_page);
+  sub_49CE30(bx + 15, by + 14, 259, bh - 28);
+  sub_49CE30(bx + 286, by + 14, 247, bh - 28);
+
+  /* Subtle top highlight and decorative inner rule on each page */
+  sub_434460(c_hi);
+  sub_49CE30(bx + 16, by + 15, 257, 2);
+  sub_49CE30(bx + 287, by + 15, 245, 2);
+  sub_434460(c_rule);
+  sub_49CE30(bx + 20, by + 19, 248, 1);
+  sub_49CE30(bx + 20, by + bh - 20, 248, 1);
+  sub_49CE30(bx + 292, by + 19, 236, 1);
+  sub_49CE30(bx + 292, by + bh - 20, 236, 1);
+
+  /* Center binding spine gutter */
+  sub_434460(sub_4344A0(124, 96, 62));
+  sub_49CE30(bx + 274, by + 13, 2, bh - 26);
+  sub_49CE30(bx + 284, by + 13, 2, bh - 26);
+  sub_434460(sub_4344A0(58, 36, 20));
+  sub_49CE30(bx + 276, by + 12, 8, bh - 24);
+  sub_434460(sub_4344A0(92, 60, 34));
+  sub_49CE30(bx + 279, by + 12, 2, bh - 24);
+
+  /* Subtle framed pads under visible prev/next page-turn arrow widgets */
+  int prev_w = *(_DWORD *)&byte_5D4594[1046944];
+  int next_w = *(_DWORD *)&byte_5D4594[1046948];
+  if ( prev_w && !sub_46ACC0(prev_w) )
+  {
+    sub_434460(c_rule);
+    sub_49CE30(bx + 22, by + 292, 34, 28);
+    sub_434460(c_hi);
+    sub_49CE30(bx + 24, by + 294, 30, 24);
+  }
+  if ( next_w && !sub_46ACC0(next_w) )
+  {
+    sub_434460(c_rule);
+    sub_49CE30(bx + 492, by + 292, 34, 28);
+    sub_434460(c_hi);
+    sub_49CE30(bx + 494, by + 294, 30, 24);
+  }
+  (void)bw;
+}
+#endif
+
 //----- (0045ADF0) --------------------------------------------------------
 int __cdecl sub_45ADF0(int a1)
 {
@@ -10215,10 +10355,17 @@ int __cdecl sub_45ADF0(int a1)
   int v9; // [esp+Ch] [ebp-4h]
 
   v1 = 0;
+#ifdef __3DS__
+  *(_DWORD *)&byte_5D4594[1046656] = nox_3ds_sb_row_h();
+  *(_DWORD *)&byte_5D4594[1047508] = 0;
+  *(_DWORD *)&byte_5D4594[1047512] = 0;
+  v9 = 2 * nox_3ds_sb_rows_per_page();
+#else
   *(_DWORD *)&byte_5D4594[1046656] = sub_43F320(0) + 2;
   *(_DWORD *)&byte_5D4594[1047508] = 0;
   *(_DWORD *)&byte_5D4594[1047512] = 0;
   v9 = 2 * (141 / *(_DWORD *)&byte_5D4594[1046656]) - 2;
+#endif
   if ( *(_DWORD *)&byte_5D4594[1046868] == 1 )
   {
     for ( i = sub_427300(); i; i = sub_427320(i) )
@@ -10268,7 +10415,14 @@ int __cdecl sub_45ADF0(int a1)
       }
     }
   }
+#ifdef __3DS__
+  {
+    int sb_total = *(_DWORD *)&byte_5D4594[1047508] - *(_DWORD *)&byte_5D4594[1047512];
+    *(_DWORD *)&byte_5D4594[1046940] = (sb_total > 0 && v9 > 0) ? ((sb_total - 1) / v9 + 1) : 1;
+  }
+#else
   *(_DWORD *)&byte_5D4594[1046940] = (*(_DWORD *)&byte_5D4594[1047508] - *(_DWORD *)&byte_5D4594[1047512]) / v9 + 1;
+#endif
   qsort(&byte_5D4594[1046960], *(_DWORD *)&byte_5D4594[1047508] - *(_DWORD *)&byte_5D4594[1047512], 4u, sub_45ABC0);
   return v1;
 }
@@ -10555,9 +10709,11 @@ int __cdecl sub_45B5F0(int a1, unsigned int a2, unsigned int a3)
   {
     int sb_x = 0, sb_y = 0;
     sub_46AA20(a1, &sb_x, &sb_y);
-    if ( v4 >= sb_x + 150 && v4 <= sb_x + 250 && v3 >= sb_y + 15 && v3 <= sb_y + 160 )
+    if ( v4 >= sb_x + NOX_3DS_SB_DESC_X && v4 <= sb_x + NOX_3DS_SB_DESC_X + NOX_3DS_SB_DESC_W
+      && v3 >= sb_y + NOX_3DS_SB_DESC_Y && v3 <= sb_y + NOX_3DS_SB_DESC_Y + NOX_3DS_SB_DESC_H )
     {
-      nox_3ds_ui_scroll_step(0x5350424Bu, (v3 < sb_y + 87) ? -84 : 84);
+      int mid_y = sb_y + NOX_3DS_SB_DESC_Y + NOX_3DS_SB_DESC_H / 2;
+      nox_3ds_ui_scroll_step(0x5350424Bu, (v3 < mid_y) ? -96 : 96);
       nox_3ds_swbuf_invalidate_bottom();
       return 1;
     }
@@ -10578,8 +10734,13 @@ LABEL_47:
     }
     return 0;
   }
+#ifdef __3DS__
+  *(_DWORD *)&byte_5D4594[1046656] = nox_3ds_sb_row_h();
+  v5 = nox_3ds_sb_rows_per_page();
+#else
   *(_DWORD *)&byte_5D4594[1046656] = sub_43F320(0) + 2;
   v5 = 141 / *(_DWORD *)&byte_5D4594[1046656] - 1;
+#endif
   sub_46AA20(a1, &v14, &a3);
   switch ( a2 )
   {
@@ -10587,6 +10748,21 @@ LABEL_47:
       if ( *(_DWORD *)&byte_5D4594[2614252] && (*(_BYTE *)(*(_DWORD *)&byte_5D4594[2614252] + 120) & 2) == 2 )
         return 1;
       *(_DWORD *)&byte_5D4594[1047536] = v3;
+#ifdef __3DS__
+      v8 = v3 - (a3 + NOX_3DS_SB_LIST_TOP);
+      v7 = v8 < 0;
+      *(_DWORD *)&byte_5D4594[1047532] = v4;
+      if ( v7 || (v4 - v14) < 16 || (v4 - v14) > 544 )
+      {
+        *(_DWORD *)&byte_587000[132136] = -1;
+        return 1;
+      }
+      v9 = v8 / *(int *)&byte_5D4594[1046656];
+      if ( v9 >= v5 )
+        goto LABEL_14;
+      if ( v4 - v14 > NOX_3DS_SB_SPINE_X )
+        v9 += v5;
+#else
       v7 = (int)(-19 - a3 + v3) < 0;
       v8 = -19 - a3 + v3;
       *(_DWORD *)&byte_5D4594[1047532] = v4;
@@ -10600,6 +10776,7 @@ LABEL_47:
         goto LABEL_14;
       if ( v4 - v14 > 145 )
         v9 += v5;
+#endif
       *(_DWORD *)&byte_587000[132136] = 2 * v5 * *(_DWORD *)&byte_5D4594[1046936] + v9;
       sub_46ADC0(a1);
       v10 = *(_DWORD *)&byte_587000[132136];
@@ -10762,6 +10939,16 @@ int sub_45B9D0()
                           if ( result )
                           {
                             **(_DWORD **)(result + 96) = sub_45B1F0;
+#ifdef __3DS__
+                            *(_DWORD *)&byte_5D4594[1046860] = sub_46C3E0(
+                                                                 0,
+                                                                 1196,
+                                                                 NOX_3DS_SB_X,
+                                                                 NOX_3DS_SB_Y,
+                                                                 NOX_3DS_SB_W,
+                                                                 NOX_3DS_SB_H,
+                                                                 0);
+#else
                             *(_DWORD *)&byte_5D4594[1046860] = sub_46C3E0(
                                                                  0,
                                                                  1196,
@@ -10770,20 +10957,39 @@ int sub_45B9D0()
                                                                  285,
                                                                  168,
                                                                  0);
+#endif
                             sub_46B430(*(_DWORD **)&byte_5D4594[1046860], sub_45B5F0, sub_45BD40, 0);
                             sub_46AC00(*(int *)&byte_5D4594[1046860], 1);
+#ifdef __3DS__
+                            result = sub_46C3E0(*(int *)&byte_5D4594[1046860], 8, 548, 22, 50, 74, 0);
+#else
                             result = sub_46C3E0(*(int *)&byte_5D4594[1046860], 8, 257, 15, 27, 40, 0);
+#endif
                             v1 = (_DWORD *)result;
                             if ( result )
                             {
                               sub_46B430((_DWORD *)result, sub_45B360, (int)&sub_45BD30, sub_45CF00);
                               *v1 = 1320;
+#ifdef __3DS__
+                              result = sub_46C3E0(*(int *)&byte_5D4594[1046860], 8, 548, 104, 50, 74, 0);
+#else
                               result = sub_46C3E0(*(int *)&byte_5D4594[1046860], 8, 253, 61, 27, 40, 0);
+#endif
                               v2 = (_DWORD *)result;
                               if ( result )
                               {
                                 sub_46B430((_DWORD *)result, sub_45B360, (int)&sub_45BD30, sub_45CF00);
                                 *v2 = 1310;
+#ifdef __3DS__
+                                *(_DWORD *)&byte_5D4594[1046944] = sub_46C3E0(
+                                                                     *(int *)&byte_5D4594[1046860],
+                                                                     136,
+                                                                     22,
+                                                                     292,
+                                                                     34,
+                                                                     28,
+                                                                     0);
+#else
                                 *(_DWORD *)&byte_5D4594[1046944] = sub_46C3E0(
                                                                      *(int *)&byte_5D4594[1046860],
                                                                      136,
@@ -10792,9 +10998,20 @@ int sub_45B9D0()
                                                                      20,
                                                                      20,
                                                                      0);
+#endif
                                 sub_46B430(*(_DWORD **)&byte_5D4594[1046944], sub_45B210, 0, 0);
                                 v3 = sub_42F970((const char *)&byte_587000[132328]);
                                 sub_46AE60(*(int *)&byte_5D4594[1046944], (int)v3);
+#ifdef __3DS__
+                                *(_DWORD *)&byte_5D4594[1046948] = sub_46C3E0(
+                                                                     *(int *)&byte_5D4594[1046860],
+                                                                     136,
+                                                                     492,
+                                                                     292,
+                                                                     34,
+                                                                     28,
+                                                                     0);
+#else
                                 *(_DWORD *)&byte_5D4594[1046948] = sub_46C3E0(
                                                                      *(int *)&byte_5D4594[1046860],
                                                                      136,
@@ -10803,9 +11020,20 @@ int sub_45B9D0()
                                                                      20,
                                                                      20,
                                                                      0);
+#endif
                                 sub_46B430(*(_DWORD **)&byte_5D4594[1046948], sub_45B070, 0, 0);
                                 v4 = sub_42F970((const char *)&byte_587000[132336]);
                                 sub_46AE60(*(int *)&byte_5D4594[1046948], (int)v4);
+#ifdef __3DS__
+                                *(_DWORD *)&byte_5D4594[1046952] = sub_46C3E0(
+                                                                     *(int *)&byte_5D4594[1046860],
+                                                                     8,
+                                                                     129,
+                                                                     26,
+                                                                     32,
+                                                                     32,
+                                                                     0);
+#else
                                 *(_DWORD *)&byte_5D4594[1046952] = sub_46C3E0(
                                                                      *(int *)&byte_5D4594[1046860],
                                                                      8,
@@ -10814,6 +11042,7 @@ int sub_45B9D0()
                                                                      30,
                                                                      30,
                                                                      0);
+#endif
                                 sub_46B430(*(_DWORD **)&byte_5D4594[1046952], sub_45CC10, sub_45CB30, 0);
                                 sub_46AC00(*(int *)&byte_5D4594[1046952], 1);
                                 *(_DWORD *)&byte_5D4594[1046956] = sub_46C3E0(0, 40, 0, 0, 30, 30, 0);
@@ -10924,6 +11153,22 @@ int __cdecl sub_45BD40(int a1)
   v1 = v66 - 24;
   v2 = v67 - 76;
   v3 = sub_43F320(0);
+#ifdef __3DS__
+  *(_DWORD *)&byte_5D4594[1046656] = nox_3ds_sb_row_h();
+  if ( *(_DWORD *)&byte_5D4594[1046868] == 2 || *(_DWORD *)&byte_5D4594[1046868] == 3 )
+    *(_DWORD *)&byte_5D4594[1046868] = *(_DWORD *)&byte_5D4594[1046872] ? 1 : 0;
+  {
+    int sb_cls = *(_DWORD *)&byte_5D4594[1047516]
+      ? (int)(unsigned char)*(_BYTE *)(*(_DWORD *)&byte_5D4594[1047516] + 2251)
+      : 0;
+    nox_3ds_sb_draw_book_bg(v66, v67, NOX_3DS_SB_W, NOX_3DS_SB_H,
+                            *(_DWORD *)&byte_5D4594[1046868], sb_cls,
+                            *(_DWORD *)&byte_587000[132132]);
+  }
+  sub_434390(*(int *)&byte_5D4594[1046880]);
+  (void)v1;
+  (void)v2;
+#else
   *(_DWORD *)&byte_5D4594[1046656] = v3 + 2;
   sub_434390(*(int *)&byte_5D4594[1046880]);
   sub_47D2C0(*(int *)&byte_5D4594[1046856], v1, v2);
@@ -10941,18 +11186,28 @@ int __cdecl sub_45BD40(int a1)
     sub_4BE6D0(*(int *)&byte_5D4594[1046924], v1, v2);
     goto LABEL_75;
   }
+#endif
   if ( *(_DWORD *)&byte_587000[132132] )
   {
     v4 = *(_DWORD *)&byte_5D4594[1046936];
+#ifdef __3DS__
+    *(_DWORD *)WideCharStr = nox_3ds_sb_rows_per_page();
+#else
     *(_DWORD *)WideCharStr = 141 / *(_DWORD *)&byte_5D4594[1046656] - 1;
+#endif
     if ( !*(_DWORD *)&byte_5D4594[1046936] )
     {
       sub_46AC00(*(int *)&byte_5D4594[1046944], 1);
       v4 = *(_DWORD *)&byte_5D4594[1046936];
     }
     v5 = 0;
+#ifdef __3DS__
+    v6 = v66 + NOX_3DS_SB_LPAGE_X + NOX_3DS_SB_PAGE_W / 2;
+    v7 = v67 + NOX_3DS_SB_LIST_TOP;
+#else
     v6 = v66 + 78;
     v7 = v67 + 19;
+#endif
     if ( 2 * *(_DWORD *)WideCharStr > 0 )
     {
       while ( 1 )
@@ -10962,8 +11217,13 @@ int __cdecl sub_45BD40(int a1)
           break;
         if ( v5 == *(_DWORD *)WideCharStr )
         {
+#ifdef __3DS__
+          v6 = v66 + NOX_3DS_SB_RPAGE_X + NOX_3DS_SB_PAGE_W / 2;
+          v7 = v67 + NOX_3DS_SB_LIST_TOP;
+#else
           v6 = v66 + 199;
           v7 = v67 + 19;
+#endif
         }
         sub_434390(*(int *)&byte_5D4594[1046880]);
         v9 = *(_BYTE *)(*(_DWORD *)&byte_5D4594[1047516] + 2251);
@@ -10990,12 +11250,17 @@ int __cdecl sub_45BD40(int a1)
         (void)v13;
 #ifdef __3DS__
         {
-          sub_43F840(0, v10, &v65, 0, 128);
-          v62 = v7;
+          uint16_t ell_buf[96];
+          const uint16_t *draw_str = nox_3ds_ui_fit_ellipsis(0, v10, ell_buf, 96, NOX_3DS_SB_PAGE_W - 6);
+          sub_43F840(0, (unsigned __int16 *)draw_str, &v65, 0, NOX_3DS_SB_PAGE_W);
+          v62 = v7 + (*(_DWORD *)&byte_5D4594[1046656] - v3) / 2;
           v60 = v6 - v65 / 2;
+          if ( v60 < v6 - NOX_3DS_SB_PAGE_W / 2 )
+            v60 = v6 - NOX_3DS_SB_PAGE_W / 2;
           nox_3ds_clip_guard_t idx_cg;
-          if ( nox_3ds_clip_push(&idx_cg, v6 - 56, v62, 112, *(_DWORD *)&byte_5D4594[1046656]) )
-            sub_43F6E0(0, v11, v60, v62);
+          if ( nox_3ds_clip_push(&idx_cg, v6 - NOX_3DS_SB_PAGE_W / 2, v7,
+                                 NOX_3DS_SB_PAGE_W, *(_DWORD *)&byte_5D4594[1046656]) )
+            sub_43F6E0(0, (__int16 *)draw_str, v60, v62);
           nox_3ds_clip_pop(&idx_cg);
         }
 #else
@@ -11014,7 +11279,11 @@ int __cdecl sub_45BD40(int a1)
   }
   if ( *(_DWORD *)&byte_5D4594[1046868] == 1 )
   {
+#ifdef __3DS__
+    v14 = v67 + 66;
+#else
     v14 = v67 + 51;
+#endif
     v15 = sub_40F1D0((char *)&byte_587000[132380], 0, (const char *)&byte_587000[132344], 978);
     nox_swprintf(v71, (const wchar_t *)&byte_587000[132388], v15);
     v16 = sub_427460(*(_DWORD *)&byte_5D4594[4 * *(_DWORD *)&byte_5D4594[1046932] + 1046960]) - 1;
@@ -11055,10 +11324,26 @@ int __cdecl sub_45BD40(int a1)
       && (*(_DWORD *)(*(_DWORD *)&byte_5D4594[1047516] + 4232) || sub_40A5C0(0x2000) && !sub_40A5C0(4096)) )
     {
       sub_43F840(0, v71, &v70, 0, 0);
+#ifdef __3DS__
+      sub_43FAF0(0, v71, (NOX_3DS_SB_PAGE_W - v70) / 2 + v66 + NOX_3DS_SB_LPAGE_X, v14, NOX_3DS_SB_PAGE_W, 0);
+#else
       sub_43FAF0(0, v71, (108 - v70) / 2 + v66 + 24, v14, 128, 0);
+#endif
     }
-    v23 = v14 + v3 + 2;
+    v23 = v14 + v3 + 4;
     v24 = (unsigned __int16 *)sub_427240(*(_DWORD *)&byte_5D4594[4 * *(_DWORD *)&byte_5D4594[1046932] + 1046960]);
+#ifdef __3DS__
+    sub_43FA80(0, v24, &v70, &v68, NOX_3DS_SB_PAGE_W - 8);
+    if ( v68 <= v3 )
+      v25 = (NOX_3DS_SB_PAGE_W - v70) / 2 + v66 + NOX_3DS_SB_LPAGE_X;
+    else
+      v25 = v66 + NOX_3DS_SB_LPAGE_X + 4;
+    v55 = v25;
+    v26 = (_WORD *)v24;
+    sub_43FD80(0, v26, v55, v23, NOX_3DS_SB_PAGE_W - 8, 0);
+    v63 = v23 + v20 + v68 + 6;
+    v61 = (NOX_3DS_SB_PAGE_W - v18) / 2 + v66 + NOX_3DS_SB_LPAGE_X;
+#else
     sub_43FA80(0, v24, &v70, &v68, 108);
     if ( v68 <= v3 )
       v25 = (108 - v70) / 2 + v66 + 24;
@@ -11069,6 +11354,7 @@ int __cdecl sub_45BD40(int a1)
     sub_43FD80(0, v26, v55, v23, 128, 0);
     v63 = v23 + v20 + v68 + 2;
     v61 = (108 - v18) / 2 + v66 + 24;
+#endif
     v27 = sub_427400(*(_DWORD *)&byte_5D4594[4 * *(_DWORD *)&byte_5D4594[1046932] + 1046960]);
     sub_47D2C0(v27, v61, v63);
     v28 = (unsigned __int16 *)sub_4272E0(*(_DWORD *)&byte_5D4594[4 * *(_DWORD *)&byte_5D4594[1046932] + 1046960]);
@@ -11076,9 +11362,15 @@ int __cdecl sub_45BD40(int a1)
     v30 = v67 + 52;
     if ( v28 )
     {
+#ifdef __3DS__
+      sub_43F840(0, v28, 0, WideCharStr, NOX_3DS_SB_DESC_W - 10);
+      v31 = *(_DWORD *)WideCharStr;
+      v32 = v66 + NOX_3DS_SB_DESC_X + 2;
+#else
       sub_43F840(0, v28, 0, WideCharStr, 88);
       v31 = *(_DWORD *)WideCharStr;
       v32 = v66 + 153;
+#endif
       goto LABEL_53;
     }
   }
@@ -11088,6 +11380,17 @@ int __cdecl sub_45BD40(int a1)
     {
       sub_425450(*(_DWORD *)&byte_5D4594[4 * *(_DWORD *)&byte_5D4594[1046932] + 1046960]);
       v33 = (unsigned __int16 *)sub_425260(*(_DWORD *)&byte_5D4594[4 * *(_DWORD *)&byte_5D4594[1046932] + 1046960]);
+#ifdef __3DS__
+      sub_43FA80(0, v33, &v70, &v68, NOX_3DS_SB_PAGE_W - 8);
+      if ( v68 <= v3 )
+        v34 = (NOX_3DS_SB_PAGE_W - v70) / 2 + v66 + NOX_3DS_SB_LPAGE_X;
+      else
+        v34 = v66 + NOX_3DS_SB_LPAGE_X + 4;
+      v58 = v67 + 72;
+      v56 = v34;
+      v35 = (_WORD *)v33;
+      sub_43FD80(0, v35, v56, v58, NOX_3DS_SB_PAGE_W - 8, 0);
+#else
       sub_43FA80(0, v33, &v70, &v68, 108);
       if ( v68 <= v3 )
         v34 = (108 - v70) / 2 + v66 + 24;
@@ -11097,22 +11400,49 @@ int __cdecl sub_45BD40(int a1)
       v56 = v34;
       v35 = (_WORD *)v33;
       sub_43FD80(0, v35, v56, v58, 128, 0);
+#endif
       v36 = (unsigned __int16 *)sub_4252F0(*(_DWORD *)&byte_5D4594[4 * *(_DWORD *)&byte_5D4594[1046932] + 1046960]);
       v29 = v36;
       v30 = v67 + 52;
       if ( !v36 )
         goto LABEL_75;
+#ifdef __3DS__
+      sub_43F840(0, v36, 0, WideCharStr, NOX_3DS_SB_DESC_W - 10);
+      v31 = *(_DWORD *)WideCharStr;
+      v32 = v66 + NOX_3DS_SB_DESC_X + 2;
+#else
       sub_43F840(0, v36, 0, WideCharStr, 88);
       v31 = *(_DWORD *)WideCharStr;
       v32 = v66 + 153;
+#endif
 LABEL_53:
+#ifdef __3DS__
+      v37 = (NOX_3DS_SB_DESC_H - v31) / 2 + v67 + NOX_3DS_SB_DESC_Y;
+      if ( v37 > v67 + 76 )
+        v37 = v67 + 76;
+      goto LABEL_74;
+#else
       v37 = (141 - v31) / 2 + v67 + 17;
       if ( v37 > v30 )
         goto LABEL_73;
       goto LABEL_74;
+#endif
     }
     v38 = sub_424A70(*(_DWORD *)&byte_5D4594[4 * *(_DWORD *)&byte_5D4594[1046932] + 1046960]);
     v39 = (unsigned __int16 *)sub_424930(*(_DWORD *)&byte_5D4594[4 * *(_DWORD *)&byte_5D4594[1046932] + 1046960]);
+#ifdef __3DS__
+    sub_43FA80(0, v39, &v65, &v68, NOX_3DS_SB_PAGE_W - 8);
+    if ( v68 <= v3 )
+      v40 = (NOX_3DS_SB_PAGE_W - v65) / 2 + v66 + NOX_3DS_SB_LPAGE_X;
+    else
+      v40 = v66 + NOX_3DS_SB_LPAGE_X + 4;
+    v41 = v67 + 70;
+    v59 = v67 + 70;
+    v57 = v40;
+    v42 = (_WORD *)v39;
+    sub_43FD80(0, v42, v57, v59, NOX_3DS_SB_PAGE_W - 8, 0);
+    v43 = v41 + v68 + 8;
+#else
     sub_43FA80(0, v39, &v65, &v68, 108);
     if ( v68 <= v3 )
       v40 = (108 - v65) / 2 + v66 + 24;
@@ -11124,6 +11454,7 @@ LABEL_53:
     v42 = (_WORD *)v39;
     sub_43FD80(0, v42, v57, v59, 128, 0);
     v43 = v41 + v68 + 2;
+#endif
     v44 = sub_4249A0(*(_DWORD *)&byte_5D4594[4 * *(_DWORD *)&byte_5D4594[1046932] + 1046960], 1);
     v45 = sub_40F1D0((char *)&byte_587000[132564], 0, (const char *)&byte_587000[132528], 1115);
     nox_swprintf(v71, (const wchar_t *)&byte_587000[132576], v45);
@@ -11144,35 +11475,60 @@ LABEL_53:
     }
     sub_43F840(0, v71, &v65, 0, 0);
     v46 = v43 + 2;
+#ifdef __3DS__
+    sub_43FAF0(0, v71, (NOX_3DS_SB_PAGE_W - v65) / 2 + v66 + NOX_3DS_SB_LPAGE_X, v46, NOX_3DS_SB_PAGE_W, 0);
+    v47 = v46 + v3 + 8;
+#else
     sub_43FAF0(0, v71, (108 - v65) / 2 + v66 + 24, v46, 128, 0);
     v47 = v46 + v3 + 2;
+#endif
     if ( v38 & 0x100 )
     {
       v48 = sub_40F1D0((char *)&byte_587000[132628], 0, (const char *)&byte_587000[132592], 1173);
       sub_43F840(0, v48, &v65, 0, 0);
+#ifdef __3DS__
+      sub_43FAF0(0, v48, (NOX_3DS_SB_PAGE_W - v65) / 2 + v66 + NOX_3DS_SB_LPAGE_X, v47, NOX_3DS_SB_PAGE_W, 0);
+      v47 += v3 + 4;
+#else
       sub_43FAF0(0, v48, (108 - v65) / 2 + v66 + 24, v47, 128, 0);
       v47 += v3;
+#endif
     }
     if ( v38 & 4 )
     {
       v49 = sub_40F1D0((char *)&byte_587000[132680], 0, (const char *)&byte_587000[132644], 1181);
       sub_43F840(0, v49, &v65, 0, 0);
+#ifdef __3DS__
+      sub_43FAF0(0, v49, (NOX_3DS_SB_PAGE_W - v65) / 2 + v66 + NOX_3DS_SB_LPAGE_X, v47, NOX_3DS_SB_PAGE_W, 0);
+      v47 += v3 + 4;
+#else
       sub_43FAF0(0, v49, (108 - v65) / 2 + v66 + 24, v47, 128, 0);
       v47 += v3;
+#endif
     }
     if ( v38 & 8 )
     {
       v50 = sub_40F1D0((char *)&byte_587000[132732], 0, (const char *)&byte_587000[132696], 1189);
       sub_43F840(0, v50, &v65, 0, 0);
+#ifdef __3DS__
+      sub_43FAF0(0, v50, (NOX_3DS_SB_PAGE_W - v65) / 2 + v66 + NOX_3DS_SB_LPAGE_X, v47, NOX_3DS_SB_PAGE_W, 0);
+      v47 += v3 + 4;
+#else
       sub_43FAF0(0, v50, (108 - v65) / 2 + v66 + 24, v47, 128, 0);
       v47 += v3;
+#endif
     }
     if ( v38 & 0x20 )
     {
       v51 = sub_40F1D0((char *)&byte_587000[132784], 0, (const char *)&byte_587000[132748], 1197);
       sub_43F840(0, v51, &v65, 0, 0);
+#ifdef __3DS__
+      sub_43FAF0(0, v51, (NOX_3DS_SB_PAGE_W - v65) / 2 + v66 + NOX_3DS_SB_LPAGE_X, v47, NOX_3DS_SB_PAGE_W, 0);
+      v47 += v3 + 4;
+#else
       sub_43FAF0(0, v51, (108 - v65) / 2 + v66 + 24, v47, 128, 0);
       v47 += v3;
+#endif
     }
     v64 = *(_DWORD *)(*(_DWORD *)&byte_5D4594[1047516]
                     + 4 * *(_DWORD *)&byte_5D4594[4 * *(_DWORD *)&byte_5D4594[1046932] + 1046960]
@@ -11180,20 +11536,23 @@ LABEL_53:
     v52 = sub_40F1D0((char *)&byte_587000[132836], 0, (const char *)&byte_587000[132800], 1206);
     nox_swprintf(v71, v52, v64);
     sub_43F840(0, v71, &v65, 0, 0);
+#ifdef __3DS__
+    sub_43FAF0(0, v71, (NOX_3DS_SB_PAGE_W - v65) / 2 + v66 + NOX_3DS_SB_LPAGE_X, v3 + v47, NOX_3DS_SB_PAGE_W, 0);
+#else
     sub_43FAF0(0, v71, (108 - v65) / 2 + v66 + 24, v3 + v47, 128, 0);
+#endif
     v53 = (unsigned __int16 *)sub_424A30(*(_DWORD *)&byte_5D4594[4 * *(_DWORD *)&byte_5D4594[1046932] + 1046960]);
     v29 = v53;
     v30 = v67 + 52;
     if ( v53 )
     {
-      sub_43F840(0, v53, 0, WideCharStr, 88);
-      v32 = v66 + 153;
-      v37 = (141 - *(_DWORD *)WideCharStr) / 2 + v67 + 17;
-      if ( v37 > v30 )
-LABEL_73:
-        v37 = v30;
-LABEL_74:
 #ifdef __3DS__
+      sub_43F840(0, v53, 0, WideCharStr, NOX_3DS_SB_DESC_W - 10);
+      v32 = v66 + NOX_3DS_SB_DESC_X + 2;
+      v37 = (NOX_3DS_SB_DESC_H - *(_DWORD *)WideCharStr) / 2 + v67 + NOX_3DS_SB_DESC_Y;
+      if ( v37 > v67 + 76 )
+        v37 = v67 + 76;
+LABEL_74:
       {
         static int s_last_spell_id = -1;
         static int s_last_book_mode = -1;
@@ -11206,10 +11565,10 @@ LABEL_74:
           s_last_book_mode = cur_mode;
         }
         int desc_h = *(int *)WideCharStr;
-        int pane_x = v66 + 151;
-        int pane_y = v67 + 17;
-        int pane_w = 96;
-        int pane_h = 140;
+        int pane_x = v66 + NOX_3DS_SB_DESC_X;
+        int pane_y = v67 + NOX_3DS_SB_DESC_Y;
+        int pane_w = NOX_3DS_SB_DESC_W;
+        int pane_h = NOX_3DS_SB_DESC_H;
         int sy = nox_3ds_ui_scroll_update_region(0x5350424Bu, pane_x, pane_y, pane_w, pane_h, desc_h, true);
         if ( desc_h > pane_h )
           v37 = pane_y + 2 - sy;
@@ -11217,10 +11576,17 @@ LABEL_74:
           v37 = pane_y;
         nox_3ds_clip_guard_t desc_cg;
         if ( nox_3ds_clip_push(&desc_cg, pane_x, pane_y, pane_w - 6, pane_h) )
-          sub_43FAF0(0, v29, v32, v37, 88, 0);
+          sub_43FAF0(0, v29, v32, v37, NOX_3DS_SB_DESC_W - 10, 0);
         nox_3ds_clip_pop(&desc_cg);
       }
 #else
+      sub_43F840(0, v53, 0, WideCharStr, 88);
+      v32 = v66 + 153;
+      v37 = (141 - *(_DWORD *)WideCharStr) / 2 + v67 + 17;
+      if ( v37 > v30 )
+LABEL_73:
+        v37 = v30;
+LABEL_74:
       sub_43FAF0(0, v29, v32, v37, 92, 0);
 #endif
       goto LABEL_75;
@@ -11714,7 +12080,12 @@ int *__cdecl sub_45D200(int *a1, int a2, int2 *a3)
   int v5; // ecx
 
   sub_45AD70(1);
+#ifdef __3DS__
+  sub_46A9B0(*(_DWORD **)&byte_5D4594[1046860], NOX_3DS_SB_X, NOX_3DS_SB_Y);
+  (void)a3;
+#else
   sub_46A9B0(*(_DWORD **)&byte_5D4594[1046860], a3->field_0, a3->field_4);
+#endif
   result = a1;
   if ( a1 == (int *)2 || a1 == (int *)4 )
   {
@@ -23730,9 +24101,20 @@ int __cdecl sub_46C370(_DWORD *a1)
     if ( nox_3ds_ui_panel_begin(a1, &v3ds_pg) )
     {
       for ( i = (_DWORD *)a1[100]; i; i = (_DWORD *)i[97] )
-        sub_46C370(i);
+      {
+        if ( !v3ds_pg.has_pinned || !nox_3ds_ui_panel_child_is_pinned(&v3ds_pg, i) )
+          sub_46C370(i);
+      }
     }
     nox_3ds_ui_panel_end(a1, &v3ds_pg);
+    if ( v3ds_pg.has_pinned )
+    {
+      for ( i = (_DWORD *)a1[100]; i; i = (_DWORD *)i[97] )
+      {
+        if ( nox_3ds_ui_panel_child_is_pinned(&v3ds_pg, i) )
+          sub_46C370(i);
+      }
+    }
 #else
     for ( i = (_DWORD *)a1[100]; i; i = (_DWORD *)i[97] )
       sub_46C370(i);
@@ -46176,9 +46558,20 @@ int __cdecl sub_489550(_DWORD *a1, _DWORD *a2)
 #ifdef __3DS__
       int mh = v5;
       sub_43F840(v4[50], *v3, &v13, (_DWORD *)&mh, v12);
-      int dx = (v12 > v13) ? ((v12 - v13) / 2) : 0;
-      int dy = (mh > v5) ? (v11 + (int)v2[3] / 2 - mh / 2) : v6;
-      sub_43FAF0(v4[50], *v3, (int)a1 + dx, dy, v12, 0);
+      if ( mh > (int)v2[3] + 4 && v2[3] <= 22 )
+      {
+        uint16_t ell_buf[128];
+        const uint16_t *ds = nox_3ds_ui_fit_ellipsis(v4[50], *v3, ell_buf, 128, v12);
+        sub_43F840(v4[50], (unsigned __int16 *)ds, &v13, 0, 0);
+        int dx = (v12 > v13) ? ((v12 - v13) / 2) : 0;
+        sub_43FAF0(v4[50], (_WORD *)ds, (int)a1 + dx, v6, v12, 0);
+      }
+      else
+      {
+        int dx = (v12 > v13) ? ((v12 - v13) / 2) : 0;
+        int dy = (mh > v5) ? (v11 + (int)v2[3] / 2 - mh / 2) : v6;
+        sub_43FAF0(v4[50], *v3, (int)a1 + dx, dy, v12, 0);
+      }
 #else
       sub_43F840(v4[50], *v3, &v13, 0, 0);
       v9 = v4[50];
@@ -46188,7 +46581,20 @@ int __cdecl sub_489550(_DWORD *a1, _DWORD *a2)
     }
     else
     {
+#ifdef __3DS__
+      if ( v2[3] <= 22 )
+      {
+        uint16_t ell_buf[128];
+        const uint16_t *ds = nox_3ds_ui_fit_ellipsis(v4[50], *v3, ell_buf, 128, v12 - 2);
+        sub_43FAF0(v4[50], (_WORD *)ds, (int)a1 + 2, v6, v12, 0);
+      }
+      else
+      {
+        sub_43FAF0(v4[50], *v3, (int)a1 + 2, v6, v12, 0);
+      }
+#else
       sub_43FAF0(v4[50], *v3, (int)a1 + 2, v6, v12, 0);
+#endif
     }
   }
   sub_43F670(0);
@@ -59537,6 +59943,9 @@ _DWORD *sub_49C560()
     nox_swprintf((wchar_t *)&byte_5D4594[1304400], v4, v7);
     nox_wcscat((wchar_t *)&byte_5D4594[1304656], (const wchar_t *)&byte_5D4594[1304400]);
     sub_46B490((int)v2, 16385, (int)&byte_5D4594[1304656], 0);
+#ifdef __3DS__
+    nox_3ds_ui_expand_modal_dialog(*(_DWORD **)&byte_5D4594[1305680]);
+#endif
     if ( sub_40A5C0(1) )
     {
       if ( !sub_459DA0() )
