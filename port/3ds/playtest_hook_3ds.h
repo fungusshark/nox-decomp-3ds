@@ -31,9 +31,9 @@ extern "C" {
 /* State header flags (u16). */
 #define NOX_PT_F_MENU_SHELL     0x0001u /* main menu shell active */
 #define NOX_PT_F_MAP_LOADED     0x0002u /* sub_43C700() */
-#define NOX_PT_F_IN_WORLD       0x0004u /* map loaded, no modal/menu/chat (input_3ds world mode) */
+#define NOX_PT_F_IN_WORLD       0x0004u /* map loaded, no modal/menu/chat/NPC dialog */
 #define NOX_PT_F_IS_MP          0x0008u /* network mode WIFI (multiplayer session/menus) */
-#define NOX_PT_F_IS_HOST        0x0010u /* sub_40A5C0(1): this process runs the server */
+#define NOX_PT_F_IS_HOST        0x0010u /* sub_40A5C0(1): local server running (also in menus/Solo; not an MP signal) */
 #define NOX_PT_F_PLAYER_VALID   0x0020u /* local player drawable found in client list */
 #define NOX_PT_F_OBSERVER       0x0040u /* playerInfo+3680 bit0 */
 #define NOX_PT_F_HP_ZERO        0x0080u /* hp==0 while player valid (death heuristic, UNVERIFIED) */
@@ -59,7 +59,7 @@ typedef struct __attribute__((packed)) nox_pt_ability {
     uint8_t  id;            /* ability id (1 Charge, 2 War Cry, 3 Harpoon, 4 Tread, 5 Eye) */
     uint8_t  ready;         /* client copy of the server ready flag */
     uint8_t  active;        /* nonzero if the active mask is set */
-    uint8_t  reserved;
+    uint8_t  level;         /* record +16, opcode 0xCD; 0 = not learned (ready forced 0) */
     uint16_t cd_remaining;  /* frames, 0 when ready (derived; UNVERIFIED) */
     uint16_t cd_total;      /* frames, sub_4252D0(id) */
 } nox_pt_ability_t;
@@ -75,8 +75,8 @@ typedef struct __attribute__((packed)) nox_pt_state_hdr {
     uint8_t  player_class;  /* playerInfo+2251, 0xFF unknown */
     uint8_t  n_obj;         /* objects following the header */
     uint32_t net_id;        /* byte_5D4594[2616328] */
-    uint16_t hp, hp_max;    /* byte_5D4594[1093040/1093044] */
-    uint16_t mp, mp_max;    /* byte_5D4594[1093060/1093064] */
+    uint16_t hp, hp_max;    /* byte_5D4594[1093040/1093044]; 0xFFFF if !PLAYER_VALID */
+    uint16_t mp, mp_max;    /* byte_5D4594[1093060/1093064]; 0xFFFF if !PLAYER_VALID */
     int32_t  x, y;          /* drawable +12/+16 world px */
     uint8_t  facing;        /* drawable +297 */
     uint8_t  anim;          /* drawable +276 low byte (UNVERIFIED semantics) */

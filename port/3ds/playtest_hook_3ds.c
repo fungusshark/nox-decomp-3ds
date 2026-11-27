@@ -44,6 +44,7 @@ extern int   sub_40A5C0(int a1);        /* game flags test; 1 = hosting server *
 extern char *sub_40A4C0(void);          /* host's server name (byte_5D4594[1324]) */
 extern char *sub_437250(void);          /* gameplay viewport rect [l,t,r,b] */
 extern int   sub_4984B0(int a1);        /* client draw-visibility test (view polygon/LOS), read-only */
+extern int   sub_46ACC0(int a1);        /* GUI window hidden check: 1 = hidden */
 
 extern void nox_ctrl_set_thumbstick_move(int active, int orientation, int move_cmd, double mag);
 extern void nox_ctrl_set_radial_aim(int active, int orientation, int screen_x, int screen_y);
@@ -57,6 +58,8 @@ extern void nox_ctrl_inject_key_scancode(int sdl_scancode, int down);
 #define OFF_LOCAL_PLAYERINFO  2618908u  /* GAME2.c:50261 */
 #define OFF_CLIENT_FRAME      2598000u  /* GAME2.c:50174 */
 #define OFF_DRAWABLE_LIST     1046572u  /* sub_45A060 / sub_45A6F0, GAME2.c:9801 */
+#define OFF_PLAYER_DR_LIST    1046600u  /* client player-drawable list, next +416 (sub_459ED0) */
+#define OFF_NPC_DIALOG_WND    1123524u  /* Dialog.wnd root (sub_479... GAME2.c:34289) */
 #define OFF_HP_CUR            1093040u  /* sub_470C80, GAME2.c:27447 */
 #define OFF_HP_MAX            1093044u
 #define OFF_MP_CUR            1093060u  /* sub_470CE0, GAME2.c:27483 */
@@ -80,6 +83,7 @@ extern void nox_ctrl_inject_key_scancode(int sdl_scancode, int down);
 #define DR_ANIM               276u
 #define DR_FACING             297u
 #define DR_NEXT               368u
+#define DR_PLAYER_NEXT        416u
 #define DR_CLASS_NONNET       0x20400000u /* skipped by sub_45A6F0 netcode lookup */
 #define ENCH_INVISIBLE_BIT    (1u << 0)   /* GAME2.c:30355 renderer skips invisible non-allies */
 #define ENCH_INFRAVISION_BIT  (1u << 21)  /* GAME2.c:32368 local enchant 21 reveals invisible */
@@ -89,7 +93,8 @@ extern void nox_ctrl_inject_key_scancode(int sdl_scancode, int down);
 #define PT_DEFAULT_LISTEN     47801u
 #define PT_MAX_CMDS_PER_FRAME 4
 #define PT_MAX_TAPS           8
-#define PT_MAX_WALK           2048
+#define PT_MAX_WALK           2048      /* exported object list walk cap */
+#define PT_MAX_PLAYER_WALK    256       /* player-drawable list walk cap */
 #define PT_TTL_DEFAULT_MS     250u
 #define PT_TTL_MAX_MS         2000u
 #define PT_AIM_DIR_RADIUS     64.0f
@@ -400,17 +405,30 @@ static void read_view(pt_view_t *v)
     }
 }
 
+/* Find the local player's drawable via the short client player-drawable list
+ * (byte_5D4594[1046600], next +416; every class&4 drawable is linked at
+ * creation by sub_459ED0, GAME2.c:9654, and unlinked in sub_45A4E0). The full
+ * drawable list can exceed any sane cap in Quest maps. The cached pointer
+ * byte_5D4594[2614252] is not used: it is refreshed only in the draw pass and
+ * can dangle after a purge between draws. */
 static uint32_t find_local_drawable(uint32_t netcode)
 {
-    if (!netcode)
-        return 0;
-    uint32_t d = rd_u32(OFF_DRAWABLE_LIST);
-    for (int n = 0; d && n < PT_MAX_WALK; ++n) {
-        if (!(dr_u32(d, DR_CLASS) & DR_CLASS_NONNET) && dr_u32(d, DR_NETCODE) == netcode)
+    if (!netcode || !rd_u32(OFF_DRAWABLE_LIST))
+        return 0; /* no drawables (pool torn down / not in a map) */
+    uint32_t d = rd_u32(OFF_PLAYER_DR_LIST);
+    for (int n = 0; d && n < PT_MAX_PLAYER_WALK; ++n) {
+        uint32_t cls = dr_u32(d, DR_CLASS);
+        if ((cls & 4u) && !(cls & DR_CLASS_NONNET) && dr_u32(d, DR_NETCODE) == netcode)
             return d;
-        d = dr_u32(d, DR_NEXT);
+        d = dr_u32(d, DR_PLAYER_NEXT);
     }
     return 0;
+}
+
+static bool npc_dialog_open(void)
+{
+    uint32_t w = rd_u32(OFF_NPC_DIALOG_WND);
+    return w && sub_46ACC0((int)w) != 1;
 }
 
 static uint32_t collect_objects(uint32_t self_d, const pt_view_t *v, uint32_t max, bool clip,
@@ -508,32 +526,38 @@ static void publish_state(uint16_t flags_in, uint32_t netcode, uint32_t self_d, 
 
     uint32_t n_obj = 0;
     if (flags & NOX_PT_F_MAP_LOADED) {
-        h.hp = clamp_u16(rd_s32(OFF_HP_CUR));
-        h.hp_max = clamp_u16(rd_s32(OFF_HP_MAX));
-        h.mp = clamp_u16(rd_s32(OFF_MP_CUR));
-        h.mp_max = clamp_u16(rd_s32(OFF_MP_MAX));
         if (self_d) {
+            h.hp = clamp_u16(rd_s32(OFF_HP_CUR));
+            h.hp_max = clamp_u16(rd_s32(OFF_HP_MAX));
+            h.mp = clamp_u16(rd_s32(OFF_MP_CUR));
+            h.mp_max = clamp_u16(rd_s32(OFF_MP_MAX));
             h.x = v->x;
             h.y = v->y;
             h.facing = dr_u8(self_d, DR_FACING);
             h.anim = (uint8_t)dr_u32(self_d, DR_ANIM);
             if (h.hp == 0)
                 flags |= NOX_PT_F_HP_ZERO;
+        } else {
+            /* player_valid=0: mark local-player fields invalid, not stale. */
+            h.hp = h.hp_max = h.mp = h.mp_max = 0xFFFF;
+            h.facing = h.anim = 0xFF;
         }
 
         uint32_t now_frame = h.game_frame;
         for (uint32_t i = 0; i < NOX_PT_NUM_ABILITIES; ++i) {
             uint32_t rec = OFF_ABILITY_BASE + 24u * (i + 1u);
             uint32_t id = rd_u32(rec + 0);
-            uint32_t ready = rd_u32(rec + 8);
+            uint32_t level = rd_u32(rec + 16); /* set by opcode 0xCD sub_4611E0; 0 = not learned */
+            uint32_t ready = level ? rd_u32(rec + 8) : 0;
             nox_pt_ability_t *ab = &h.abilities[i];
             ab->id = (uint8_t)id;
+            ab->level = (uint8_t)(level > 0xFE ? 0xFE : level);
             ab->ready = ready ? 1 : 0;
             ab->active = rd_u32(rec + 12) ? 1 : 0;
             if (id >= 1 && id <= 5) {
                 int32_t total = rd_s32(OFF_ABILITY_DELAY + 52u * id);
                 ab->cd_total = clamp_u16(total);
-                if (!ready) {
+                if (level && !ready) {
                     int32_t elapsed = (int32_t)(now_frame - rd_u32(rec + 20));
                     ab->cd_remaining = clamp_u16(total - elapsed);
                 }
@@ -777,7 +801,9 @@ void nox_pt_frame(void)
     uint16_t flags = 0;
     bool menu_shell = rd_u32(OFF_MENU_SHELL) != 0;
     bool map_loaded = !menu_shell && sub_43C700();
-    bool in_world = map_loaded && nox_3ds_input_is_world_mode();
+    /* Hook-only: also treat an open NPC Dialog.wnd as not in-world. The
+     * human pad path is left unchanged (players need A/B etc. in dialogs). */
+    bool in_world = map_loaded && nox_3ds_input_is_world_mode() && !npc_dialog_open();
     bool is_mp = session_is_mp();
     /* Session boundary: back to the menu shell after a map, or out of MP. */
     if ((menu_shell && g_was_map_loaded) || !is_mp)
@@ -807,7 +833,7 @@ void nox_pt_frame(void)
     }
 
     /* MP gating: commands only if the server opted in via "[bots-ok]". */
-    bool cmds_active = g_cfg.commands && in_world && (!is_mp || bots_ok);
+    bool cmds_active = g_cfg.commands && in_world && self_d && (!is_mp || bots_ok);
     drain_cmds(cmds_active, now_ms);
     if (cmds_active) {
         flags |= NOX_PT_F_CMDS_ACTIVE;

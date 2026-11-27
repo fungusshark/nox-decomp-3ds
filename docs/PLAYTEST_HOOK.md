@@ -84,14 +84,28 @@ The C `_Static_assert`s and the Python `*_SIZE` constants must agree. Run
 | 45 | u8 | anim | drawable +276 (low byte) |
 | 46 | u16 | obj_size = 20 | |
 | 48 | i32 x2 | cam_x, cam_y | `[811084/811088]` |
-| 56 | 5 x 8 B | abilities: `u8 id, u8 ready, u8 active, u8 0, u16 cd_remaining, u16 cd_total` | record `1047764 + 24*a` (a = 1..5): id +0, ready +8, active mask +12, start frame +20; total = `sub_4252D0(id)` |
+| 56 | 5 x 8 B | abilities: `u8 id, u8 ready, u8 active, u8 level, u16 cd_remaining, u16 cd_total` | record `1047764 + 24*a` (a = 1..5): id +0, ready +8, active mask +12, level +16, start frame +20; total = `sub_4252D0(id)` |
 
 `cd_remaining = cd_total - (game_frame - start)` while not ready, else 0.
 
+`level` is record +16. It is written only by opcode `0xCD` (`sub_4611E0`,
+GAME2.c:15307, which also mirrors it to playerInfo `+3696 + 4*id`). Warrior
+class init (GAME2.c:13509) copies the default table at `byte_587000[133536]`,
+which has level 0 for all five abilities and ready 1. So `level == 0` means not
+learned. In that case the hook reports `ready = 0` and `cd_remaining = 0`.
+(Runtime-unverified: check that a learned ability shows `level >= 1`.)
+
+When `player_valid` is 0, hp, hp_max, mp and mp_max are `0xFFFF`, facing and
+anim are `0xFF`, and x and y are 0. The Python client decodes these as `null`.
+
 Flags: `0x1` menu_shell, `0x2` map_loaded, `0x4` in_world
-(`nox_3ds_input_is_world_mode()`: map loaded, no menu, modal, chat or dialog),
-`0x8` is_mp (net mode WIFI and not Solo, `!sub_40A5C0(0x800)`), `0x10` is_host (`sub_40A5C0(1)`), `0x20`
-player_valid, `0x40` observer (playerInfo+3680 bit0), `0x80` hp_zero, `0x100`
+(`nox_3ds_input_is_world_mode()`: map loaded, no menu, modal or chat; **and**,
+hook-only, the NPC `Dialog.wnd` at `byte_5D4594[1123524]` is absent or hidden
+(`sub_46ACC0(w) == 1`)),
+`0x8` is_mp (net mode WIFI and not Solo, `!sub_40A5C0(0x800)`), `0x10` is_host (`sub_40A5C0(1)`: a local server is running.
+It is set in the menu shell and in Solo too, so it is **not** an MP signal. The
+MP gate uses only `is_mp`), `0x20` player_valid (local drawable found; required for
+`cmds_active`), `0x40` observer (playerInfo+3680 bit0), `0x80` hp_zero, `0x100`
 bots_ok, `0x200` cmds_active, `0x400` obj_truncated.
 
 Object (20 B): `u16 net_id (+128), u16 type_id (+108), u32 class_flags (+112),
@@ -219,7 +233,19 @@ Still unverified:
   measurable difference (Solo Quest 21 FPS without cfg vs. 25-26 FPS with the hook, on llvmpipe;
   the noise is larger than any hook cost).
 
-Known issues found in verification:
+Known issues found in verification (fixed after this run; re-verify):
+- Fix: the local player is now found by walking the short client
+  player-drawable list `byte_5D4594[1046600]` (next +416, capped at 256), not
+  the full drawable list. `PT_MAX_WALK` now applies only to the exported object
+  list. Commands also need `player_valid`. HP/MP are not exported without it.
+  The 450/450 HP value may be real Quest HP; re-check once `player_valid` is set.
+- Fix: an NPC `Dialog.wnd` now clears `in_world` and `cmds_active`. This
+  applies inside the hook only: the human pad path is unchanged, because a
+  human needs the buttons and touch while talking. Note:
+  `sub_459DA0` (`byte_5D4594[1046492]`) is **not** the NPC dialog, despite
+  the comment in `input_3ds.c`. It is a different in-game window (GAME2.c:7789).
+  Shop/trade windows are not gated yet (TODO).
+- Fix: unlearned abilities now report `level = 0, ready = 0`.
 - **Solo Quest: the player is not found.** On Quest stage 1 the drawable list
   is longer than `PT_MAX_WALK` (2048). `find_local_drawable()` gives up, so
   `player_valid = 0`, `x = y = 0` and `obj_truncated` are set while the hero is

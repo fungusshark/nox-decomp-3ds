@@ -110,9 +110,10 @@ def decode_state(data):
     abilities = []
     ab = f[21:]
     for i in range(NUM_ABILITIES):
-        aid, ready, active, _res, cd_rem, cd_total = ab[i * 6:(i + 1) * 6]
+        aid, ready, active, level, cd_rem, cd_total = ab[i * 6:(i + 1) * 6]
         abilities.append({
             "slot": i + 1, "id": aid, "name": ABILITY_NAMES.get(aid),
+            "level": level, "learned": level > 0,
             "ready": bool(ready), "active": bool(active),
             "cd_remaining": cd_rem, "cd_total": cd_total,
         })
@@ -126,6 +127,11 @@ def decode_state(data):
             "x": o_x, "y": o_y, "facing": o_face,
             "hp_pct": None if o_hp == 0xFF else o_hp,
         })
+    valid = bool(flags & 0x0020)
+
+    def opt(v, bad):
+        return v if valid and v != bad else None
+
     return {
         "seq": seq, "game_frame": game_frame, "hook_tick": hook_tick,
         "flags": flags, "flag_names": [n for b, n in FLAGS.items() if flags & b],
@@ -134,8 +140,11 @@ def decode_state(data):
             "net_id": net_id,
             "class_id": None if pclass == 0xFF else pclass,
             "class": CLASSES.get(pclass),
-            "hp": hp, "hp_max": hp_max, "mp": mp, "mp_max": mp_max,
-            "x": x, "y": y, "facing": facing, "anim": anim,
+            "valid": valid,
+            "hp": opt(hp, 0xFFFF), "hp_max": opt(hp_max, 0xFFFF),
+            "mp": opt(mp, 0xFFFF), "mp_max": opt(mp_max, 0xFFFF),
+            "x": x if valid else None, "y": y if valid else None,
+            "facing": opt(facing, 0xFF), "anim": opt(anim, 0xFF),
             "abilities": abilities,
         },
         "camera": {"x": cam_x, "y": cam_y},
@@ -147,10 +156,10 @@ def encode_state(seq=1, game_frame=0, hook_tick=0, flags=0, pclass=0xFF, net_id=
                  hp=0, hp_max=0, mp=0, mp_max=0, x=0, y=0, facing=0, anim=0,
                  cam_x=0, cam_y=0, abilities=(), objects=()):
     """Encoder mirroring publish_state() (used by --selftest and fakes)."""
-    ab = list(abilities) + [(0, 0, 0, 0, 0)] * (NUM_ABILITIES - len(abilities))
+    ab = list(abilities) + [(0, 0, 0, 0, 0, 0)] * (NUM_ABILITIES - len(abilities))
     ab_flat = []
-    for aid, ready, active, cd_rem, cd_total in ab[:NUM_ABILITIES]:
-        ab_flat += [aid, ready, active, 0, cd_rem, cd_total]
+    for aid, ready, active, level, cd_rem, cd_total in ab[:NUM_ABILITIES]:
+        ab_flat += [aid, ready, active, level, cd_rem, cd_total]
     objs = list(objects)[:MAX_OBJECTS]
     hdr = struct.pack(HDR_FMT, MAGIC_STATE, VERSION, HDR_SIZE, seq, game_frame, hook_tick,
                       flags, pclass, len(objs), net_id, hp, hp_max, mp, mp_max, x, y,
@@ -229,8 +238,8 @@ def build_cmd(args):
 
 
 def selftest():
-    abilities = [(1, 1, 0, 0, 300), (2, 0, 1, 120, 300), (3, 0, 0, 75, 150),
-                 (4, 1, 0, 0, 30), (5, 0, 0, 600, 600)]
+    abilities = [(1, 1, 0, 1, 0, 300), (2, 0, 1, 2, 120, 300), (3, 0, 0, 1, 75, 150),
+                 (4, 1, 0, 3, 0, 30), (5, 0, 0, 0, 0, 600)]
     objects = [(17, 1234, 4, 100, -20, 3, 0xFF), (900, 77, 0x2000000, 5000, 6000, 0, 50)]
     pkt = encode_state(seq=7, game_frame=123456, hook_tick=99, flags=0x0226, pclass=0,
                        net_id=42, hp=150, hp_max=150, mp=0, mp_max=0, x=2048, y=-1,
@@ -246,12 +255,17 @@ def selftest():
     assert p["class"] == "warrior"
     assert [(x["id"], x["ready"], x["cd_remaining"], x["cd_total"]) for x in p["abilities"]] == \
         [(1, True, 0, 300), (2, False, 120, 300), (3, False, 75, 150), (4, True, 0, 30),
-         (5, False, 600, 600)]
+         (5, False, 0, 600)]
+    assert [x["learned"] for x in p["abilities"]] == [True, True, True, True, False]
+    assert p["abilities"][1]["level"] == 2 and pkt[56 + 8 + 3] == 2  # level byte offset
     assert st["camera"] == {"x": 1900, "y": -120}
     o = st["objects"]
     assert (o[0]["net_id"], o[0]["type_id"], o[0]["is_player"], o[0]["x"], o[0]["y"],
             o[0]["hp_pct"]) == (17, 1234, True, 100, -20, None)
     assert (o[1]["class_flags"], o[1]["hp_pct"]) == (0x2000000, 50)
+    inv = decode_state(encode_state(flags=0x0006, hp=0xFFFF, hp_max=0xFFFF, mp=0xFFFF,
+                                    mp_max=0xFFFF, facing=0xFF, anim=0xFF))
+    assert not inv["player"]["valid"] and inv["player"]["hp"] is None and inv["player"]["x"] is None
     # Byte-level spot checks of the C layout.
     assert pkt[0:4] == b"NXPT"
     assert struct.unpack_from("<I", pkt, 24)[0] == 42          # net_id offset
