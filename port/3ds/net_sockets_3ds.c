@@ -43,6 +43,16 @@
 /* libctru sys/socket.h rejects any send/recv flag > 0x4 with EOPNOTSUPP. */
 #define SOC_SAFE_MSG_FLAGS(f)   (((f) & (MSG_OOB | MSG_PEEK)) | MSG_DONTWAIT)
 
+/* Real 3DS soc:u CTRPollFD bitmasks (libctru <poll.h> misdefines POLLERR=0x08 / POLLNVAL=0x20). */
+#define CTR_SOC_POLLRDNORM      0x01
+#define CTR_SOC_POLLRDBAND      0x02
+#define CTR_SOC_POLLPRI         0x04
+#define CTR_SOC_POLLWRNORM      0x08
+#define CTR_SOC_POLLWRBAND      0x10
+#define CTR_SOC_POLLERR         0x20
+#define CTR_SOC_POLLHUP         0x40
+#define CTR_SOC_POLLNVAL        0x80
+
 #define NOX_FIONREAD            0x4004667Fu
 #define NOX_FIONBIO             0x8004667Eu
 
@@ -66,14 +76,18 @@
 #define NOX_WSAEHOSTUNREACH     10065u
 
 typedef struct {
-    bool     in_use;
-    int      real_fd;
-    int      type;
-    bool     nonblocking;
-    bool     broadcast;
-    uint16_t bound_port;
-    uint32_t last_rx_tick_ms;
-    uint32_t rx_count_this_tick;
+    bool               in_use;
+    int                real_fd;
+    int                type;
+    bool               nonblocking;
+    bool               broadcast;
+    uint16_t           bound_port;
+    uint32_t           last_rx_tick_ms;
+    uint32_t           rx_count_this_tick;
+    bool               rx_valid;
+    uint16_t           rx_len;
+    struct sockaddr_in rx_from;
+    uint8_t            rx_buf[2048];
 } soc_slot_t;
 
 extern unsigned int last_socket_error;
@@ -402,6 +416,8 @@ static int sockets_closesocket(int vfd)
     int rfd = s->real_fd;
     s->in_use = false;
     s->real_fd = -1;
+    s->rx_valid = false;
+    s->rx_len = 0;
     soc_unlock();
 
     int r = close(rfd);
@@ -437,27 +453,54 @@ static int sockets_bind(int vfd, const void *addr, unsigned int addrlen)
     }
     int rfd = s->real_fd;
     int stype = s->type;
+    s->rx_valid = false;
+    s->rx_len = 0;
     soc_unlock();
 
-    int r = bind(rfd, (const struct sockaddr *)&sin, (socklen_t)sizeof(sin));
-    if (r < 0 && stype == SOCK_DGRAM && sin.sin_port == 0) {
-        static uint16_t s_next_ephem = 49152u;
-        int orig_errno = errno;
+    int r = -1;
+    if (stype == SOCK_DGRAM && sin.sin_port == 0) {
+        /* Proactively pick a verified unused ephemeral UDP port so soc:u never leaves port=0. */
+        static uint16_t s_ephem_cursor = 49152u;
+        int last_err = EADDRINUSE;
         for (uint16_t k = 0; k < 64u; ++k) {
-            uint16_t ephem = (uint16_t)(49152u + (((s_next_ephem - 49152u) + k) & 63u));
-            sin.sin_port = htons(ephem);
+            uint16_t cand = 0;
+            soc_lock();
+            for (uint16_t probe = 0; probe < 1024u; ++probe) {
+                uint16_t p = (uint16_t)(49152u + (((s_ephem_cursor - 49152u) + probe) & 1023u));
+                bool used = false;
+                for (int i = 0; i < MAX_SOC_SOCKS; ++i) {
+                    if (g_soc_slots[i].in_use && g_soc_slots[i].bound_port == p) {
+                        used = true;
+                        break;
+                    }
+                }
+                if (!used) {
+                    cand = p;
+                    s_ephem_cursor = (uint16_t)(49152u + (((p - 49152u) + 1u) & 1023u));
+                    break;
+                }
+            }
+            soc_unlock();
+            if (cand == 0u)
+                cand = (uint16_t)(49152u + (k & 1023u));
+
+            sin.sin_port = htons(cand);
             r = bind(rfd, (const struct sockaddr *)&sin, (socklen_t)sizeof(sin));
             if (r == 0) {
-                s_next_ephem = (uint16_t)(49152u + (((ephem - 49152u) + 1u) & 63u));
-                nox_3ds_net_log("[net3ds:soc] bind(port=0) fallback succeeded on ephemeral UDP port %u",
-                                (unsigned)ephem);
+                nox_3ds_net_log("[net3ds:soc] bind vfd=%d rfd=%d explicit_ephem=%u -> rc=0",
+                                vfd, rfd, (unsigned)cand);
+                break;
+            }
+            last_err = (errno > 0) ? errno : -errno;
+            if (last_err != EADDRINUSE) {
+                errno = last_err;
                 break;
             }
         }
-        if (r < 0) {
-            sin.sin_port = 0;
-            errno = orig_errno;
-        }
+        if (r < 0 && last_err == EADDRINUSE)
+            errno = last_err;
+    } else {
+        r = bind(rfd, (const struct sockaddr *)&sin, (socklen_t)sizeof(sin));
     }
     if (r < 0) {
         last_socket_error = wsa_from_errno(errno);
@@ -597,10 +640,67 @@ static int sockets_ioctlsocket(int vfd, long cmd, unsigned long *argp)
             return 0;
         }
 
-        /* libctru lacks <sys/ioctl.h> / ioctl(FIONREAD); emulate via zero-timeout poll(). */
+        if (stype == SOCK_DGRAM) {
+            /* Drain transient ICMP unreachable errors (e.g. from LAN sweep probes) and
+             * prefetch one datagram directly so we never depend on libctru's broken <poll.h>. */
+            soc_lock();
+            s = lookup_slot(vfd);
+            if (s && s->rx_valid) {
+                uint16_t n = s->rx_len;
+                soc_unlock();
+                *argp = (unsigned long)(n > 0u ? n : 1u);
+                last_socket_error = 0;
+                return 0;
+            }
+            soc_unlock();
+
+            uint8_t tmp_buf[2048];
+            struct sockaddr_in tmp_from;
+            ssize_t got = -1;
+            int got_err = EWOULDBLOCK;
+            for (int tries = 0; tries < 16; ++tries) {
+                socklen_t fl = (socklen_t)sizeof(tmp_from);
+                memset(&tmp_from, 0, sizeof(tmp_from));
+                ssize_t r = recvfrom(rfd, tmp_buf, sizeof(tmp_buf), MSG_DONTWAIT,
+                                     (struct sockaddr *)&tmp_from, &fl);
+                if (r >= 0) {
+                    got = r;
+                    break;
+                }
+                int e = (errno > 0) ? errno : -errno;
+                if (e == 0 && r < -1)
+                    e = -(int)r;
+                if (e == ECONNRESET || e == ECONNREFUSED || e == EHOSTUNREACH || e == ENETUNREACH)
+                    continue;
+                got_err = e;
+                break;
+            }
+            if (got >= 0) {
+                soc_lock();
+                s = lookup_slot(vfd);
+                if (s) {
+                    size_t store_n = ((size_t)got <= sizeof(s->rx_buf)) ? (size_t)got : sizeof(s->rx_buf);
+                    if (store_n > 0u)
+                        memcpy(s->rx_buf, tmp_buf, store_n);
+                    s->rx_len = (uint16_t)store_n;
+                    s->rx_from = tmp_from;
+                    s->rx_valid = true;
+                }
+                soc_unlock();
+                *argp = (unsigned long)(got > 0 ? got : 1);
+                last_socket_error = 0;
+                return 0;
+            }
+            (void)got_err;
+            *argp = 0ul;
+            last_socket_error = 0;
+            return 0;
+        }
+
+        /* SOCK_STREAM: probe readability with hardware-true soc:u CTRPollFD masks. */
         struct pollfd pfd;
         pfd.fd = rfd;
-        pfd.events = POLLIN;
+        pfd.events = CTR_SOC_POLLRDNORM | CTR_SOC_POLLRDBAND;
         pfd.revents = 0;
 
         int pr = poll(&pfd, 1, 0);
@@ -609,7 +709,8 @@ static int sockets_ioctlsocket(int vfd, long cmd, unsigned long *argp)
             *argp = 0ul;
             return -1;
         }
-        if (pr == 0 || (pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) || !(pfd.revents & POLLIN)) {
+        if (pr == 0 || (pfd.revents & (CTR_SOC_POLLERR | CTR_SOC_POLLNVAL)) ||
+            !(pfd.revents & (CTR_SOC_POLLRDNORM | CTR_SOC_POLLRDBAND))) {
             *argp = 0ul;
             last_socket_error = 0;
             return 0;
@@ -727,28 +828,65 @@ static int sockets_recvfrom(int vfd, void *buf, unsigned int len, int flags,
     }
     int rfd = s->real_fd;
     int stype = s->type;
+    if (stype == SOCK_DGRAM && s->rx_valid) {
+        size_t copy_n = (len < (size_t)s->rx_len) ? len : (size_t)s->rx_len;
+        if (copy_n > 0u)
+            memcpy(buf, s->rx_buf, copy_n);
+        if (from && fromlen && *fromlen >= sizeof(struct sockaddr_in)) {
+            struct sockaddr_in src_copy = s->rx_from;
+            src_copy.sin_family = AF_INET;
+            memset(src_copy.sin_zero, 0, sizeof(src_copy.sin_zero));
+            memcpy(from, &src_copy, sizeof(src_copy));
+            *fromlen = (unsigned int)sizeof(struct sockaddr_in);
+        }
+        if (!(flags & MSG_PEEK)) {
+            s->rx_valid = false;
+            s->rx_len = 0;
+            uint32_t now_ms = nox_3ds_get_ticks_ms();
+            if (s->rx_count_this_tick == 0u ||
+                (uint32_t)(now_ms - s->last_rx_tick_ms) >= SOC_DRAIN_WINDOW_MS) {
+                s->last_rx_tick_ms = now_ms;
+                s->rx_count_this_tick = 1u;
+            } else {
+                s->rx_count_this_tick++;
+            }
+        }
+        soc_unlock();
+        last_socket_error = 0;
+        return (int)copy_n;
+    }
     soc_unlock();
 
     struct sockaddr_in src_sin;
     socklen_t src_len = (socklen_t)sizeof(src_sin);
-
-    ssize_t r = recvfrom(rfd, buf, (size_t)len, SOC_SAFE_MSG_FLAGS(flags),
-                         from ? (struct sockaddr *)&src_sin : NULL,
-                         from ? &src_len : NULL);
-    if (r < 0 && stype == SOCK_DGRAM && (errno == ECONNRESET || errno == ECONNREFUSED)) {
-        /* Unconnected UDP sockets may receive ICMP Port Unreachable during LAN scans;
-         * retry once and otherwise report EWOULDBLOCK so the drain loop does not abort. */
+    ssize_t r = -1;
+    int max_tries = (stype == SOCK_DGRAM) ? 16 : 1;
+    for (int tries = 0; tries < max_tries; ++tries) {
         src_len = (socklen_t)sizeof(src_sin);
+        memset(&src_sin, 0, sizeof(src_sin));
         r = recvfrom(rfd, buf, (size_t)len, SOC_SAFE_MSG_FLAGS(flags),
                      from ? (struct sockaddr *)&src_sin : NULL,
                      from ? &src_len : NULL);
-        if (r < 0 && (errno == ECONNRESET || errno == ECONNREFUSED)) {
+        if (r >= 0)
+            break;
+        int e = (errno > 0) ? errno : -errno;
+        if (e == 0 && r < -1)
+            e = -(int)r;
+        if (stype == SOCK_DGRAM &&
+            (e == ECONNRESET || e == ECONNREFUSED || e == EHOSTUNREACH || e == ENETUNREACH)) {
+            errno = EWOULDBLOCK;
+            continue;
+        }
+        break;
+    }
+    if (r < 0) {
+        int e = (errno > 0) ? errno : -errno;
+        if (stype == SOCK_DGRAM &&
+            (e == ECONNRESET || e == ECONNREFUSED || e == EHOSTUNREACH || e == ENETUNREACH)) {
             last_socket_error = NOX_WSAEWOULDBLOCK;
             errno = EWOULDBLOCK;
             return -1;
         }
-    }
-    if (r < 0) {
         last_socket_error = wsa_from_errno(errno);
         return -1;
     }
@@ -945,6 +1083,18 @@ static int sockets_recv(int vfd, void *buf, unsigned int len, int flags)
         return -1;
     }
     int rfd = s->real_fd;
+    if (s->type == SOCK_DGRAM && s->rx_valid) {
+        size_t copy_n = (len < (size_t)s->rx_len) ? len : (size_t)s->rx_len;
+        if (copy_n > 0u)
+            memcpy(buf, s->rx_buf, copy_n);
+        if (!(flags & MSG_PEEK)) {
+            s->rx_valid = false;
+            s->rx_len = 0;
+        }
+        soc_unlock();
+        last_socket_error = 0;
+        return (int)copy_n;
+    }
     soc_unlock();
 
     ssize_t r = recv(rfd, buf, (size_t)len, SOC_SAFE_MSG_FLAGS(flags));

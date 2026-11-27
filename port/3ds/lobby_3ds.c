@@ -36,6 +36,15 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+/* Real 3DS soc:u CTRPollFD bitmasks (libctru <poll.h> misdefines POLLERR=0x08 / POLLNVAL=0x20). */
+#define CTR_SOC_POLLRDNORM 0x01
+#define CTR_SOC_POLLRDBAND 0x02
+#define CTR_SOC_POLLWRNORM 0x08
+#define CTR_SOC_POLLWRBAND 0x10
+#define CTR_SOC_POLLERR    0x20
+#define CTR_SOC_POLLHUP    0x40
+#define CTR_SOC_POLLNVAL   0x80
+
 /* Externs from engine / port */
 extern unsigned int sub_554040(int a1, int a2, char *a3);
 extern int nox_env_truthy(const char *s);
@@ -1176,7 +1185,7 @@ static int soc_connect_with_timeout(struct in_addr ip, uint16_t port, int timeou
         uint32_t poll_t0 = nox_3ds_get_ticks_ms();
         struct pollfd pfd;
         pfd.fd = fd;
-        pfd.events = POLLOUT;
+        pfd.events = CTR_SOC_POLLWRNORM | CTR_SOC_POLLWRBAND;
         pfd.revents = 0;
         int pr = poll(&pfd, 1, slice);
         if (pr < 0 && errno != EINTR) {
@@ -1184,7 +1193,8 @@ static int soc_connect_with_timeout(struct in_addr ip, uint16_t port, int timeou
             close(fd);
             return -1;
         }
-        if (pr > 0 && (pfd.revents & (POLLERR | POLLHUP | POLLNVAL))) {
+        if (pr > 0 && (pfd.revents & (CTR_SOC_POLLERR | CTR_SOC_POLLHUP | CTR_SOC_POLLNVAL)) &&
+            !(pfd.revents & (CTR_SOC_POLLWRNORM | CTR_SOC_POLLWRBAND))) {
             nox_3ds_net_log("[lobby3ds] soc connect failed revents=0x%x", (unsigned)pfd.revents);
             close(fd);
             return -1;
@@ -1242,9 +1252,11 @@ static bool soc_send_all(int fd, const char *buf, size_t len, int timeout_ms)
 
         struct pollfd pfd;
         pfd.fd = fd;
-        pfd.events = POLLOUT;
+        pfd.events = CTR_SOC_POLLWRNORM | CTR_SOC_POLLWRBAND;
         pfd.revents = 0;
         poll(&pfd, 1, 200);
+        if (pfd.revents & (CTR_SOC_POLLERR | CTR_SOC_POLLNVAL))
+            return false;
     }
     return sent == len;
 }
@@ -1348,11 +1360,16 @@ static int soc_http_request(const char *method, const char *initial_url,
 
             struct pollfd pfd;
             pfd.fd = fd;
-            pfd.events = POLLIN;
+            pfd.events = CTR_SOC_POLLRDNORM | CTR_SOC_POLLRDBAND;
             pfd.revents = 0;
             int pr = poll(&pfd, 1, slice);
             if (pr < 0 && errno != EINTR)
                 break;
+
+            if (pr > 0 && !(pfd.revents & (CTR_SOC_POLLRDNORM | CTR_SOC_POLLRDBAND)) &&
+                (pfd.revents & (CTR_SOC_POLLERR | CTR_SOC_POLLHUP | CTR_SOC_POLLNVAL))) {
+                break;
+            }
 
             ssize_t r = recv(fd, raw + raw_len, (raw_cap - 1u) - raw_len, MSG_DONTWAIT);
             if (r > 0) {
