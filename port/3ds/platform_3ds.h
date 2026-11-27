@@ -257,6 +257,11 @@ void nox_3ds_font_render_screen(int screen,
                                 float draw_x, float draw_y, float dst_w, float dst_h,
                                 float gamma);
 void nox_3ds_font_set_show_version(bool show);
+void nox_3ds_ui_queue_scrollbar(int screen, int x, int y, int w, int h,
+                                int total_h, int view_h, int scroll_y,
+                                bool highlighted);
+
+#include "ui_scroll_3ds.h"
 
 /* =========================================================================
  * 4. Hybrid Dual-Screen Touch, C-Stick & Button Input Bridge (input_3ds.c)

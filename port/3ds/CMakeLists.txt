@@ -23,8 +23,16 @@ if (NOT NOX_3DS_VERSION)
         set(NOX_3DS_VERSION "3ds-dev")
     endif()
 endif()
-file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/nox_3ds_version.h"
-    "#pragma once\n#define NOX_3DS_VERSION_STR \"${NOX_3DS_VERSION}\"\n")
+set(_nox_ver_hdr "${CMAKE_CURRENT_BINARY_DIR}/nox_3ds_version.h")
+set(_nox_ver_content "#pragma once\n#define NOX_3DS_VERSION_STR \"${NOX_3DS_VERSION}\"\n")
+set(_nox_ver_prev "")
+if (EXISTS "${_nox_ver_hdr}")
+    file(READ "${_nox_ver_hdr}" _nox_ver_prev)
+endif()
+if (NOT _nox_ver_prev STREQUAL _nox_ver_content)
+    file(WRITE "${_nox_ver_hdr}" "${_nox_ver_content}")
+    file(REMOVE "${CMAKE_CURRENT_BINARY_DIR}/nox.smdh")
+endif()
 
 # Mandatory ARM11 / Nox decomp diagnostics and ABI flags
 # NOTE: -fsigned-char is CRITICAL on ARM (where plain char defaults to unsigned)
@@ -75,6 +83,7 @@ add_executable(nox
     "${CMAKE_CURRENT_SOURCE_DIR}/audio_3ds.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/video_3ds.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/font_3ds.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/ui_scroll_3ds.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/input_3ds.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/swkbd_3ds.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/net_3ds.c"
@@ -93,6 +102,7 @@ set_source_files_properties(
     "${CMAKE_CURRENT_SOURCE_DIR}/audio_3ds.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/video_3ds.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/font_3ds.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/ui_scroll_3ds.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/input_3ds.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/swkbd_3ds.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/net_3ds.c"
@@ -123,8 +133,8 @@ target_link_libraries(nox PRIVATE
 
 # Generate custom 3DS metadata & icon (nox.smdh)
 ctr_generate_smdh("${CMAKE_CURRENT_BINARY_DIR}/nox.smdh"
-    NAME "Nox 3DS"
-    DESCRIPTION "Nox (Westwood Studios) source port"
+    NAME "Nox 3DS (${NOX_3DS_VERSION})"
+    DESCRIPTION "Nox (Westwood Studios) port - ${NOX_3DS_VERSION}"
     AUTHOR "Fungus Shark / Giraffepus"
     ICON "${CMAKE_CURRENT_SOURCE_DIR}/icon.png"
 )
@@ -143,6 +153,17 @@ add_custom_target(copy-nox-3dsx ALL
     DEPENDS nox_3dsx
     COMMENT "Copying nox.3dsx to /mnt/c/3ds-dev/nox.3dsx"
 )
+
+# Automatically stage tagged/release builds to ~/nox_prebuilts/ when present
+if (DEFINED ENV{HOME} AND EXISTS "$ENV{HOME}/nox_prebuilts" AND NOX_3DS_VERSION MATCHES "^v[0-9]")
+    add_custom_command(TARGET copy-nox-3dsx POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_CURRENT_BINARY_DIR}/nox.3dsx"
+            "$ENV{HOME}/nox_prebuilts/nox-${NOX_3DS_VERSION}.3dsx"
+        COMMAND chmod +x "$ENV{HOME}/nox_prebuilts/nox-${NOX_3DS_VERSION}.3dsx"
+        COMMENT "Staging nox-${NOX_3DS_VERSION}.3dsx to $ENV{HOME}/nox_prebuilts/"
+    )
+endif()
 
 # Wireless hardware push via 3dslink
 find_program(CTR_3DSLINK_EXE NAMES 3dslink HINTS "${DEVKITPRO}/tools/bin")

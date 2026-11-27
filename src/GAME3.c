@@ -757,6 +757,8 @@ static void nox_3ds_listbox_sync_metrics(_DWORD *wnd)
     {
       int h = lh_single;
       sub_43F840(wnd[59], (unsigned __int16 *)(item + 4), 0, (_DWORD *)&h, wrap_w);
+      if ( h > 252 )
+        h = 252;
       *(uint8_t *)(item + 520) = (uint8_t)h;
     }
     *(uint8_t *)(item + 521) = want_tag;
@@ -1755,6 +1757,10 @@ int __cdecl sub_4A3AC0(wchar_t *a1, int a2, _DWORD *a3)
   else
   {
     sub_43F840(v3[59], v6, 0, &a3, v5);
+#ifdef __3DS__
+    if ( a3 > 252 )
+      a3 = 252;
+#endif
     *(_BYTE *)(*(_DWORD *)(v4 + 24) + 524 * *(__int16 *)(v4 + 46) + 520) = (_BYTE)a3;
   }
 #ifdef __3DS__
@@ -1954,6 +1960,9 @@ LABEL_38:
       ++v24;
     }
   }
+#ifdef __3DS__
+  nox_3ds_ui_scroll_sync_listbox(a1);
+#endif
   sub_49F860();
   sub_43F670(0);
   return 1;
@@ -2120,6 +2129,9 @@ LABEL_35:
       ++v26;
     }
   }
+#ifdef __3DS__
+  nox_3ds_ui_scroll_sync_listbox(a1);
+#endif
   sub_49F860();
   sub_43F670(0);
   return 1;
@@ -5243,12 +5255,21 @@ int __cdecl sub_4A8820(int a1, int a2)
   else if ( *(_DWORD *)(v2 + 68) != 0x80000000 )
   {
     int v3ds_w = *(_DWORD *)(v3 + 8);
+    int v3ds_y = v5 - v13 / 2 + 5;
 #ifdef __3DS__
     if ( nox_3ds_font_is_enabled() && nox_3ds_font_slot_from_ptr(*(_DWORD *)(v2 + 200)) != 1 )
-      v3ds_w = 0;
+    {
+      int avail_w = v3ds_w - 20;
+      if ( avail_w < 44 ) avail_w = v3ds_w;
+      int mh = v13;
+      sub_43F840(*(_DWORD *)(v2 + 200), (unsigned __int16 *)(v2 + 72), 0, (_DWORD *)&mh, avail_w);
+      v3ds_w = avail_w;
+      if ( mh > v13 )
+        v3ds_y = v5 + 5 - mh / 2;
+    }
 #endif
     sub_434390(*(_DWORD *)(v2 + 68));
-    sub_43FAF0(*(_DWORD *)(v2 + 200), (_WORD *)(v2 + 72), v4 + 14, v5 - v13 / 2 + 5, v3ds_w, 0);
+    sub_43FAF0(*(_DWORD *)(v2 + 200), (_WORD *)(v2 + 72), v4 + 14, v3ds_y, v3ds_w, 0);
   }
   sub_43F670(0);
   return 1;
@@ -5325,12 +5346,22 @@ int __cdecl sub_4A8A20(int a1, int a2)
     if ( v10 != 0x80000000 )
     {
       int v3ds_w = *(_DWORD *)(a1 + 8);
+      int v3ds_y = v14;
 #ifdef __3DS__
       if ( nox_3ds_font_is_enabled() && nox_3ds_font_slot_from_ptr(*(_DWORD *)(v2 + 200)) != 1 )
-        v3ds_w = 0;
+      {
+        int avail_w = v3ds_w - 32;
+        if ( avail_w < 44 ) avail_w = v3ds_w;
+        int lh = sub_43F320(*(_DWORD *)(v2 + 200));
+        int mh = lh;
+        sub_43F840(*(_DWORD *)(v2 + 200), (unsigned __int16 *)(v2 + 72), 0, (_DWORD *)&mh, avail_w);
+        v3ds_w = avail_w;
+        if ( mh > lh )
+          v3ds_y = v14 + lh / 2 - mh / 2;
+      }
 #endif
       sub_434390(v10);
-      sub_43FAF0(*(_DWORD *)(v2 + 200), (_WORD *)(v2 + 72), v13, v14, v3ds_w, 0);
+      sub_43FAF0(*(_DWORD *)(v2 + 200), (_WORD *)(v2 + 72), v13, v3ds_y, v3ds_w, 0);
     }
   }
   sub_43F670(0);
@@ -5499,12 +5530,22 @@ int __cdecl sub_4A8EA0(int a1, int a2)
     if ( (*(_DWORD *)(a1 + 4) & 0x2000) == 0x2000 )
       sub_43F670(1);
     int v3ds_w = *(_DWORD *)(a1 + 8);
+    int v3ds_y = v6;
 #ifdef __3DS__
     if ( nox_3ds_font_is_enabled() && nox_3ds_font_slot_from_ptr(*(_DWORD *)(v2 + 200)) != 1 )
-      v3ds_w = 0;
+    {
+      int avail_w = v3ds_w - 20;
+      if ( avail_w < 44 ) avail_w = v3ds_w;
+      int lh = sub_43F320(*(_DWORD *)(v2 + 200));
+      int mh = lh;
+      sub_43F840(*(_DWORD *)(v2 + 200), (unsigned __int16 *)(v2 + 72), 0, (_DWORD *)&mh, avail_w);
+      v3ds_w = avail_w;
+      if ( mh > lh )
+        v3ds_y = v4 + 5 - mh / 2;
+    }
 #endif
     sub_434390(*(_DWORD *)(v2 + 68));
-    sub_43FAF0(*(_DWORD *)(v2 + 200), (_WORD *)(v2 + 72), v7, v6, v3ds_w, 0);
+    sub_43FAF0(*(_DWORD *)(v2 + 200), (_WORD *)(v2 + 72), v7, v3ds_y, v3ds_w, 0);
     sub_43F670(0);
   }
   return 1;
@@ -5566,12 +5607,22 @@ LABEL_12:
     if ( (v3[1] & 0x2000) == 0x2000 )
       sub_43F670(1);
     int v3ds_w = v3[2];
+    int v3ds_y = v8;
 #ifdef __3DS__
     if ( nox_3ds_font_is_enabled() && nox_3ds_font_slot_from_ptr(*(_DWORD *)(v2 + 200)) != 1 )
-      v3ds_w = 0;
+    {
+      int avail_w = v3ds_w - 22;
+      if ( avail_w < 44 ) avail_w = v3ds_w;
+      int lh = sub_43F320(*(_DWORD *)(v2 + 200));
+      int mh = lh;
+      sub_43F840(*(_DWORD *)(v2 + 200), (unsigned __int16 *)(v2 + 72), 0, (_DWORD *)&mh, avail_w);
+      v3ds_w = avail_w;
+      if ( mh > lh )
+        v3ds_y = v5 + 5 - mh / 2;
+    }
 #endif
     sub_434390(*(_DWORD *)(v2 + 68));
-    sub_43FAF0(*(_DWORD *)(v2 + 200), (_WORD *)(v2 + 72), v9, v8, v3ds_w, 0);
+    sub_43FAF0(*(_DWORD *)(v2 + 200), (_WORD *)(v2 + 72), v9, v3ds_y, v3ds_w, 0);
     sub_43F670(0);
   }
   return 1;
@@ -8353,7 +8404,10 @@ int __cdecl sub_4AD320(int a1)
   _DWORD *v10; // eax
 
   v1 = *(_DWORD *)&byte_587000[26048];
-#ifndef __3DS__
+#ifdef __3DS__
+  if ( v1 == 0 && sub_43AF70() != 1 && sub_43F320(0) > 10 )
+    v1 = 2;
+#else
   if ( sub_43F320(0) > 10 )
     v1 = 2;
 #endif
@@ -20310,7 +20364,10 @@ int sub_4BDFD0()
   v0 = sub_416640();
   v1 = *(_DWORD *)&byte_587000[26048];
   v2 = (int)v0;
-#ifndef __3DS__
+#ifdef __3DS__
+  if ( v1 == 0 && sub_43AF70() != 1 && sub_43F320(0) > 10 )
+    v1 = 2;
+#else
   if ( sub_43F320(0) > 10 )
     v1 = 2;
 #endif
