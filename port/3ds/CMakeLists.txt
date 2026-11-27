@@ -134,7 +134,7 @@ target_link_libraries(nox PRIVATE
 # Generate custom 3DS metadata & icon (nox.smdh)
 ctr_generate_smdh("${CMAKE_CURRENT_BINARY_DIR}/nox.smdh"
     NAME "Nox 3DS (${NOX_3DS_VERSION})"
-    DESCRIPTION "Nox (Westwood Studios) port - ${NOX_3DS_VERSION}"
+    DESCRIPTION "${NOX_3DS_VERSION} - Nox (Westwood Studios) source port"
     AUTHOR "Fungus Shark / Giraffepus"
     ICON "${CMAKE_CURRENT_SOURCE_DIR}/icon.png"
 )
@@ -144,15 +144,22 @@ ctr_create_3dsx(nox
     SMDH "${CMAKE_CURRENT_BINARY_DIR}/nox.smdh"
 )
 
-# Post-build copy to /mnt/c/3ds-dev/nox.3dsx for emulator / SD staging
-add_custom_target(copy-nox-3dsx ALL
-    COMMAND ${CMAKE_COMMAND} -E make_directory /mnt/c/3ds-dev
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${CMAKE_CURRENT_BINARY_DIR}/nox.3dsx"
-        "/mnt/c/3ds-dev/nox.3dsx"
-    DEPENDS nox_3dsx
-    COMMENT "Copying nox.3dsx to /mnt/c/3ds-dev/nox.3dsx"
-)
+# Optional post-build staging to /mnt/c/3ds-dev (WSL2) when present.
+# Named ~/nox_prebuilts/nox-<tag>.3dsx archives are staged explicitly by scripts/publish-3ds-prebuilt.sh
+# so switching branches never overwrites an archived tag from a cached CMakeCache.txt value.
+option(NOX_3DS_STAGE_WIN_DEV "Stage built nox.3dsx to /mnt/c/3ds-dev/nox.3dsx" ON)
+if (NOX_3DS_STAGE_WIN_DEV AND EXISTS "/mnt/c" AND IS_DIRECTORY "/mnt/c")
+    add_custom_target(copy-nox-3dsx ALL
+        COMMAND ${CMAKE_COMMAND} -E make_directory /mnt/c/3ds-dev
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_CURRENT_BINARY_DIR}/nox.3dsx"
+            "/mnt/c/3ds-dev/nox.3dsx"
+        DEPENDS nox_3dsx
+        COMMENT "Staging nox.3dsx to /mnt/c/3ds-dev/nox.3dsx"
+    )
+else()
+    add_custom_target(copy-nox-3dsx ALL DEPENDS nox_3dsx)
+endif()
 
 # Automatically stage tagged/release builds to ~/nox_prebuilts/ when present
 if (DEFINED ENV{HOME} AND EXISTS "$ENV{HOME}/nox_prebuilts" AND NOX_3DS_VERSION MATCHES "^v[0-9]")

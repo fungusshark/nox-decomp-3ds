@@ -1,6 +1,8 @@
 # Nintendo 3DS Hardware Learnings & Architectural Constraints (`nox-decomp-3ds`)
 
-> **Scope:** Hard-won hardware lessons verified across `v0.1.0`–`v0.2.7-3ds-hwfix` and the reverted `v0.3.0` optimization experiment on real Nintendo 3DS / New 3DS hardware (`ARM11 MPCore` + `PICA200` + `Horizon OS`), especially where real hardware differs sharply from Citra / Azahar emulation.
+> **Scope:** Hard-won hardware lessons verified across `v0.1.0`–`v0.2.9-fix-net` and the reverted `v0.3.0` optimization experiment on real Nintendo 3DS / New 3DS hardware (`ARM11 MPCore` + `PICA200` + `Horizon OS`), especially where real hardware differs sharply from Citra / Azahar emulation.
+>
+> **Companion Guide:** For the broader **OS/CPU/GPU/Networking pipeline comparison (Old 3DS vs. New 3DS vs. Switch)** and a **reusable POSIX / Console HAL blueprint** for future decomp ports, see [`CONSOLE_DECOMP_PORTING_GUIDE.md`](./CONSOLE_DECOMP_PORTING_GUIDE.md).
 
 ---
 

@@ -431,6 +431,7 @@ bool               nox_3ds_lobby_has_pending_work(void);
 void               nox_3ds_lobby_shutdown(void);
 void               nox_3ds_reset_join_ver_retry(void);
 int                nox_3ds_try_flip_join_proto_ver(void);
+void               nox_3ds_accept_join_peer_ip(uint32_t ip_be);
 void               nox_3ds_set_host_client_proto_ver(uint32_t ver);
 uint32_t           nox_3ds_get_host_client_proto_ver(void);
 void               nox_3ds_lobby_on_host_close(int sockfd);
