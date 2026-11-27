@@ -45,6 +45,9 @@ extern char *sub_40A4C0(void);          /* host's server name (byte_5D4594[1324]
 extern char *sub_437250(void);          /* gameplay viewport rect [l,t,r,b] */
 extern int   sub_4984B0(int a1);        /* client draw-visibility test (view polygon/LOS), read-only */
 extern int   sub_46ACC0(int a1);        /* GUI window hidden check: 1 = hidden */
+/* Client drawable spatial-grid walker (GAME2.c:58737): calls cb(drawable, arg)
+ * for every drawable in 128 px buckets overlapping rect {l,t,r,b}. Read-only. */
+extern void  sub_49AB00(void *rect4, void (*cb)(int, int), int arg);
 
 extern void nox_ctrl_set_thumbstick_move(int active, int orientation, int move_cmd, double mag);
 extern void nox_ctrl_set_radial_aim(int active, int orientation, int screen_x, int screen_y);
@@ -58,6 +61,8 @@ extern void nox_ctrl_inject_key_scancode(int sdl_scancode, int down);
 #define OFF_LOCAL_PLAYERINFO  2618908u  /* GAME2.c:50261 */
 #define OFF_CLIENT_FRAME      2598000u  /* GAME2.c:50174 */
 #define OFF_DRAWABLE_LIST     1046572u  /* sub_45A060 / sub_45A6F0, GAME2.c:9801 */
+#define OFF_DRAW_GRID         1301784u  /* int** grid[x][y] of bucket heads, chain +400 */
+#define OFF_DRAW_GRID_N       1301788u  /* grid dimension (buckets per axis) */
 #define OFF_PLAYER_DR_LIST    1046600u  /* client player-drawable list, next +416 (sub_459ED0) */
 #define OFF_NPC_DIALOG_WND    1123524u  /* Dialog.wnd root (sub_479... GAME2.c:34289) */
 #define OFF_HP_CUR            1093040u  /* sub_470C80, GAME2.c:27447 */
@@ -93,7 +98,7 @@ extern void nox_ctrl_inject_key_scancode(int sdl_scancode, int down);
 #define PT_DEFAULT_LISTEN     47801u
 #define PT_MAX_CMDS_PER_FRAME 4
 #define PT_MAX_TAPS           8
-#define PT_MAX_WALK           2048      /* exported object list walk cap */
+#define PT_MAX_VISITS         1024      /* per-publish drawable visit budget (spatial query) */
 #define PT_MAX_PLAYER_WALK    256       /* player-drawable list walk cap */
 #define PT_TTL_DEFAULT_MS     250u
 #define PT_TTL_MAX_MS         2000u
@@ -431,70 +436,107 @@ static bool npc_dialog_open(void)
     return w && sub_46ACC0((int)w) != 1;
 }
 
+/* Spatial query state for the sub_49AB00 callback (no allocation). */
+typedef struct {
+    uint32_t self_d, max, count, worst, visits;
+    int32_t  px, py, wx0, wy0, wx1, wy1;
+    bool     valid, clip, infravision, truncated;
+} pt_collect_t;
+static pt_collect_t g_col;
+
+static void collect_cb(int di, int unused)
+{
+    (void)unused;
+    pt_collect_t *c = &g_col;
+    uint32_t d = (uint32_t)di;
+    if (++c->visits > PT_MAX_VISITS) {
+        c->truncated = true; /* budget spent: keep honest, stop working */
+        return;
+    }
+    if (d == c->self_d)
+        return;
+    uint32_t cls = dr_u32(d, DR_CLASS);
+    if (cls & DR_CLASS_NONNET)
+        return;
+    int32_t x = dr_s32(d, DR_X), y = dr_s32(d, DR_Y);
+    if (c->clip && (x < c->wx0 || x > c->wx1 || y < c->wy0 || y > c->wy1))
+        return;
+    /* Invisible objects: the renderer hides them (GAME2.c:30355) unless
+     * allied; we drop them unless the local player has infravision. Allies
+     * are dropped too (conservative; ally test needs sub_418C80). */
+    if (!c->infravision && (dr_u32(d, DR_ENCHANT) & ENCH_INVISIBLE_BIT))
+        return;
+    /* Same draw-visibility test the renderer applies (GAME2.c:30306, 30849):
+     * view polygon / line of sight from the last frame. */
+    if (c->clip && !sub_4984B0((int)d))
+        return;
+
+    uint32_t tier = (cls & 4u) ? 0u : (cls & 2u) ? 1u : (cls & 1u) ? 2u : 3u;
+    int32_t dx = c->valid ? x - c->px : 0, dy = c->valid ? y - c->py : 0;
+    int64_t dd = (int64_t)dx * dx + (int64_t)dy * dy;
+    uint32_t d2 = dd > 0xFFFFFF ? 0xFFFFFFu : (uint32_t)dd;
+    uint32_t key = (tier << 24) | d2;
+
+    if (c->count < c->max) {
+        g_cand[c->count].key = key;
+        g_cand[c->count].ptr = d;
+        if (c->count == 0 || key > g_cand[c->worst].key) c->worst = c->count;
+        ++c->count;
+    } else {
+        c->truncated = true;
+        if (key < g_cand[c->worst].key) {
+            g_cand[c->worst].key = key;
+            g_cand[c->worst].ptr = d;
+            c->worst = 0;
+            for (uint32_t i = 1; i < c->count; ++i)
+                if (g_cand[i].key > g_cand[c->worst].key) c->worst = i;
+        }
+    }
+}
+
+/* Objects come from the client's own spatial grid (128 px buckets at
+ * byte_5D4594[1301784], size [1301788], chain next +400), queried with the
+ * same read-only walker the renderer uses to build its per-frame draw lists
+ * (sub_475560 via sub_49AB00, GAME2.c:30826). Only buckets overlapping the
+ * query rect are visited, so cost scales with nearby objects, not map size. */
 static uint32_t collect_objects(uint32_t self_d, const pt_view_t *v, uint32_t max, bool clip,
                                 bool *truncated)
 {
-    uint32_t count = 0, worst = 0;
     *truncated = false;
-    if (max == 0)
+    if (max == 0 || !rd_u32(OFF_DRAW_GRID) || rd_s32(OFF_DRAW_GRID_N) <= 0)
         return 0;
 
-    int32_t wx0 = v->cam_x, wy0 = v->cam_y;
-    int32_t wx1 = wx0 + (v->vp_r - v->vp_l), wy1 = wy0 + (v->vp_b - v->vp_t);
+    pt_collect_t *c = &g_col;
+    memset(c, 0, sizeof(*c));
+    c->self_d = self_d;
+    c->max = max;
+    c->valid = v->valid;
+    c->px = v->x;
+    c->py = v->y;
+    c->clip = clip;
+    c->infravision = self_d && (dr_u32(self_d, DR_ENCHANT) & ENCH_INFRAVISION_BIT);
+    int32_t vw = v->vp_r - v->vp_l, vh = v->vp_b - v->vp_t;
+    c->wx0 = v->cam_x;
+    c->wy0 = v->cam_y;
+    c->wx1 = v->cam_x + vw;
+    c->wy1 = v->cam_y + vh;
 
-    bool infravision = self_d && (dr_u32(self_d, DR_ENCHANT) & ENCH_INFRAVISION_BIT);
-
-    uint32_t d = rd_u32(OFF_DRAWABLE_LIST);
-    int n = 0;
-    for (; d && n < PT_MAX_WALK; ++n, d = dr_u32(d, DR_NEXT)) {
-        if (d == self_d)
-            continue;
-        uint32_t cls = dr_u32(d, DR_CLASS);
-        if (cls & DR_CLASS_NONNET)
-            continue;
-        int32_t x = dr_s32(d, DR_X), y = dr_s32(d, DR_Y);
-        if (clip && (x < wx0 || x > wx1 || y < wy0 || y > wy1))
-            continue;
-        /* Invisible objects: the renderer hides them (GAME2.c:30355) unless
-         * allied; we drop them unless the local player has infravision. Allies
-         * are dropped too (conservative; ally test needs sub_418C80). */
-        if (!infravision && (dr_u32(d, DR_ENCHANT) & ENCH_INVISIBLE_BIT))
-            continue;
-        /* Same draw-visibility test the renderer uses before drawing
-         * (GAME2.c:30306): view polygon / line of sight from the last frame. */
-        if (clip && !sub_4984B0((int)d))
-            continue;
-
-        uint32_t tier = (cls & 4u) ? 0u : (cls & 2u) ? 1u : (cls & 1u) ? 2u : 3u;
-        int32_t dx = v->valid ? x - v->x : 0, dy = v->valid ? y - v->y : 0;
-        int64_t dd = (int64_t)dx * dx + (int64_t)dy * dy;
-        uint32_t d2 = dd > 0xFFFFFF ? 0xFFFFFFu : (uint32_t)dd;
-        uint32_t key = (tier << 24) | d2;
-
-        if (count < max) {
-            g_cand[count].key = key;
-            g_cand[count].ptr = d;
-            if (count == 0 || key > g_cand[worst].key) worst = count;
-            ++count;
-        } else {
-            *truncated = true;
-            if (key < g_cand[worst].key) {
-                g_cand[worst].key = key;
-                g_cand[worst].ptr = d;
-                worst = 0;
-                for (uint32_t i = 1; i < count; ++i)
-                    if (g_cand[i].key > g_cand[worst].key) worst = i;
-            }
-        }
+    /* Query rect {l, t, r, b} like sub_4754F0: camera rect, +128 px at the
+     * bottom for tall sprites. Unclipped (Solo only): one extra view each side. */
+    int32_t q[4] = { c->wx0, c->wy0, c->wx1, c->wy1 + 128 };
+    if (!clip) {
+        q[0] -= vw; q[1] -= vh; q[2] += vw; q[3] += vh;
     }
-    if (d && n >= PT_MAX_WALK)
-        *truncated = true;
+    sub_49AB00(q, collect_cb, 0);
+
+    uint32_t count = c->count;
+    *truncated = c->truncated;
     /* insertion sort: nearest players first */
     for (uint32_t i = 1; i < count; ++i) {
-        pt_cand_t c = g_cand[i];
+        pt_cand_t cc = g_cand[i];
         uint32_t j = i;
-        while (j > 0 && g_cand[j - 1].key > c.key) { g_cand[j] = g_cand[j - 1]; --j; }
-        g_cand[j] = c;
+        while (j > 0 && g_cand[j - 1].key > cc.key) { g_cand[j] = g_cand[j - 1]; --j; }
+        g_cand[j] = cc;
     }
     return count;
 }

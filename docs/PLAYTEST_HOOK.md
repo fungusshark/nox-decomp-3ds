@@ -111,8 +111,17 @@ bots_ok, `0x200` cmds_active, `0x400` obj_truncated.
 Object (20 B): `u16 net_id (+128), u16 type_id (+108), u32 class_flags (+112),
 i32 x (+12), i32 y (+16), u8 facing (+297), u8 hp_pct (0xFF = unknown), u16 0`.
 
-Objects come **only** from the client drawable list `byte_5D4594[1046572]`
-(next = +368). That is the set the server chose to send. Entries with class
+Objects come **only** from client-side drawables, which are the set the server
+chose to send. The hook does not walk the full list `byte_5D4594[1046572]`.
+Instead it queries the client's spatial grid: 128 px buckets in
+`byte_5D4594[1301784]` (`grid[x][y]` heads, chain next +400, filled by
+`sub_49AA00`). The query goes through `sub_49AB00()`, the read-only walker the
+renderer uses to build its per-frame draw lists (`sub_4754F0`/`sub_475560`,
+GAME2.c:30805). It uses the same rect: camera rect plus 128 px below for tall
+sprites. With `clip_viewport=0` (Solo only), the rect grows by one view on
+each side. The cost is bounded by the drawables in the about 6x4 buckets
+under the view, not by map size. At most 1024 drawables are visited per
+publish (`PT_MAX_VISITS`); past that, `obj_truncated` is set. Entries with class
 `& 0x20400000` (non-network, as skipped by `sub_45A6F0`) and the local player
 are excluded. Objects with the invisibility enchant (drawable +124 bit 0, the
 check the renderer makes at GAME2.c:30355) are dropped unless the local player
@@ -123,8 +132,8 @@ That is the client's own draw-visibility test (view polygon / line of sight,
 read-only), and the renderer calls it before drawing each drawable
 (GAME2.c:30306). It uses the polygon from the last rendered frame. Clipping is
 **forced on in MP**; `clip_viewport=0` only works in Solo. The list is sorted players, then monsters, then missiles, then others,
-nearest first, and capped at `max_objects`. The walk is bounded at 2048 nodes;
-hitting the cap sets `obj_truncated`.
+nearest first, and capped at `max_objects`. `obj_truncated` is set when more
+candidates passed the filters than `max_objects`, or the visit budget ran out.
 
 ### Command packet (host to 3DS): 20 B
 
@@ -243,8 +252,9 @@ Round 2 re-verification (72ed96f; evidence in `hook_verify/round2/`):
   change). After GoodBye, `0x236` returns and MOVE works again.
 - **PASS: abilities.** A fresh Solo and Quest Warrior reports all 5 records as
   `level 0, ready 0`. A learned ability and its cooldown countdown are still not checked.
-- **Open issue: the Quest object list is incomplete.** `PT_MAX_WALK` (2048) still
-  caps the exported object walk. On Quest stage 1, `obj_truncated` is set in
+- **Open issue (fixed after this run, re-verify): the Quest object list is incomplete.**
+  The export now uses the spatial-grid query described in section 3 instead of
+  the capped list walk. Original finding: `PT_MAX_WALK` (2048) capped the exported object walk. On Quest stage 1, `obj_truncated` is set in
   every packet. Only NPCs (`0x200002`) and one `0x180000` were ever reported,
   and an item lying at the player's feet (on-screen "USE" marker) was not
   listed. The hook is blind to objects beyond the first 2048 list nodes.
