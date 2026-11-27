@@ -10,6 +10,7 @@
 extern unsigned char byte_5D4594[];
 extern int sub_46A8C0(int a1);
 extern int sub_46AA60(uint32_t *a1, uint32_t *a2, uint32_t *a3);
+extern uint32_t *sub_46B0C0(uint32_t *a1, int a2);
 extern int sub_46A9B0(uint32_t *a1, int a2, int a3);
 extern int sub_46AB20(uint32_t *a1, int a2, int a3);
 extern int sub_46B490(int a1, int a2, int a3, int a4);
@@ -895,6 +896,42 @@ static void convert_button_to_resizable(uint32_t *b)
     b[22] = (uint32_t)sub_4344A0(92, 66, 40);    /* pressed fill (a2+52) */
 }
 
+/* Keep Westwood's authentic software-textured button sprite (sub_4A8380 / 0x80)
+ * centered in [slot_x .. slot_x + slot_w] whenever its label fits inside the
+ * stock sprite width. Fall back to the resizable flat medieval style only when
+ * the label would genuinely clip or the button has no textured sprite. */
+static void place_button_preserving_texture(uint32_t *b, int slot_x, int slot_y,
+                                            int slot_w, int slot_h, int min_fallback_w)
+{
+    if (!b)
+        return;
+    int ow = (int)(int32_t)b[2];
+    int oh = (int)(int32_t)b[3];
+    bool is_textured = ((b[1] & 0x80u) != 0) ||
+                       ((uintptr_t)b[95] == (uintptr_t)sub_4A8380);
+    int lw = 0;
+    uint16_t *lbl = (uint16_t *)(b + 27);
+    if (*lbl)
+        sub_43F840((int)b[59], lbl, &lw, NULL, 0);
+
+    if (is_textured && ow > 0 && oh > 0 && ow >= lw + 4 && ow <= slot_w) {
+        int bx = slot_x + (slot_w - ow) / 2;
+        int by = slot_y + ((slot_h > oh) ? (slot_h - oh) / 2 : 0);
+        sub_46A9B0(b, bx, by);
+        sub_46AB20(b, ow, oh);
+        return;
+    }
+
+    convert_button_to_resizable(b);
+    int nw = lw + 20;
+    if (nw < min_fallback_w) nw = min_fallback_w;
+    if (nw > slot_w) nw = slot_w;
+    int nh = (slot_h < 26) ? 26 : slot_h;
+    int bx = slot_x + (slot_w - nw) / 2;
+    sub_46A9B0(b, bx, slot_y);
+    sub_46AB20(b, nw, nh);
+}
+
 static void scale_editbox_field_width(uint32_t *c, int new_w, float sx)
 {
     if (!c || !is_editbox((uintptr_t)c[95]) || !valid_u32_ptr(c[8]))
@@ -1523,11 +1560,9 @@ static int reflow_form_children(uint32_t **raw_items, int raw_count,
                     float esx = (ow > 0) ? ((float)half_w / (float)ow) : 1.0f;
                     if (esx < 1.0f) esx = 1.0f;
                     scale_editbox_field_width(c, half_w, esx);
-                    convert_button_to_resizable(c2);
                     sub_46A9B0(c, start_x, cur_y);
                     sub_46AB20(c, half_w, row_h);
-                    sub_46A9B0(c2, col2_x, cur_y);
-                    sub_46AB20(c2, half_w, row_h);
+                    place_button_preserving_texture(c2, col2_x, cur_y, half_w, row_h, half_w);
                     cur_y += row_h + 8;
                     ++i;
                     continue;
@@ -1580,11 +1615,9 @@ static int reflow_form_children(uint32_t **raw_items, int raw_count,
                     int row_h = (oh < 26) ? 26 : oh;
                     int h2 = (int)(int32_t)c2[3];
                     if (h2 > row_h) row_h = h2;
-                    convert_button_to_resizable(c2);
                     sub_46A9B0(c, start_x, cur_y);
                     sub_46AB20(c, half_w, row_h);
-                    sub_46A9B0(c2, col2_x, cur_y);
-                    sub_46AB20(c2, half_w, row_h);
+                    place_button_preserving_texture(c2, col2_x, cur_y, half_w, row_h, half_w);
                     cur_y += row_h + 6;
                     ++i;
                     continue;
@@ -1669,7 +1702,10 @@ static int reflow_form_children(uint32_t **raw_items, int raw_count,
             }
             int lb_w = has_aux ? (avail_w - 20) : avail_w;
             int lb_h = oh;
-            if (has_aux) {
+            if ((int)(int32_t)c[0] == 10114) {
+                /* Tall map list so the default map set fits without scroll-within-scroll */
+                lb_h = 196;
+            } else if (has_aux) {
                 if (lb_h < 96)  lb_h = 96;
                 if (lb_h > 132) lb_h = 132;
             } else {
@@ -1682,7 +1718,6 @@ static int reflow_form_children(uint32_t **raw_items, int raw_count,
             cur_y += lb_h + 8;
         } else if (is_pushbutton(fn)) {
             int row_h = (oh < 26) ? 26 : oh;
-            convert_button_to_resizable(c);
             /* 4-up compact button row (e.g. Access tab Kick | Ban   Add | Del) */
             if (half_w >= 180 && i + 3 < count &&
                 !items[i + 1][100] && !items[i + 2][100] && !items[i + 3][100] &&
@@ -1693,11 +1728,9 @@ static int reflow_form_children(uint32_t **raw_items, int raw_count,
                 (orig_ys[i + 3] - orig_ys[i]) <= 8) {
                 int sub_w = (half_w - 8) / 2;
                 for (int k = 0; k < 4; ++k) {
-                    convert_button_to_resizable(items[i + k]);
                     int bx = (k < 2) ? (start_x + k * (sub_w + 8))
                                      : (col2_x + (k - 2) * (sub_w + 8));
-                    sub_46A9B0(items[i + k], bx, cur_y);
-                    sub_46AB20(items[i + k], sub_w, row_h);
+                    place_button_preserving_texture(items[i + k], bx, cur_y, sub_w, row_h, sub_w);
                 }
                 cur_y += row_h + 8;
                 i += 3;
@@ -1719,7 +1752,6 @@ static int reflow_form_children(uint32_t **raw_items, int raw_count,
                 uint32_t *c2 = items[i + 1];
                 int bw2 = (int)(int32_t)c2[2];
                 uint16_t *lbl2 = (uint16_t *)(c2 + 27);
-                convert_button_to_resizable(c2);
                 if (*lbl2) {
                     int lw2 = 0;
                     sub_43F840((int)c2[59], lbl2, &lw2, NULL, 0);
@@ -1729,19 +1761,14 @@ static int reflow_form_children(uint32_t **raw_items, int raw_count,
                 if (bw2 <= half_w) {
                     int h2 = (int)(int32_t)c2[3];
                     if (h2 > row_h) row_h = h2;
-                    sub_46A9B0(c, start_x, cur_y);
-                    sub_46AB20(c, half_w, row_h);
-                    sub_46A9B0(c2, col2_x, cur_y);
-                    sub_46AB20(c2, half_w, row_h);
+                    place_button_preserving_texture(c, start_x, cur_y, half_w, row_h, half_w);
+                    place_button_preserving_texture(c2, col2_x, cur_y, half_w, row_h, half_w);
                     cur_y += row_h + 8;
                     ++i;
                     continue;
                 }
             }
-            if (bw < 164) bw = 164;
-            if (bw > avail_w) bw = avail_w;
-            sub_46A9B0(c, start_x + (avail_w - bw) / 2, cur_y);
-            sub_46AB20(c, bw, row_h);
+            place_button_preserving_texture(c, start_x, cur_y, avail_w, row_h, 164);
             cur_y += row_h + 8;
         } else {
             int row_h = (oh < 20) ? 20 : oh;
@@ -1773,14 +1800,15 @@ static int reflow_form_children(uint32_t **raw_items, int raw_count,
             }
         }
         dd[1] &= ~0x80u;
-        dd[1] |= 0x1000u;
+        dd[1] |= (0x1000u | 0x20u);
         dd[14] = (uint32_t)sub_4344A0(18, 15, 12);
         dd[16] = (uint32_t)sub_4344A0(168, 134, 82);
         if (btn) {
             int bx = (int)(int32_t)btn[4];
-            int by = (int)(int32_t)btn[5] + (int)(int32_t)btn[3];
+            int by = (int)(int32_t)btn[5];
             int bw = (int)(int32_t)btn[2];
-            int bh = 96;
+            if (bw < 184) bw = 184;
+            int bh = 132;
             sub_46A9B0(dd, bx, by);
             sub_46AB20(dd, bw, bh);
         }
@@ -1875,9 +1903,7 @@ void nox_3ds_ui_takeover_form_dialog(void *root_wnd)
         int by = new_h - pad_bot + 8;
         for (int i = 0; i < ftr_cnt; ++i) {
             uint32_t *b = footers[i];
-            convert_button_to_resizable(b);
-            sub_46A9B0(b, bx, by);
-            sub_46AB20(b, btn_w, 30);
+            place_button_preserving_texture(b, bx, by, btn_w, 30, btn_w);
             bx += btn_w + gap;
             if (meta->pinned_count < 16)
                 meta->pinned[meta->pinned_count++] = b;
@@ -1895,12 +1921,70 @@ void nox_3ds_ui_takeover_form_dialog(void *root_wnd)
 
 /* Unobstructed interior viewport inside servopts.wnd (10100) Main Border (10195):
  * 10195 sits at (16, 40, 592, 382), whose +/-10px 9-slice stone bars span
- * x = 6..26, 598..618 and y = 30..50, 412..432. Placing all tab body panels at
- * (28, 52, 568, 358) clears every stone edge cleanly on all four sides. */
-#define SERVOPTS_BODY_X  28
-#define SERVOPTS_BODY_Y  52
-#define SERVOPTS_BODY_W  568
-#define SERVOPTS_BODY_H  358
+ * x = 6..26, 598..618 and y = 30..50, 412..432.
+ * - Game tab (10150/10153) hides Row-2 sub-tabs and uses full (28, 52, 568, 358).
+ * - Server sub-tab panels (General/Access/Teams) sit below Row-2 sub-tabs
+ *   (y = 50..72) at (28, 76, 568, 334). */
+#define SERVOPTS_BODY_X      28
+#define SERVOPTS_BODY_Y      52
+#define SERVOPTS_BODY_W      568
+#define SERVOPTS_BODY_H      358
+#define SERVOPTS_SUB_BODY_Y  76
+#define SERVOPTS_SUB_BODY_H  334
+
+/* Position a popup dropdown listbox (e.g. 10120 Game Type, 10317 Conn Type)
+ * directly over its trigger button's live screen coordinates. Overlapping the
+ * trigger button is REQUIRED because sub_458500 auto-closes 10120 on the very
+ * first frame if the current cursor/tap position is outside 10120's rect. */
+void nox_3ds_ui_anchor_servopts_dropdown(void *root_wnd, int dd_id, int btn_id)
+{
+    uint32_t *root = (uint32_t *)root_wnd;
+    if (!root || !nox_3ds_font_is_enabled())
+        return;
+
+    uint32_t *dd  = sub_46B0C0(root, dd_id);
+    uint32_t *btn = sub_46B0C0(root, btn_id);
+    if (!dd || !btn)
+        return;
+
+    uint32_t bax = 0, bay = 0;
+    uint32_t pax = 0, pay = 0;
+    uint32_t rax = 0, ray = 0;
+    sub_46AA60(btn, &bax, &bay);
+    sub_46AA60(root, &rax, &ray);
+    uint32_t *dd_parent = valid_u32_ptr(dd[99]) ? (uint32_t *)(uintptr_t)dd[99] : NULL;
+    if (dd_parent)
+        sub_46AA60(dd_parent, &pax, &pay);
+
+    int bw = (int)(int32_t)btn[2];
+    if (bw < 184) bw = 184;
+    int bh = 132;
+
+    int dx = (int)bax - (int)pax;
+    int dy = (int)bay - (int)pay;
+
+    /* Keep dropdown inside the right/bottom edges of servopts root window */
+    int root_right  = (int)rax + (int)(int32_t)root[2] - 20;
+    int root_bottom = (int)ray + (int)(int32_t)root[3] - 44;
+    if ((int)pax + dx + bw > root_right)
+        dx = root_right - bw - (int)pax;
+    if (dx < 0) dx = 0;
+    if ((int)pay + dy + bh > root_bottom) {
+        int avail_h = root_bottom - ((int)pay + dy);
+        if (avail_h >= 72)
+            bh = avail_h;
+        else
+            dy = root_bottom - bh - (int)pay;
+    }
+
+    dd[1] &= ~0x80u;
+    dd[1] |= (0x1000u | 0x20u); /* bordered opaque box + ABOVE */
+    dd[14] = (uint32_t)sub_4344A0(18, 15, 12);
+    dd[16] = (uint32_t)sub_4344A0(168, 134, 82);
+    sub_46A9B0(dd, dx, dy);
+    sub_46AB20(dd, bw, bh);
+    reset_listbox_metrics(dd);
+}
 
 void nox_3ds_ui_reflow_servopts_subpanel(void *panel_wnd)
 {
@@ -1911,14 +1995,15 @@ void nox_3ds_ui_reflow_servopts_subpanel(void *panel_wnd)
     uint32_t *parent = valid_u32_ptr(c[99]) ? (uint32_t *)(uintptr_t)c[99] : NULL;
     bool inside_10150 = (parent && (int)(int32_t)parent[0] == 10150);
     int px = inside_10150 ? 0 : SERVOPTS_BODY_X;
-    int py = inside_10150 ? 0 : SERVOPTS_BODY_Y;
+    int py = inside_10150 ? 0 : SERVOPTS_SUB_BODY_Y;
+    int ph = inside_10150 ? SERVOPTS_BODY_H : SERVOPTS_SUB_BODY_H;
 
     c[1] &= ~(0x80u | 0x1000u);
     c[11] &= ~2048u;
     c[14] = (uint32_t)sub_4344A0(22, 18, 15);
     c[16] = 0x80000000u;
     sub_46A9B0(c, px, py);
-    sub_46AB20(c, SERVOPTS_BODY_W, SERVOPTS_BODY_H);
+    sub_46AB20(c, SERVOPTS_BODY_W, ph);
 
     lb_aux_t aux[16];
     int aux_count = 0;
@@ -1944,6 +2029,12 @@ void nox_3ds_ui_reflow_servopts_subpanel(void *panel_wnd)
 
     for (int a = 0; a < aux_count; ++a)
         anchor_lb_aux(&aux[a]);
+
+    /* Anchor any popup dropdowns hosted in this subpanel or its root */
+    uint32_t *root = c;
+    while (valid_u32_ptr(root[99]))
+        root = (uint32_t *)(uintptr_t)root[99];
+    nox_3ds_ui_anchor_servopts_dropdown(root, 10317, 10316);
 }
 
 static int servopts_tab_order(int cid)
@@ -2024,8 +2115,9 @@ void nox_3ds_ui_takeover_servopts(void *root_wnd)
         }
     }
 
-    /* Place primary tabs (Game | Server) on the left and Server sub-tabs
-     * (General | Access | Teams) cleanly to their right at stock sprite width. */
+    /* Row 1 (y = 8): primary tabs (Game | Server).
+     * Row 2 (y = 50, inside top of 10195): Server sub-tabs (General | Access | Teams),
+     * which Nox automatically hides on Game tab and shows on Server tab. */
     for (int i = 1; i < tab_cnt; ++i) {
         uint32_t *k = tabs[i];
         int ko = servopts_tab_order((int)(int32_t)k[0]);
@@ -2036,20 +2128,26 @@ void nox_3ds_ui_takeover_servopts(void *root_wnd)
         }
         tabs[j + 1] = k;
     }
-    int tab_x = 16;
+    int row1_x = 16;
+    int row2_x = SERVOPTS_BODY_X + 2;
     for (int i = 0; i < tab_cnt; ++i) {
         uint32_t *t = tabs[i];
         int tid = (int)(int32_t)t[0];
-        if (tid == 10163 && tab_x < 236)
-            tab_x = 236; /* visual group gap between Game|Server and General|Access|Teams */
+        bool is_subtab = (tid == 10163 || tid == 10161 || tid == 10162);
         int tw = (int)(int32_t)t[2];
         int th = (int)(int32_t)t[3];
         if (tw < 95) tw = 95;
         if (th < 20) th = 20;
         t[1] |= 0x20u; /* ABOVE so tabs always win child hit-testing */
-        sub_46A9B0(t, tab_x, 8);
-        sub_46AB20(t, tw, th);
-        tab_x += tw + 8;
+        if (is_subtab) {
+            sub_46A9B0(t, row2_x, 50);
+            sub_46AB20(t, tw, th);
+            row2_x += tw + 8;
+        } else {
+            sub_46A9B0(t, row1_x, 8);
+            sub_46AB20(t, tw, th);
+            row1_x += tw + 8;
+        }
     }
 
     /* Sort & place footer buttons cleanly inside the bottom stone border */
@@ -2145,4 +2243,7 @@ void nox_3ds_ui_takeover_servopts(void *root_wnd)
 
     for (int a = 0; a < aux_count; ++a)
         anchor_lb_aux(&aux[a]);
+
+    nox_3ds_ui_anchor_servopts_dropdown(w, 10120, 10119);
+    nox_3ds_ui_anchor_servopts_dropdown(w, 10317, 10316);
 }

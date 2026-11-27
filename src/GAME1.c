@@ -47897,7 +47897,8 @@ int sub_4379F0()
 #ifdef __3DS__
         /* Align Server Browser column listboxes (10038..10042) pixel-for-pixel with
          * sort header buttons (10047..10051), pair synced scrolling, and expand
-         * the Game Description popup (10033/10034) so entries wrap cleanly. */
+         * the Game Description popup (10033/10034) when Native Text is enabled. */
+        if ( nox_3ds_font_is_enabled() )
         {
           _DWORD *c0 = *(_DWORD **)&byte_5D4594[815016];
           _DWORD *c1 = *(_DWORD **)&byte_5D4594[815020];
@@ -53106,7 +53107,8 @@ LABEL_24:
           {
             nox_3ds_swbuf_begin_bottom(NOX_3DS_BOT_BG_RGB555);
             if ( minimap_on
-              && !(*(_DWORD *)&byte_5D4594[1046860] && !sub_46ACC0(*(int *)&byte_5D4594[1046860])) )
+              && !(nox_3ds_font_is_enabled() && *(_DWORD *)&byte_5D4594[1046860]
+                   && !sub_46ACC0(*(int *)&byte_5D4594[1046860])) )
             {
               _DWORD *player_drw = sub_45A6F0(*(int *)&byte_5D4594[2616328]);
               if ( player_drw )

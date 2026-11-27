@@ -8277,8 +8277,15 @@ int __cdecl sub_458500(_DWORD *a1, int a2)
   v1 = sub_4309F0();
   sub_46AA60(a1, &xLeft, &v5);
 #ifdef __3DS__
-  sub_434460(sub_4344A0(22, 18, 15));
-  sub_49CE30(xLeft, v5, a1[2], a1[3]);
+  if ( nox_3ds_font_is_enabled() )
+  {
+    sub_434460(sub_4344A0(22, 18, 15));
+    sub_49CE30(xLeft, v5, a1[2], a1[3]);
+  }
+  else
+  {
+    sub_49CF10(xLeft, v5 + 25, a1[2], a1[3] - 25);
+  }
 #else
   sub_49CF10(xLeft, v5 + 25, a1[2], a1[3] - 25);
 #endif
@@ -8418,6 +8425,9 @@ int __cdecl sub_4585D0(int a1, unsigned int a2, int a3, int a4)
         sub_46ADC0((int)v26);
         sub_46A8C0((int)v26);
         sub_4596A0();
+#ifdef __3DS__
+        nox_3ds_ui_anchor_servopts_dropdown(*(_DWORD **)&byte_5D4594[1046492], 10120, 10119);
+#endif
         return 1;
       case 10122:
         v27 = (*(_BYTE *)(a3 + 36) & 4) != 0;
@@ -10217,38 +10227,74 @@ unsigned int __cdecl sub_45AD70(int a1)
 }
 
 #ifdef __3DS__
-/* Exact 2x Upper Bottom-Screen Takeover for the Spellbook (570x336 at 35,10).
- * Scaling the authentic 285x168 Westwood Spellbook sprites by exact 2x in the
- * 640x480 logical buffer maps 1:1 to physical pixels on the 320x240 Bottom
- * Screen (zero blur, 100% authentic art) while leaving y=350..480 clear for
- * the HUD, HP/Mana orbs, and Spell Bar drag-and-drop slotting. */
-#define NOX_3DS_SB_X           35
-#define NOX_3DS_SB_Y           10
-#define NOX_3DS_SB_W           570
-#define NOX_3DS_SB_H           336
-#define NOX_3DS_SB_LPAGE_X     48
-#define NOX_3DS_SB_RPAGE_X     292
-#define NOX_3DS_SB_PAGE_W      216
-#define NOX_3DS_SB_LCENTER_X   156
-#define NOX_3DS_SB_RCENTER_X   398
-#define NOX_3DS_SB_SPINE_X     290
-#define NOX_3DS_SB_LIST_TOP    38
-#define NOX_3DS_SB_LIST_H      236
-#define NOX_3DS_SB_DESC_X      306
-#define NOX_3DS_SB_DESC_Y      34
-#define NOX_3DS_SB_DESC_W      188
-#define NOX_3DS_SB_DESC_H      240
+/* Exact 2x Upper Bottom-Screen Takeover for the Spellbook (570x336 at 35,10)
+ * when Native Text is enabled; dynamically reverts to the stock 285x168 layout
+ * when Native Text is disabled for A/B comparison testing. */
+#define NOX_3DS_SB_X           (nox_3ds_font_is_enabled() ? 35 : 5)
+#define NOX_3DS_SB_Y           (nox_3ds_font_is_enabled() ? 10 : (*(_DWORD *)&byte_5D4594[3807120] - 323))
+#define NOX_3DS_SB_W           (nox_3ds_font_is_enabled() ? 570 : 285)
+#define NOX_3DS_SB_H           (nox_3ds_font_is_enabled() ? 336 : 168)
+#define NOX_3DS_SB_LPAGE_X     (nox_3ds_font_is_enabled() ? 48 : 24)
+#define NOX_3DS_SB_RPAGE_X     (nox_3ds_font_is_enabled() ? 292 : 146)
+#define NOX_3DS_SB_PAGE_W      (nox_3ds_font_is_enabled() ? 216 : 108)
+#define NOX_3DS_SB_LCENTER_X   (nox_3ds_font_is_enabled() ? 156 : 78)
+#define NOX_3DS_SB_RCENTER_X   (nox_3ds_font_is_enabled() ? 398 : 199)
+#define NOX_3DS_SB_SPINE_X     (nox_3ds_font_is_enabled() ? 290 : 145)
+#define NOX_3DS_SB_LIST_TOP    (nox_3ds_font_is_enabled() ? 38 : 19)
+#define NOX_3DS_SB_LIST_H      (nox_3ds_font_is_enabled() ? 236 : 141)
+#define NOX_3DS_SB_DESC_X      (nox_3ds_font_is_enabled() ? 306 : 153)
+#define NOX_3DS_SB_DESC_Y      (nox_3ds_font_is_enabled() ? 34 : 17)
+#define NOX_3DS_SB_DESC_W      (nox_3ds_font_is_enabled() ? 188 : 94)
+#define NOX_3DS_SB_DESC_H      (nox_3ds_font_is_enabled() ? 240 : 120)
 
 static inline int nox_3ds_sb_row_h(void)
 {
-  return sub_43F320(0) + 6;
+  return nox_3ds_font_is_enabled() ? (sub_43F320(0) + 6) : (sub_43F320(0) + 2);
 }
 
 static inline int nox_3ds_sb_rows_per_page(void)
 {
   int rh = nox_3ds_sb_row_h();
+  if ( !nox_3ds_font_is_enabled() )
+    return (rh > 0) ? (141 / rh - 1) : 10;
   int r = (rh > 0) ? (NOX_3DS_SB_LIST_H / rh) : 12;
   return (r < 4) ? 4 : r;
+}
+
+static void nox_3ds_sb_sync_layout(void)
+{
+  static int s_last_mode = -1;
+  _DWORD *sb = *(_DWORD **)&byte_5D4594[1046860];
+  if ( !sb )
+    return;
+  int mode = nox_3ds_font_is_enabled() ? 1 : 0;
+  if ( mode == s_last_mode )
+    return;
+  s_last_mode = mode;
+
+  sub_46A9B0(sb, NOX_3DS_SB_X, NOX_3DS_SB_Y);
+  sub_46AB20(sb, NOX_3DS_SB_W, NOX_3DS_SB_H);
+  _DWORD *t1 = sub_46B0C0(sb, 1320);
+  _DWORD *t2 = sub_46B0C0(sb, 1310);
+  _DWORD *pw = *(_DWORD **)&byte_5D4594[1046944];
+  _DWORD *nw = *(_DWORD **)&byte_5D4594[1046948];
+  _DWORD *ic = *(_DWORD **)&byte_5D4594[1046952];
+  if ( mode )
+  {
+    if ( t1 ) { sub_46A9B0(t1, 514, 30);  sub_46AB20(t1, 54, 80); }
+    if ( t2 ) { sub_46A9B0(t2, 506, 122); sub_46AB20(t2, 54, 80); }
+    if ( pw ) { sub_46A9B0(pw, 48, 276);  sub_46AB20(pw, 40, 40); pw[24] = 10; pw[25] = 10; }
+    if ( nw ) { sub_46A9B0(nw, 466, 276); sub_46AB20(nw, 40, 40); nw[24] = 10; nw[25] = 10; }
+    if ( ic ) { sub_46A9B0(ic, 141, 44);  sub_46AB20(ic, 32, 32); }
+  }
+  else
+  {
+    if ( t1 ) { sub_46A9B0(t1, 257, 15);  sub_46AB20(t1, 27, 40); }
+    if ( t2 ) { sub_46A9B0(t2, 253, 61);  sub_46AB20(t2, 27, 40); }
+    if ( pw ) { sub_46A9B0(pw, 24, 138);  sub_46AB20(pw, 20, 20); pw[24] = 0;  pw[25] = 0; }
+    if ( nw ) { sub_46A9B0(nw, 233, 138); sub_46AB20(nw, 20, 20); nw[24] = 0;  nw[25] = 0; }
+    if ( ic ) { sub_46A9B0(ic, 63, 19);   sub_46AB20(ic, 30, 30); }
+  }
 }
 
 static void nox_3ds_sb_draw_book_bg(int bx, int by, int tab_mode, int anim_ptr)
@@ -10387,6 +10433,7 @@ int __cdecl sub_45ADF0(int a1)
 
   v1 = 0;
 #ifdef __3DS__
+  nox_3ds_sb_sync_layout();
   *(_DWORD *)&byte_5D4594[1046656] = nox_3ds_sb_row_h();
   *(_DWORD *)&byte_5D4594[1047508] = 0;
   *(_DWORD *)&byte_5D4594[1047512] = 0;
@@ -10766,6 +10813,7 @@ LABEL_47:
     return 0;
   }
 #ifdef __3DS__
+  nox_3ds_sb_sync_layout();
   *(_DWORD *)&byte_5D4594[1046656] = nox_3ds_sb_row_h();
   v5 = nox_3ds_sb_rows_per_page();
 #else
@@ -10783,7 +10831,7 @@ LABEL_47:
       v8 = v3 - (a3 + NOX_3DS_SB_LIST_TOP);
       v7 = v8 < 0;
       *(_DWORD *)&byte_5D4594[1047532] = v4;
-      if ( v7 || (v4 - v14) < 36 || (v4 - v14) > 512 )
+      if ( v7 || (nox_3ds_font_is_enabled() && ((v4 - v14) < 36 || (v4 - v14) > 512)) )
       {
         *(_DWORD *)&byte_587000[132136] = -1;
         return 1;
@@ -11193,21 +11241,44 @@ int __cdecl sub_45BD40(int a1)
   v2 = v67 - 76;
   v3 = sub_43F320(0);
 #ifdef __3DS__
+  nox_3ds_sb_sync_layout();
+  sub_46AA20(a1, &v66, &v67);
+  v1 = v66 - 24;
+  v2 = v67 - 76;
   *(_DWORD *)&byte_5D4594[1046656] = nox_3ds_sb_row_h();
   sub_434390(*(int *)&byte_5D4594[1046880]);
-  (void)v1;
-  (void)v2;
-  if ( *(_DWORD *)&byte_5D4594[1046868] == 3 )
+  if ( nox_3ds_font_is_enabled() )
   {
-    nox_3ds_sb_draw_book_bg(v66, v67, *(_DWORD *)&byte_5D4594[1046872], *(int *)&byte_5D4594[1046928]);
-    goto LABEL_75;
+    if ( *(_DWORD *)&byte_5D4594[1046868] == 3 )
+    {
+      nox_3ds_sb_draw_book_bg(v66, v67, *(_DWORD *)&byte_5D4594[1046872], *(int *)&byte_5D4594[1046928]);
+      goto LABEL_75;
+    }
+    if ( *(_DWORD *)&byte_5D4594[1046868] == 2 )
+    {
+      nox_3ds_sb_draw_book_bg(v66, v67, *(_DWORD *)&byte_5D4594[1046872], *(int *)&byte_5D4594[1046924]);
+      goto LABEL_75;
+    }
+    nox_3ds_sb_draw_book_bg(v66, v67, *(_DWORD *)&byte_5D4594[1046872], 0);
   }
-  if ( *(_DWORD *)&byte_5D4594[1046868] == 2 )
+  else
   {
-    nox_3ds_sb_draw_book_bg(v66, v67, *(_DWORD *)&byte_5D4594[1046872], *(int *)&byte_5D4594[1046924]);
-    goto LABEL_75;
+    sub_47D2C0(*(int *)&byte_5D4594[1046856], v1, v2);
+    if ( *(_DWORD *)&byte_5D4594[1046872] )
+      sub_47D2C0(*(int *)&byte_5D4594[1046660], v1, v2);
+    else
+      sub_47D2C0(*(int *)&byte_5D4594[1046644], v1, v2);
+    if ( *(_DWORD *)&byte_5D4594[1046868] == 3 )
+    {
+      sub_4BE6D0(*(int *)&byte_5D4594[1046928], v1, v2);
+      goto LABEL_75;
+    }
+    if ( *(_DWORD *)&byte_5D4594[1046868] == 2 )
+    {
+      sub_4BE6D0(*(int *)&byte_5D4594[1046924], v1, v2);
+      goto LABEL_75;
+    }
   }
-  nox_3ds_sb_draw_book_bg(v66, v67, *(_DWORD *)&byte_5D4594[1046872], 0);
 #else
   *(_DWORD *)&byte_5D4594[1046656] = v3 + 2;
   sub_434390(*(int *)&byte_5D4594[1046880]);
@@ -12121,8 +12192,11 @@ int *__cdecl sub_45D200(int *a1, int a2, int2 *a3)
 
   sub_45AD70(1);
 #ifdef __3DS__
-  sub_46A9B0(*(_DWORD **)&byte_5D4594[1046860], NOX_3DS_SB_X, NOX_3DS_SB_Y);
-  (void)a3;
+  nox_3ds_sb_sync_layout();
+  if ( nox_3ds_font_is_enabled() )
+    sub_46A9B0(*(_DWORD **)&byte_5D4594[1046860], NOX_3DS_SB_X, NOX_3DS_SB_Y);
+  else
+    sub_46A9B0(*(_DWORD **)&byte_5D4594[1046860], a3->field_0, a3->field_4);
 #else
   sub_46A9B0(*(_DWORD **)&byte_5D4594[1046860], a3->field_0, a3->field_4);
 #endif
