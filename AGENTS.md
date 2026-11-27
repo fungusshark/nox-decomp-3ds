@@ -49,3 +49,6 @@ Pick the lightest tier that matches your change to keep iteration fast:
   gh issue list --state all --limit 30 --json number,title,state
   gh issue view <num> --json number,title,state,body,comments
   ```
+- **Large Inline Screenshots on Issues/PRs (Never Force Downloads or Tiny Multi-Column Tables):**
+  - **Never** embed `https://github.com/.../releases/download/.../*.png` URLs for screenshots (`Content-Disposition: attachment` forces a file download when clicked instead of opening GitHub's zoomable lightbox).
+  - Instead, push screenshots to the isolated orphan `_screenshots` branch via `./scripts/upload-gh-screenshots.py issue-<num> <file1.png> ...` (zero `main` bloat) and embed them **stacked vertically at full width (`width="720"`)** (or at most a 2-row stacked **Before** above **After** comparison — never cramped 3–4 column tables) so `400×240` / `320×240` UI typography is immediately readable inline.
