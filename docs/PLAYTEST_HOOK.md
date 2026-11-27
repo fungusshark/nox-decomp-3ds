@@ -261,6 +261,21 @@ Round 2 re-verification (72ed96f; evidence in `hook_verify/round2/`):
 - Death and observer: still not reached (no monsters met in about 3 minutes of
   Dismal Swamp wandering).
 
+Round 3 re-verification (4df4691, spatial-grid export; evidence in
+`hook_verify/round3/`). Quest stage 1 rolled "The Underworld", so the round-2
+swamp item case could not be reproduced on the same map.
+- **PASS: no truncation.** `obj_truncated` was clear in all 1006 map-loaded
+  packets. At most 4 objects per packet.
+- **PASS: objects match the screen at the spots checked** (start room plus about 10 spots):
+  the NPC (`0x200002`, type 1378) and a prop (`0x100008`) in the start room, and
+  rubble (`0x100000`, type 60) south-east of the exit at the matching screen
+  offset (world delta x 0.625 = screen). Nothing was listed while the player
+  stood in black LOS areas (spot_2, spot_8, run_S).
+- **NOT CHECKED: item at feet.** No floor item or monster was met on this map,
+  so the exact round-2 case is still open.
+- FPS in the emulator (llvmpipe): start room 18 FPS with the hook vs. 20 FPS
+  without cfg (different random map). The difference is within noise.
+
 ## 6. TODO
 
 - `[bot] ` player-name prefix: not done. The name lives in playerInfo+4704
