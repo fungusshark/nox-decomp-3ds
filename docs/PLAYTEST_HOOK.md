@@ -200,8 +200,8 @@ Verified:
   and `cmds_active` (`flags = 0x32`). MOVE sent during the Start menu had no effect.
   `game_frame` stays frozen while the chapter scroll is up.
 - `player_class`: Warrior = **0** (Solo and Solo Quest). Wizard and Conjurer are not checked yet.
-- HP: a fresh Solo Warrior reads `hp = 20/20` and the HUD vial is full. Solo Quest starts at
-  `150/150`. Mana reads `0/0` for a Warrior.
+- HP: a fresh Solo Warrior reads `hp = 20/20` and the HUD vial is full. A Solo Quest
+  Warrior reads `450/450` (HUD 100%). Mana reads `0/0` for a Warrior.
 - `facing` (drawable +297) is the 3x3 keypad direction code, not 0..7:
   `0 NW, 1 N, 2 NE, 3 W, 5 E, 6 SW, 7 S, 8 SE` (4 is unused). Observed: N=1,
   W=3, E=5, S=7, SE=8. When a MOVE latch expires, facing snaps back to 7.
@@ -218,9 +218,8 @@ Verified:
   within the TTL after the last packet. AIM_DIR turns the hero to face that way.
   ATTACK swings and JUMP jumps. HEAL is accepted (no potion to drink).
 - Ability records: ids 1..5 with `cd_total` 300/300/150/30/600 frames.
-  **`ready=1` is reported for abilities the character has not learned yet** (a fresh Solo
-  Warrior has an empty quickbar). Pad A and SLOT 1 both do nothing in that
-  state, so the record says nothing about whether an ability is learned.
+  Unlearned abilities report `level 0, ready 0` (fixed in 72ed96f and
+  re-verified). Before the fix they reported `ready=1`.
 
 Still unverified:
 - The `cd_remaining` countdown (no learned ability was available). SLOT/self-cast
@@ -233,26 +232,24 @@ Still unverified:
   measurable difference (Solo Quest 21 FPS without cfg vs. 25-26 FPS with the hook, on llvmpipe;
   the noise is larger than any hook cost).
 
-Known issues found in verification (fixed after this run; re-verify):
-- Fix: the local player is now found by walking the short client
-  player-drawable list `byte_5D4594[1046600]` (next +416, capped at 256), not
-  the full drawable list. `PT_MAX_WALK` now applies only to the exported object
-  list. Commands also need `player_valid`. HP/MP are not exported without it.
-  The 450/450 HP value may be real Quest HP; re-check once `player_valid` is set.
-- Fix: an NPC `Dialog.wnd` now clears `in_world` and `cmds_active`. This
-  applies inside the hook only: the human pad path is unchanged, because a
-  human needs the buttons and touch while talking. Note:
-  `sub_459DA0` (`byte_5D4594[1046492]`) is **not** the NPC dialog, despite
-  the comment in `input_3ds.c`. It is a different in-game window (GAME2.c:7789).
-  Shop/trade windows are not gated yet (TODO).
-- Fix: unlearned abilities now report `level = 0, ready = 0`.
-- **Solo Quest: the player is not found.** On Quest stage 1 the drawable list
-  is longer than `PT_MAX_WALK` (2048). `find_local_drawable()` gives up, so
-  `player_valid = 0`, `x = y = 0` and `obj_truncated` are set while the hero is
-  visible and controllable. HP reads `450/450` in that state, not 150. MOVE still works,
-  and `in_world | cmds_active` stays set without `player_valid`.
-- NPC conversation (Airship Captain, GoodBye/Repeat panel) does **not** clear
-  `in_world`: `nox_3ds_input_is_world_mode()` does not count that dialog.
+Round 2 re-verification (72ed96f; evidence in `hook_verify/round2/`):
+- **PASS: Solo Quest player lookup.** On Quest stage 1 (Dismal Swamp),
+  `player_valid = 1`, the position is real and tracks MOVE, and `cmds_active` is set.
+  `hp = 450/450` with the HUD at "Health 100%" and a full vial, so 450 is the
+  real Quest Warrior HP. 150/150 appears only for the first 1-2 packets after
+  spawn. In menus HP/MP/pos/facing/anim decode as null (0xFFFF/0xFF).
+- **PASS: NPC dialog gate.** While the Airship Captain dialog is open,
+  `flags = 0x32` (no `in_world` or `cmds_active`), and MOVE is refused (no position
+  change). After GoodBye, `0x236` returns and MOVE works again.
+- **PASS: abilities.** A fresh Solo and Quest Warrior reports all 5 records as
+  `level 0, ready 0`. A learned ability and its cooldown countdown are still not checked.
+- **Open issue: the Quest object list is incomplete.** `PT_MAX_WALK` (2048) still
+  caps the exported object walk. On Quest stage 1, `obj_truncated` is set in
+  every packet. Only NPCs (`0x200002`) and one `0x180000` were ever reported,
+  and an item lying at the player's feet (on-screen "USE" marker) was not
+  listed. The hook is blind to objects beyond the first 2048 list nodes.
+- Death and observer: still not reached (no monsters met in about 3 minutes of
+  Dismal Swamp wandering).
 
 ## 6. TODO
 
