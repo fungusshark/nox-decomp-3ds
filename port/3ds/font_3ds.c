@@ -746,6 +746,25 @@ bool nox_3ds_font_enqueue_glyph(int screen, int font_slot, uint16_t ch,
     if (p1y >= sw_h) p1y = sw_h - 1;
 
     if (sw_rows && p0y >= 0 && p0x >= 0 && p1y >= 0 && p1x >= 0) {
+        /* If bit 15 is currently clear at a probe pixel, an opaque software draw
+         * (e.g. a popup/modal background) has overwritten this pixel since any
+         * earlier glyph was queued. Retire matching probes on earlier glyphs BEFORE
+         * re-stamping 0x8000u so foreground text never resurrects occluded text. */
+        bool p0_cleared = ((sw_rows[p0y][p0x] & 0x8000u) == 0);
+        bool p1_cleared = ((sw_rows[p1y][p1x] & 0x8000u) == 0);
+        if ((p0_cleared || p1_cleared) && cnt > 0) {
+            queued_glyph_t *arr = s_queues[screen];
+            for (int k = 0; k < cnt; ++k) {
+                if (p0_cleared) {
+                    if (arr[k].probe0_x == p0x && arr[k].probe0_y == p0y) arr[k].probe0_x = -1;
+                    if (arr[k].probe1_x == p0x && arr[k].probe1_y == p0y) arr[k].probe1_x = -1;
+                }
+                if (p1_cleared) {
+                    if (arr[k].probe0_x == p1x && arr[k].probe0_y == p1y) arr[k].probe0_x = -1;
+                    if (arr[k].probe1_x == p1x && arr[k].probe1_y == p1y) arr[k].probe1_x = -1;
+                }
+            }
+        }
         sw_rows[p0y][p0x] |= 0x8000u;
         sw_rows[p1y][p1x] |= 0x8000u;
     }
@@ -868,6 +887,16 @@ static void draw_tier_glyph_clipped(font_tier_t tier, uint16_t ch,
 void nox_3ds_font_set_show_version(bool show)
 {
     s_show_version_overlay = show;
+}
+
+bool nox_3ds_debug_hud_enabled(void)
+{
+    static int s_cached = -1;
+    if (s_cached < 0) {
+        const char *v = getenv("NOX_3DS_DEBUG_HUD");
+        s_cached = (v && (*v == '1' || *v == 'y' || *v == 'Y' || *v == 't' || *v == 'T')) ? 1 : 0;
+    }
+    return s_cached != 0;
 }
 
 static void draw_crisp_pill_overlay(int target_w, int target_h,

@@ -738,7 +738,8 @@ static void nox_3ds_listbox_sync_metrics(_DWORD *wnd)
   if ( cnt > max_cnt )
     cnt = max_cnt;
   bool want_native = nox_3ds_font_is_enabled() && (nox_3ds_font_slot_from_ptr(wnd[59]) != 1);
-  uint8_t want_tag = want_native ? 2u : 1u;
+  uint8_t width_bucket = (uint8_t)(((wnd[2] > 0) ? ((wnd[2] >> 3) & 0x3F) : 0) << 2);
+  uint8_t want_tag = width_bucket | (want_native ? 2u : 1u);
   int items_base = *(_DWORD *)(v2 + 24);
   if ( *(uint8_t *)(items_base + 521) == want_tag )
     return;
@@ -1765,7 +1766,8 @@ int __cdecl sub_4A3AC0(wchar_t *a1, int a2, _DWORD *a3)
   }
 #ifdef __3DS__
   *(_BYTE *)(*(_DWORD *)(v4 + 24) + 524 * *(__int16 *)(v4 + 46) + 521) =
-    (nox_3ds_font_is_enabled() && nox_3ds_font_slot_from_ptr(v3[59]) != 1) ? 2u : 1u;
+    (uint8_t)((((v3[2] > 0) ? ((v3[2] >> 3) & 0x3F) : 0) << 2) |
+              ((nox_3ds_font_is_enabled() && nox_3ds_font_slot_from_ptr(v3[59]) != 1) ? 2u : 1u));
 #endif
   ++*(_WORD *)(v4 + 46);
   ++*(_WORD *)(v4 + 44);
@@ -6311,10 +6313,10 @@ __int16 __cdecl sub_4AA030(_DWORD *a1, int a2)
               sub_43F840(*(_DWORD *)(a2 + 200), (unsigned __int16 *)(a2 + 72), &v18, 0, 0);
 #ifdef __3DS__
               {
-                int eb_min = (*(_WORD *)(v10 + 1042) > 0) ? (int)*(_WORD *)(v10 + 1042) : (v12 / 3);
-                if ( eb_min < 44 && v12 > 80 )
-                  eb_min = 44;
-                int max_lbl = v12 - eb_min - 6;
+                int eb_min = (v12 >= 180) ? 64 : ((v12 >= 110) ? 44 : (v12 * 2 / 5));
+                if ( eb_min < 32 )
+                  eb_min = 32;
+                int max_lbl = v12 - eb_min - 8;
                 if ( max_lbl < 20 )
                   max_lbl = v12 / 2;
                 if ( v18 > max_lbl )
@@ -8489,7 +8491,7 @@ int __cdecl sub_4AD320(int a1)
     sub_46ABB0((int)v10, 0);
   }
 #ifdef __3DS__
-  nox_3ds_ui_takeover_form_dialog(*(_DWORD **)&byte_5D4594[1309812]);
+  nox_3ds_ui_reflow_servopts_subpanel(*(_DWORD **)&byte_5D4594[1309812]);
 #endif
   return *(_DWORD *)&byte_5D4594[1309812];
 }
@@ -31756,6 +31758,13 @@ int sub_4CC4E0()
     v10[0] = 0;
   nox_swprintf((wchar_t *)&byte_5D4594[1522896], (const wchar_t *)&byte_587000[187852], v10);
   sub_46B490((int)v4, 16385, (int)&byte_5D4594[1522896], 0);
+#ifdef __3DS__
+  if ( !nox_3ds_debug_hud_enabled() )
+  {
+    if ( v2 ) sub_46AC00((int)v2, 1);
+    if ( v4 ) sub_46AC00((int)v4, 1);
+  }
+#endif
   v5 = sub_46B0C0(*(_DWORD **)&byte_5D4594[1522892], 9970);
   sub_46B340((int)v5, sub_4CC6F0);
   *(_WORD *)&byte_5D4594[1522928] = 300;

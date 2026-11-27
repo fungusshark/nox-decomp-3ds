@@ -8,6 +8,7 @@
 #include <string.h>
 
 extern unsigned char byte_5D4594[];
+extern int sub_46A8C0(int a1);
 extern int sub_46AA60(uint32_t *a1, uint32_t *a2, uint32_t *a3);
 extern int sub_46A9B0(uint32_t *a1, int a2, int a3);
 extern int sub_46AB20(uint32_t *a1, int a2, int a3);
@@ -499,8 +500,8 @@ static bool meta_is_pinned(const panel_meta_t *m, const void *child)
 
 bool nox_3ds_ui_is_scrollable_panel_id(int id)
 {
-    return (id == 10150 || id == 10151 || id == 10153 ||
-            id == 10300 || id == 2100);
+    return (id == 10151 || id == 10153 || id == 10300 || id == 10500 ||
+            id == 2100);
 }
 
 bool nox_3ds_ui_panel_begin(void *panel_wnd, nox_3ds_panel_guard_t *guard)
@@ -899,21 +900,43 @@ static void scale_editbox_field_width(uint32_t *c, int new_w, float sx)
     if (!c || !is_editbox((uintptr_t)c[95]) || !valid_u32_ptr(c[8]))
         return;
     uint16_t *eb = (uint16_t *)(uintptr_t)c[8];
+    int max_chars = (int)eb[520];
     int ebw = (int)eb[521];
+    int lw = 0;
+    uint16_t *lbl = (uint16_t *)(c + 27);
+    if (*lbl)
+        sub_43F840((int)c[59], lbl, &lw, NULL, 0);
+
+    int max_eb = (lw > 0) ? (new_w - lw - 14) : (new_w - 4);
+    if (lw > 0 && max_eb > new_w * 3 / 5)
+        max_eb = new_w * 3 / 5;
+    if (max_chars > 0 && max_chars <= 5 && lw > 0 && max_eb > 84)
+        max_eb = 84;
+    int min_eb = (max_chars > 0 && max_chars <= 5) ? 48 : 64;
+    if (max_eb < min_eb)
+        max_eb = (new_w > lw + 44) ? (new_w - lw - 10) : min_eb;
+    if (max_eb < 36)
+        max_eb = 36;
+
     if (ebw > 0) {
-        int lw = 0;
-        uint16_t *lbl = (uint16_t *)(c + 27);
-        if (*lbl)
-            sub_43F840((int)c[59], lbl, &lw, NULL, 0);
         int scaled = (int)((float)ebw * sx + 0.5f);
-        int max_eb = new_w / 2;
-        if (lw > 0 && new_w - lw - 16 < max_eb)
-            max_eb = new_w - lw - 16;
-        if (max_eb < 56) max_eb = 56;
-        if (scaled < 64 && max_eb >= 64 && new_w >= 140) scaled = 64;
-        if (scaled > max_eb) scaled = max_eb;
+        if (scaled < min_eb && max_eb >= min_eb)
+            scaled = min_eb;
+        if (scaled > max_eb)
+            scaled = max_eb;
         eb[521] = (uint16_t)scaled;
+    } else if (lw > 0) {
+        eb[521] = (uint16_t)max_eb;
     }
+}
+
+static void reset_listbox_metrics(uint32_t *lb)
+{
+    if (!lb || !is_listbox((uintptr_t)lb[95]) || !valid_u32_ptr(lb[8]))
+        return;
+    uint32_t *v5 = (uint32_t *)(uintptr_t)lb[8];
+    if (valid_u32_ptr(v5[6]))
+        *(uint8_t *)((uintptr_t)v5[6] + 521u) = 0u;
 }
 
 static void invalidate_panel_slot(const void *panel_wnd)
@@ -1257,6 +1280,13 @@ static void anchor_lb_aux(const lb_aux_t *a)
     int lby = (int)(int32_t)lb_ay;
     int lbw = (int)(int32_t)lb[2];
     int lbh = (int)(int32_t)lb[3];
+    if (*(const uint16_t *)(lb + 27) != 0) {
+        int hdr_h = sub_43F320((int)lb[59]) + 1;
+        if (lbh > hdr_h + 24) {
+            lby += hdr_h;
+            lbh -= hdr_h;
+        }
+    }
 
     int up_h = a->up ? (int)(int32_t)a->up[3] : 0;
     int dn_h = a->down ? (int)(int32_t)a->down[3] : 0;
@@ -1288,30 +1318,83 @@ static void anchor_lb_aux(const lb_aux_t *a)
     }
 }
 
+static int count_non_aux_children(uint32_t *node, const lb_aux_t *aux, int aux_count)
+{
+    if (!node || !node[100])
+        return 0;
+    int scnt = 0;
+    for (uint32_t *sc = (uint32_t *)(uintptr_t)node[100]; sc && scnt < MAX_PANEL_CHILDREN;
+         sc = (uint32_t *)(uintptr_t)sc[97]) {
+        if (!is_lb_aux_widget(sc, aux, aux_count))
+            ++scnt;
+    }
+    return scnt;
+}
+
 /* Reflow a list of form child controls cleanly into spacious 1- or 2-column
  * rows inside [start_x .. start_x + avail_w], starting at start_y.
  * Returns total bottom Y reached. */
-static int reflow_form_children(uint32_t **items, int count,
+static int reflow_form_children(uint32_t **raw_items, int raw_count,
                                 int start_x, int start_y, int avail_w,
                                 const lb_aux_t *aux, int aux_count)
 {
+    uint32_t *items[MAX_PANEL_CHILDREN];
+    int orig_xs[MAX_PANEL_CHILDREN];
+    int orig_ys[MAX_PANEL_CHILDREN];
+    int count = 0;
+
+    uint32_t *dropdowns[4];
+    int dd_cnt = 0;
+    uint32_t *twin_10109 = NULL;
+    uint32_t *ref_10105  = NULL;
+
+    for (int i = 0; i < raw_count && count < MAX_PANEL_CHILDREN; ++i) {
+        uint32_t *c = raw_items[i];
+        if (!c)
+            continue;
+        int cid = (int)(int32_t)c[0];
+        if (cid == 10120 || cid == 10317) {
+            if (dd_cnt < 4)
+                dropdowns[dd_cnt++] = c;
+            continue;
+        }
+        if (cid == 10109) {
+            twin_10109 = c;
+            continue;
+        }
+        if (cid == 10105)
+            ref_10105 = c;
+        /* Skip permanently hidden controls (e.g. unused MinExp/MaxExp 10125..10128
+         * or Ladder text 10210), while keeping quest-toggled containers 10183/10199/10122. */
+        if ((c[1] & 0x10u) && cid != 10183 && cid != 10199 && cid != 10122)
+            continue;
+        items[count]   = c;
+        orig_xs[count] = (int)(int32_t)c[4];
+        orig_ys[count] = (int)(int32_t)c[5];
+        ++count;
+    }
+
     /* Sort into natural reading order: top-to-bottom, left-to-right */
     for (int i = 1; i < count; ++i) {
         uint32_t *key = items[i];
-        int ky = (int)(int32_t)key[5];
-        int kx = (int)(int32_t)key[4];
+        int kx = orig_xs[i];
+        int ky = orig_ys[i];
         int j = i - 1;
         while (j >= 0) {
-            int jy = (int)(int32_t)items[j][5];
-            int jx = (int)(int32_t)items[j][4];
+            int jy = orig_ys[j];
+            int jx = orig_xs[j];
             /* Group controls within 8px vertically as same row */
             bool after = (jy > ky + 8) || ((jy >= ky - 8 && jy <= ky + 8) && jx > kx);
             if (!after)
                 break;
-            items[j + 1] = items[j];
+            items[j + 1]   = items[j];
+            orig_xs[j + 1] = orig_xs[j];
+            orig_ys[j + 1] = orig_ys[j];
             --j;
         }
-        items[j + 1] = key;
+        items[j + 1]   = key;
+        orig_xs[j + 1] = kx;
+        orig_ys[j + 1] = ky;
     }
 
     int cur_y = start_y;
@@ -1322,14 +1405,17 @@ static int reflow_form_children(uint32_t **items, int count,
         uint32_t *c = items[i];
         if (!c)
             continue;
+        int cid = (int)(int32_t)c[0];
         uintptr_t fn = (uintptr_t)c[95];
         int ow = (int)(int32_t)c[2];
         int oh = (int)(int32_t)c[3];
         int fptr = (int)c[59];
+        int sub_non_aux = count_non_aux_children(c, aux, aux_count);
 
-        if (c[100] && !is_listbox(fn)) {
-            /* Nested sub-container (including static group boxes like servopts
-             * 10183/10197/10199): always reflow its direct children first! */
+        if (sub_non_aux > 0) {
+            /* Nested sub-container (including SCROLLLISTBOX group boxes like
+             * servopts 10183/10197/10199, lwgenerl 10310, advserv 2104):
+             * always reflow its direct children across the full container width! */
             uint32_t *sub_items[MAX_PANEL_CHILDREN];
             int scnt = 0;
             for (uint32_t *sc = (uint32_t *)(uintptr_t)c[100]; sc && scnt < MAX_PANEL_CHILDREN;
@@ -1337,29 +1423,69 @@ static int reflow_form_children(uint32_t **items, int count,
                 if (!is_lb_aux_widget(sc, aux, aux_count))
                     sub_items[scnt++] = sc;
             }
+            c[1] &= ~0x80u;
             sub_46A9B0(c, start_x, cur_y);
-            int sub_end = reflow_form_children(sub_items, scnt, 8, 6, avail_w - 16, aux, aux_count);
+            int sub_end = reflow_form_children(sub_items, scnt, 10, 8, avail_w - 20, aux, aux_count);
             if (sub_end < 28) sub_end = 28;
-            sub_46AB20(c, avail_w, sub_end + 4);
+            sub_46AB20(c, avail_w, sub_end + 6);
             cur_y += sub_end + 10;
+        } else if (cid == 10330) {
+            /* "Use Teams" push-styled checkbox uses fixed 95x20 UIButtonXlg art */
+            int bw = (ow < 95) ? 95 : ow;
+            int bh = (oh < 20) ? 20 : oh;
+            sub_46A9B0(c, start_x + (avail_w - bw) / 2, cur_y);
+            sub_46AB20(c, bw, bh);
+            cur_y += bh + 6;
         } else if (is_checkbox_or_radio(fn)) {
             int lw = 0;
             uint16_t *lbl = (uint16_t *)(c + 27);
             if (*lbl)
                 sub_43F840(fptr, lbl, &lw, NULL, 0);
-            int need_w = lw + 38;
+            int need_w = lw + 36;
             int row_h = (oh < 24) ? 24 : oh;
 
-            /* Pair two short checkboxes/radios side-by-side when both fit half_w */
-            if (half_w >= 180 && need_w <= half_w - 6 && i + 1 < count &&
-                !items[i + 1][100] &&
+            /* Pair [checkbox_or_radio, editbox] if they shared a row in stock .wnd
+             * (e.g. Access tab Min Ping, Max Ping, Private Game + Password, AdvServ User) */
+            if (half_w >= 180 && i + 1 < count &&
+                count_non_aux_children(items[i + 1], aux, aux_count) == 0 &&
+                is_editbox((uintptr_t)items[i + 1][95])) {
+                int dy_eb = orig_ys[i + 1] - orig_ys[i];
+                if (dy_eb >= -10 && dy_eb <= 10) {
+                    uint32_t *c2 = items[i + 1];
+                    int ow2 = (int)(int32_t)c2[2];
+                    int oh2 = (int)(int32_t)c2[3];
+                    if (oh2 < 24) oh2 = 24;
+                    if (oh2 > row_h) row_h = oh2;
+                    float esx = (ow2 > 0) ? ((float)half_w / (float)ow2) : 1.0f;
+                    if (esx < 1.0f) esx = 1.0f;
+                    scale_editbox_field_width(c2, half_w, esx);
+                    sub_46A9B0(c, start_x, cur_y);
+                    sub_46AB20(c, half_w, row_h);
+                    sub_46A9B0(c2, col2_x, cur_y);
+                    sub_46AB20(c2, half_w, row_h);
+                    cur_y += row_h + 6;
+                    ++i;
+                    continue;
+                }
+            }
+
+            /* Pair two short checkboxes/radios side-by-side when both fit half_w
+             * and the second one is not paired with an editbox on its own row. */
+            bool next_paired_eb = (i + 2 < count &&
+                                   is_editbox((uintptr_t)items[i + 2][95]) &&
+                                   (orig_ys[i + 2] - orig_ys[i + 1]) >= -10 &&
+                                   (orig_ys[i + 2] - orig_ys[i + 1]) <= 10);
+            if (half_w >= 180 && need_w <= half_w - 4 && i + 1 < count &&
+                !next_paired_eb &&
+                (int)(int32_t)items[i + 1][0] != 10330 &&
+                count_non_aux_children(items[i + 1], aux, aux_count) == 0 &&
                 is_checkbox_or_radio((uintptr_t)items[i + 1][95])) {
                 uint32_t *c2 = items[i + 1];
                 int lw2 = 0;
                 uint16_t *lbl2 = (uint16_t *)(c2 + 27);
                 if (*lbl2)
                     sub_43F840((int)c2[59], lbl2, &lw2, NULL, 0);
-                if (lw2 + 38 <= half_w - 6) {
+                if (lw2 + 36 <= half_w - 4) {
                     int oh2 = (int)(int32_t)c2[3];
                     if (oh2 > row_h) row_h = oh2;
                     sub_46A9B0(c, start_x, cur_y);
@@ -1386,23 +1512,52 @@ static int reflow_form_children(uint32_t **items, int count,
             int row_h = (oh < 26) ? 26 : oh;
             /* Pair [editbox, pushbutton] side-by-side if they shared a row in stock .wnd
              * (e.g. servopts "Lesson [15]" + "Advanced...", "Time Limit [0]" + "Defaults") */
-            if (half_w >= 180 && i + 1 < count && !items[i + 1][100] &&
+            if (half_w >= 180 && i + 1 < count &&
+                count_non_aux_children(items[i + 1], aux, aux_count) == 0 &&
                 is_pushbutton((uintptr_t)items[i + 1][95])) {
                 uint32_t *c2 = items[i + 1];
-                int dy_orig = (int)(int32_t)c2[5] - (int)(int32_t)c[5];
+                int dy_orig = orig_ys[i + 1] - orig_ys[i];
                 if (dy_orig >= -12 && dy_orig <= 12) {
                     int h2 = (int)(int32_t)c2[3];
                     if (h2 > row_h) row_h = h2;
                     float esx = (ow > 0) ? ((float)half_w / (float)ow) : 1.0f;
                     if (esx < 1.0f) esx = 1.0f;
                     scale_editbox_field_width(c, half_w, esx);
-                    if (*(uint16_t *)(c2 + 27))
-                        convert_button_to_resizable(c2);
+                    convert_button_to_resizable(c2);
                     sub_46A9B0(c, start_x, cur_y);
                     sub_46AB20(c, half_w, row_h);
                     sub_46A9B0(c2, col2_x, cur_y);
                     sub_46AB20(c2, half_w, row_h);
                     cur_y += row_h + 8;
+                    ++i;
+                    continue;
+                }
+            }
+            /* Pair [editbox, compact leaf listbox] on same stock row
+             * (e.g. Access tab "Max Players [32]" + "Disallow: WARRIOR/WIZARD/CONJURER") */
+            if (half_w >= 180 && i + 1 < count &&
+                count_non_aux_children(items[i + 1], aux, aux_count) == 0 &&
+                is_listbox((uintptr_t)items[i + 1][95])) {
+                int dy_lb = orig_ys[i + 1] - orig_ys[i];
+                if (dy_lb >= -12 && dy_lb <= 12) {
+                    uint32_t *c2 = items[i + 1];
+                    bool has_aux2 = false;
+                    for (int a = 0; a < aux_count; ++a) {
+                        if (aux[a].lb == c2) { has_aux2 = true; break; }
+                    }
+                    int lb2_w = has_aux2 ? (half_w - 20) : half_w;
+                    int lb2_h = (int)(int32_t)c2[3];
+                    if (lb2_h < 62) lb2_h = 62;
+                    if (lb2_h > 92) lb2_h = 92;
+                    float esx = (ow > 0) ? ((float)half_w / (float)ow) : 1.0f;
+                    if (esx < 1.0f) esx = 1.0f;
+                    scale_editbox_field_width(c, half_w, esx);
+                    sub_46A9B0(c, start_x, cur_y);
+                    sub_46AB20(c, half_w, row_h);
+                    sub_46A9B0(c2, col2_x, cur_y);
+                    sub_46AB20(c2, lb2_w, lb2_h);
+                    reset_listbox_metrics(c2);
+                    cur_y += lb2_h + 6;
                     ++i;
                     continue;
                 }
@@ -1414,54 +1569,162 @@ static int reflow_form_children(uint32_t **items, int count,
             sub_46AB20(c, avail_w, row_h);
             cur_y += row_h + 8;
         } else if (is_static_draw(fn)) {
-            int row_h = (oh < 20) ? 20 : oh;
+            /* Pair [static_text, pushbutton] when on same stock row
+             * (e.g. "Current game Type:" + "[Arena]", "Connection Type:" + "[Modem]") */
+            if (half_w >= 180 && i + 1 < count &&
+                count_non_aux_children(items[i + 1], aux, aux_count) == 0 &&
+                is_pushbutton((uintptr_t)items[i + 1][95])) {
+                int dy_btn = orig_ys[i + 1] - orig_ys[i];
+                if (dy_btn >= -10 && dy_btn <= 10) {
+                    uint32_t *c2 = items[i + 1];
+                    int row_h = (oh < 26) ? 26 : oh;
+                    int h2 = (int)(int32_t)c2[3];
+                    if (h2 > row_h) row_h = h2;
+                    convert_button_to_resizable(c2);
+                    sub_46A9B0(c, start_x, cur_y);
+                    sub_46AB20(c, half_w, row_h);
+                    sub_46A9B0(c2, col2_x, cur_y);
+                    sub_46AB20(c2, half_w, row_h);
+                    cur_y += row_h + 6;
+                    ++i;
+                    continue;
+                }
+            }
+            /* Pair two short static labels on the same stock row (e.g. Slowest / Fastest) */
+            if (half_w >= 180 && i + 1 < count &&
+                count_non_aux_children(items[i + 1], aux, aux_count) == 0 &&
+                is_static_draw((uintptr_t)items[i + 1][95]) &&
+                (orig_ys[i + 1] - orig_ys[i]) >= -4 &&
+                (orig_ys[i + 1] - orig_ys[i]) <= 4 &&
+                orig_xs[i + 1] > orig_xs[i] + 32) {
+                uint32_t *c2 = items[i + 1];
+                int row_h = (oh < 18) ? 18 : oh;
+                sub_46A9B0(c, start_x, cur_y);
+                sub_46AB20(c, half_w, row_h);
+                sub_46A9B0(c2, col2_x, cur_y);
+                sub_46AB20(c2, half_w, row_h);
+                cur_y += row_h + 4;
+                ++i;
+                continue;
+            }
+
+            int row_h = (oh < 18) ? 18 : oh;
             if (valid_u32_ptr(c[8])) {
                 uint16_t *st = *(uint16_t **)(uintptr_t)c[8];
                 if (st && *st) {
                     uint32_t mh = 0;
-                    sub_43F840(fptr, st, NULL, &mh, avail_w - 4);
-                    if ((int)mh + 6 > row_h)
-                        row_h = (int)mh + 6;
+                    sub_43F840(fptr, st, NULL, &mh, avail_w - 6);
+                    if ((int)mh + 4 > row_h)
+                        row_h = (int)mh + 4;
                 }
             }
             sub_46A9B0(c, start_x, cur_y);
             sub_46AB20(c, avail_w, row_h);
-            cur_y += row_h + 6;
+            cur_y += row_h + 4;
         } else if (is_listbox(fn)) {
             bool has_aux = false;
             for (int a = 0; a < aux_count; ++a) {
                 if (aux[a].lb == c) { has_aux = true; break; }
             }
+            /* Pair two side-by-side listboxes (e.g. Access tab Current Users 10200
+             * + Banned/Allowed List 10105 + Add-User input 10111) */
+            if (half_w >= 180 && i + 1 < count &&
+                count_non_aux_children(items[i + 1], aux, aux_count) == 0 &&
+                is_listbox((uintptr_t)items[i + 1][95]) &&
+                (orig_ys[i + 1] - orig_ys[i]) >= -16 &&
+                (orig_ys[i + 1] - orig_ys[i]) <= 16) {
+                uint32_t *c2 = items[i + 1];
+                bool has_aux2 = false;
+                for (int a = 0; a < aux_count; ++a) {
+                    if (aux[a].lb == c2) { has_aux2 = true; break; }
+                }
+                int w1 = has_aux  ? (half_w - 20) : half_w;
+                int w2 = has_aux2 ? (half_w - 20) : half_w;
+                if (i + 2 < count && is_editbox((uintptr_t)items[i + 2][95]) &&
+                    (int)(int32_t)items[i + 2][0] == 10111) {
+                    uint32_t *c3 = items[i + 2];
+                    float esx = ((int32_t)c3[2] > 0) ? ((float)half_w / (float)(int32_t)c3[2]) : 1.0f;
+                    scale_editbox_field_width(c3, half_w, esx);
+                    sub_46A9B0(c,  start_x, cur_y);
+                    sub_46AB20(c,  w1, 112);
+                    sub_46A9B0(c2, col2_x, cur_y);
+                    sub_46AB20(c2, w2, 82);
+                    sub_46A9B0(c3, col2_x, cur_y + 86);
+                    sub_46AB20(c3, half_w, 26);
+                    reset_listbox_metrics(c);
+                    reset_listbox_metrics(c2);
+                    cur_y += 118;
+                    i += 2;
+                    continue;
+                }
+                sub_46A9B0(c,  start_x, cur_y);
+                sub_46AB20(c,  w1, 96);
+                sub_46A9B0(c2, col2_x, cur_y);
+                sub_46AB20(c2, w2, 96);
+                reset_listbox_metrics(c);
+                reset_listbox_metrics(c2);
+                cur_y += 102;
+                ++i;
+                continue;
+            }
             int lb_w = has_aux ? (avail_w - 20) : avail_w;
             int lb_h = oh;
-            if (lb_h < 96) lb_h = 96;
-            if (lb_h > 140) lb_h = 140;
+            if (has_aux) {
+                if (lb_h < 96)  lb_h = 96;
+                if (lb_h > 132) lb_h = 132;
+            } else {
+                if (lb_h < 62)  lb_h = 62;
+                if (lb_h > 120) lb_h = 120;
+            }
             sub_46A9B0(c, start_x, cur_y);
             sub_46AB20(c, lb_w, lb_h);
+            reset_listbox_metrics(c);
             cur_y += lb_h + 8;
         } else if (is_pushbutton(fn)) {
             int row_h = (oh < 26) ? 26 : oh;
+            convert_button_to_resizable(c);
+            /* 4-up compact button row (e.g. Access tab Kick | Ban   Add | Del) */
+            if (half_w >= 180 && i + 3 < count &&
+                !items[i + 1][100] && !items[i + 2][100] && !items[i + 3][100] &&
+                is_pushbutton((uintptr_t)items[i + 1][95]) &&
+                is_pushbutton((uintptr_t)items[i + 2][95]) &&
+                is_pushbutton((uintptr_t)items[i + 3][95]) &&
+                (orig_ys[i + 3] - orig_ys[i]) >= -8 &&
+                (orig_ys[i + 3] - orig_ys[i]) <= 8) {
+                int sub_w = (half_w - 8) / 2;
+                for (int k = 0; k < 4; ++k) {
+                    convert_button_to_resizable(items[i + k]);
+                    int bx = (k < 2) ? (start_x + k * (sub_w + 8))
+                                     : (col2_x + (k - 2) * (sub_w + 8));
+                    sub_46A9B0(items[i + k], bx, cur_y);
+                    sub_46AB20(items[i + k], sub_w, row_h);
+                }
+                cur_y += row_h + 8;
+                i += 3;
+                continue;
+            }
             int bw = ow;
             uint16_t *lbl = (uint16_t *)(c + 27);
             if (*lbl) {
                 int lw = 0;
                 sub_43F840(fptr, lbl, &lw, NULL, 0);
-                if (lw + 18 > bw)
-                    bw = lw + 18;
-                convert_button_to_resizable(c);
+                if (lw + 24 > bw)
+                    bw = lw + 24;
             }
             if (half_w >= 160 && bw <= half_w && i + 1 < count &&
-                !items[i + 1][100] &&
-                is_pushbutton((uintptr_t)items[i + 1][95])) {
+                count_non_aux_children(items[i + 1], aux, aux_count) == 0 &&
+                is_pushbutton((uintptr_t)items[i + 1][95]) &&
+                (orig_ys[i + 1] - orig_ys[i]) >= -10 &&
+                (orig_ys[i + 1] - orig_ys[i]) <= 10) {
                 uint32_t *c2 = items[i + 1];
                 int bw2 = (int)(int32_t)c2[2];
                 uint16_t *lbl2 = (uint16_t *)(c2 + 27);
+                convert_button_to_resizable(c2);
                 if (*lbl2) {
                     int lw2 = 0;
                     sub_43F840((int)c2[59], lbl2, &lw2, NULL, 0);
-                    if (lw2 + 18 > bw2)
-                        bw2 = lw2 + 18;
-                    convert_button_to_resizable(c2);
+                    if (lw2 + 24 > bw2)
+                        bw2 = lw2 + 24;
                 }
                 if (bw2 <= half_w) {
                     int h2 = (int)(int32_t)c2[3];
@@ -1475,9 +1738,9 @@ static int reflow_form_children(uint32_t **items, int count,
                     continue;
                 }
             }
+            if (bw < 164) bw = 164;
             if (bw > avail_w) bw = avail_w;
-            if (*lbl && bw < avail_w) bw = avail_w;
-            sub_46A9B0(c, start_x, cur_y);
+            sub_46A9B0(c, start_x + (avail_w - bw) / 2, cur_y);
             sub_46AB20(c, bw, row_h);
             cur_y += row_h + 8;
         } else {
@@ -1489,6 +1752,41 @@ static int reflow_form_children(uint32_t **items, int count,
             cur_y += row_h + 6;
         }
     }
+
+    /* Sync toggled Allowed List (10109) onto Banned List (10105) slot */
+    if (twin_10109 && ref_10105) {
+        sub_46A9B0(twin_10109, (int)(int32_t)ref_10105[4], (int)(int32_t)ref_10105[5]);
+        sub_46AB20(twin_10109, (int)(int32_t)ref_10105[2], (int)(int32_t)ref_10105[3]);
+        reset_listbox_metrics(twin_10109);
+    }
+
+    /* Anchor popup dropdown listboxes (10120 GameType, 10317 ConnType) directly
+     * beneath their trigger button with an opaque bordered backdrop. */
+    for (int d = 0; d < dd_cnt; ++d) {
+        uint32_t *dd = dropdowns[d];
+        int want_btn = ((int)(int32_t)dd[0] == 10120) ? 10119 : 10316;
+        uint32_t *btn = NULL;
+        for (int i = 0; i < count; ++i) {
+            if ((int)(int32_t)items[i][0] == want_btn) {
+                btn = items[i];
+                break;
+            }
+        }
+        dd[1] &= ~0x80u;
+        dd[1] |= 0x1000u;
+        dd[14] = (uint32_t)sub_4344A0(18, 15, 12);
+        dd[16] = (uint32_t)sub_4344A0(168, 134, 82);
+        if (btn) {
+            int bx = (int)(int32_t)btn[4];
+            int by = (int)(int32_t)btn[5] + (int)(int32_t)btn[3];
+            int bw = (int)(int32_t)btn[2];
+            int bh = 96;
+            sub_46A9B0(dd, bx, by);
+            sub_46AB20(dd, bw, bh);
+        }
+        reset_listbox_metrics(dd);
+    }
+
     return cur_y;
 }
 
@@ -1511,6 +1809,7 @@ void nox_3ds_ui_takeover_form_dialog(void *root_wnd)
     convert_to_stone_takeover_bg(w);
     sub_46AB20(w, new_w, new_h);
     sub_46A9B0(w, new_x, new_y);
+    sub_46A8C0((int)(uintptr_t)w);
 
     lb_aux_t aux[12];
     int aux_count = 0;
@@ -1594,6 +1893,71 @@ void nox_3ds_ui_takeover_form_dialog(void *root_wnd)
     invalidate_panel_slot(root_wnd);
 }
 
+/* Unobstructed interior viewport inside servopts.wnd (10100) Main Border (10195):
+ * 10195 sits at (16, 40, 592, 382), whose +/-10px 9-slice stone bars span
+ * x = 6..26, 598..618 and y = 30..50, 412..432. Placing all tab body panels at
+ * (28, 52, 568, 358) clears every stone edge cleanly on all four sides. */
+#define SERVOPTS_BODY_X  28
+#define SERVOPTS_BODY_Y  52
+#define SERVOPTS_BODY_W  568
+#define SERVOPTS_BODY_H  358
+
+void nox_3ds_ui_reflow_servopts_subpanel(void *panel_wnd)
+{
+    uint32_t *c = (uint32_t *)panel_wnd;
+    if (!c || !nox_3ds_font_is_enabled())
+        return;
+
+    uint32_t *parent = valid_u32_ptr(c[99]) ? (uint32_t *)(uintptr_t)c[99] : NULL;
+    bool inside_10150 = (parent && (int)(int32_t)parent[0] == 10150);
+    int px = inside_10150 ? 0 : SERVOPTS_BODY_X;
+    int py = inside_10150 ? 0 : SERVOPTS_BODY_Y;
+
+    c[1] &= ~(0x80u | 0x1000u);
+    c[11] &= ~2048u;
+    c[14] = (uint32_t)sub_4344A0(22, 18, 15);
+    c[16] = 0x80000000u;
+    sub_46A9B0(c, px, py);
+    sub_46AB20(c, SERVOPTS_BODY_W, SERVOPTS_BODY_H);
+
+    lb_aux_t aux[16];
+    int aux_count = 0;
+    collect_lb_aux_rec(c, aux, &aux_count, 16);
+
+    uint32_t *sub_items[MAX_PANEL_CHILDREN];
+    int scnt = 0;
+    for (uint32_t *sc = (uint32_t *)(uintptr_t)c[100]; sc && scnt < MAX_PANEL_CHILDREN;
+         sc = (uint32_t *)(uintptr_t)sc[97]) {
+        if (!is_lb_aux_widget(sc, aux, aux_count))
+            sub_items[scnt++] = sc;
+    }
+
+    if (scnt > 0) {
+        reflow_form_children(sub_items, scnt, 8, 6, SERVOPTS_BODY_W - 24, aux, aux_count);
+        panel_meta_t *meta = alloc_panel_meta(c);
+        memset(meta, 0, sizeof(*meta));
+        meta->panel_wnd  = c;
+        meta->pad_top    = 0;
+        meta->pad_bottom = 0;
+        invalidate_panel_slot(c);
+    }
+
+    for (int a = 0; a < aux_count; ++a)
+        anchor_lb_aux(&aux[a]);
+}
+
+static int servopts_tab_order(int cid)
+{
+    switch (cid) {
+        case 10160: return 0; /* Game (primary)    */
+        case 10159: return 1; /* Server (primary)  */
+        case 10163: return 2; /* General (sub-tab) */
+        case 10161: return 3; /* Access (sub-tab)  */
+        case 10162: return 4; /* Teams (sub-tab)   */
+        default:    return 5;
+    }
+}
+
 void nox_3ds_ui_takeover_servopts(void *root_wnd)
 {
     uint32_t *w = (uint32_t *)root_wnd;
@@ -1610,66 +1974,22 @@ void nox_3ds_ui_takeover_servopts(void *root_wnd)
     const int new_w = 624;
     const int new_h = 472;
 
-    lb_aux_t aux[12];
+    lb_aux_t aux[16];
     int aux_count = 0;
-    collect_lb_aux_rec(w, aux, &aux_count, 12);
-
-    /* Measure the ACTUAL occupied bounding box of servopts children so even if
-     * the root .wnd had wide unused margins, controls expand edge-to-edge! */
-    int min_x = orig_w, max_r = 0;
-    int min_y = orig_h, max_b = 0;
-    for (uint32_t *c = (uint32_t *)(uintptr_t)w[100]; c; c = (uint32_t *)(uintptr_t)c[97]) {
-        if (is_lb_aux_widget(c, aux, aux_count))
-            continue;
-        int cid = (int)(int32_t)c[0];
-        if (cid == 10120)
-            continue;
-        int ox = (int)(int32_t)c[4];
-        int oy = (int)(int32_t)c[5];
-        int ow = (int)(int32_t)c[2];
-        int oh = (int)(int32_t)c[3];
-        if (ow <= 0 || oh <= 0)
-            continue;
-        /* Ignore full-window backdrop children when measuring interactive span */
-        if (!c[100] && ow >= orig_w - 4 && oh >= orig_h - 4)
-            continue;
-        if (ox < min_x) min_x = ox;
-        if (oy < min_y) min_y = oy;
-        if (ox + ow > max_r) max_r = ox + ow;
-        if (oy + oh > max_b) max_b = oy + oh;
-    }
-
-    int span_w = max_r - min_x;
-    int span_h = max_b - min_y;
-    if (span_w < 80) { min_x = 0; span_w = orig_w; }
-    if (span_h < 80) { min_y = 0; span_h = orig_h; }
-
-    const int pad_x = 12;
-    const int pad_y = 10;
-    float sx = (float)(new_w - 2 * pad_x) / (float)span_w;
-    float sy = (float)(new_h - 2 * pad_y) / (float)span_h;
-    if (sx < 1.0f) sx = 1.0f;
-    if (sy < 1.0f) sy = 1.0f;
+    collect_lb_aux_rec(w, aux, &aux_count, 16);
 
     convert_to_stone_takeover_bg(w);
     sub_46AB20(w, new_w, new_h);
     sub_46A9B0(w, new_x, new_y);
+    sub_46A8C0((int)(uintptr_t)w);
 
-    /* Partition servopts direct children into:
-     *  - Top tab buttons (10134 Game, 10135 Server): keep exact stock sprite width
-     *    so tab text stays dead-center inside its Westwood tab art.
-     *  - Bottom footer buttons (GO!, Cancel): resizable centered medieval buttons.
-     *  - Tab body containers (10150, 10153, etc.): full-width scrollable band
-     *    between tabs and footer, recursively reflowing nested group boxes.
-     *  - Other controls (e.g. 10120 game-mode dropdown): clamped inside frame. */
     uint32_t *tabs[8];
     int tab_cnt = 0;
     uint32_t *footers[8];
     int ftr_cnt = 0;
+    uint32_t *ok_twin = NULL;
     uint32_t *panels[16];
     int pnl_cnt = 0;
-    uint32_t *others[MAX_PANEL_CHILDREN];
-    int oth_cnt = 0;
 
     for (uint32_t *c = (uint32_t *)(uintptr_t)w[100]; c; c = (uint32_t *)(uintptr_t)c[97]) {
         if (is_lb_aux_widget(c, aux, aux_count))
@@ -1677,45 +1997,59 @@ void nox_3ds_ui_takeover_servopts(void *root_wnd)
         int cid = (int)(int32_t)c[0];
         uintptr_t fn = (uintptr_t)c[95];
         int oy = (int)(int32_t)c[5];
-        int oh = (int)(int32_t)c[3];
 
-        if ((cid == 10134 || cid == 10135 ||
-             (!c[100] && oy < min_y + 28 && oh <= 36 && cid != 10120)) &&
-            tab_cnt < 8) {
-            tabs[tab_cnt++] = c;
-        } else if (is_pushbutton(fn) && !c[100] && oy >= max_b - 48 && ftr_cnt < 8) {
+        if (cid == 10160 || cid == 10159 || cid == 10163 || cid == 10161 || cid == 10162) {
+            if (tab_cnt < 8)
+                tabs[tab_cnt++] = c;
+        } else if (cid == 10195) {
+            /* Main Border around tab viewport (stone bars span +/-10px of edges) */
+            sub_46A9B0(c, 16, 40);
+            sub_46AB20(c, 592, 382);
+        } else if (cid == 10196) {
+            /* Suppress duplicate inner Game Border so unhiding 10196 on Server tab
+             * never draws a second stone border across General/Access controls. */
+            c[1] &= ~(0x80u | 0x1000u);
+            c[11] &= ~2048u;
+            c[14] = 0x80000000u;
+            c[16] = 0x80000000u;
+            sub_46A9B0(c, SERVOPTS_BODY_X, SERVOPTS_BODY_Y);
+            sub_46AB20(c, SERVOPTS_BODY_W, SERVOPTS_BODY_H);
+        } else if (cid == 10149) {
+            /* Hidden "Ok" button shares the exact left-footer slot with "GO!" (10145) */
+            ok_twin = c;
+        } else if (is_pushbutton(fn) && !c[100] && oy >= orig_h - 56 && ftr_cnt < 8) {
             footers[ftr_cnt++] = c;
         } else if (c[100] && pnl_cnt < 16) {
             panels[pnl_cnt++] = c;
-        } else if (oth_cnt < MAX_PANEL_CHILDREN) {
-            others[oth_cnt++] = c;
         }
     }
 
-    /* Sort & place top tabs side-by-side at stock sprite width so tab text
-     * aligns cleanly on top of the Westwood tab art. */
+    /* Place primary tabs (Game | Server) on the left and Server sub-tabs
+     * (General | Access | Teams) cleanly to their right at stock sprite width. */
     for (int i = 1; i < tab_cnt; ++i) {
         uint32_t *k = tabs[i];
+        int ko = servopts_tab_order((int)(int32_t)k[0]);
         int j = i - 1;
-        while (j >= 0 && (int32_t)tabs[j][4] > (int32_t)k[4]) {
+        while (j >= 0 && servopts_tab_order((int)(int32_t)tabs[j][0]) > ko) {
             tabs[j + 1] = tabs[j];
             --j;
         }
         tabs[j + 1] = k;
     }
     int tab_x = 16;
-    int tab_bottom = 38;
     for (int i = 0; i < tab_cnt; ++i) {
         uint32_t *t = tabs[i];
+        int tid = (int)(int32_t)t[0];
+        if (tid == 10163 && tab_x < 236)
+            tab_x = 236; /* visual group gap between Game|Server and General|Access|Teams */
         int tw = (int)(int32_t)t[2];
         int th = (int)(int32_t)t[3];
-        if (tw < 48) tw = 48;
-        if (th < 22) th = 22;
-        sub_46A9B0(t, tab_x, 12);
+        if (tw < 95) tw = 95;
+        if (th < 20) th = 20;
+        t[1] |= 0x20u; /* ABOVE so tabs always win child hit-testing */
+        sub_46A9B0(t, tab_x, 8);
         sub_46AB20(t, tw, th);
         tab_x += tw + 8;
-        if (12 + th + 4 > tab_bottom)
-            tab_bottom = 12 + th + 4;
     }
 
     /* Sort & place footer buttons cleanly inside the bottom stone border */
@@ -1728,89 +2062,48 @@ void nox_3ds_ui_takeover_servopts(void *root_wnd)
         }
         footers[j + 1] = k;
     }
-    int footer_y = (ftr_cnt > 0) ? (new_h - 42) : (new_h - 12);
+    int footer_y = new_h - 38;
+    uint32_t *go_btn = NULL;
     if (ftr_cnt > 0) {
-        int gap = 16;
+        int gap = 20;
         int btn_w = (new_w - 40 - gap * (ftr_cnt - 1)) / ftr_cnt;
-        if (btn_w > 168) btn_w = 168;
-        if (btn_w < 84)  btn_w = 84;
+        if (btn_w > 176) btn_w = 176;
+        if (btn_w < 96)  btn_w = 96;
         int total_w = ftr_cnt * btn_w + (ftr_cnt - 1) * gap;
         int bx = (new_w - total_w) / 2;
         for (int i = 0; i < ftr_cnt; ++i) {
             uint32_t *b = footers[i];
-            if (*(uint16_t *)(b + 27))
-                convert_button_to_resizable(b);
+            if ((int)(int32_t)b[0] == 10145)
+                go_btn = b;
+            convert_button_to_resizable(b);
             sub_46A9B0(b, bx, footer_y);
-            sub_46AB20(b, btn_w, 30);
+            sub_46AB20(b, btn_w, 28);
             bx += btn_w + gap;
         }
     }
-
-    /* Place main tab body panels (10150 Game, 10153 Server) cleanly between
-     * tabs and footer, and recursively reflow all nested controls & group boxes. */
-    int body_x = 12;
-    int body_y = tab_bottom;
-    int body_w = new_w - 24;
-    int body_h = footer_y - body_y - 8;
-    if (body_h < 120) body_h = 120;
-
-    for (int i = 0; i < pnl_cnt; ++i) {
-        uint32_t *c = panels[i];
-        c[1] &= ~0x80u;
-        c[14] = (uint32_t)sub_4344A0(26, 22, 18);
-        c[16] = (uint32_t)sub_4344A0(112, 88, 54);
-        sub_46A9B0(c, body_x, body_y);
-        sub_46AB20(c, body_w, body_h);
-
-        uint32_t *sub_items[MAX_PANEL_CHILDREN];
-        int scnt = 0;
-        for (uint32_t *sc = (uint32_t *)(uintptr_t)c[100]; sc && scnt < MAX_PANEL_CHILDREN;
-             sc = (uint32_t *)(uintptr_t)sc[97]) {
-            if (!is_lb_aux_widget(sc, aux, aux_count))
-                sub_items[scnt++] = sc;
-        }
-        if (scnt > 0) {
-            reflow_form_children(sub_items, scnt, 8, 6, body_w - 24, aux, aux_count);
-            panel_meta_t *meta = alloc_panel_meta(c);
-            memset(meta, 0, sizeof(*meta));
-            meta->panel_wnd  = c;
-            meta->pad_top    = 0;
-            meta->pad_bottom = 0;
-            invalidate_panel_slot(c);
-        }
+    if (ok_twin && go_btn) {
+        convert_button_to_resizable(ok_twin);
+        sub_46A9B0(ok_twin, (int)(int32_t)go_btn[4], (int)(int32_t)go_btn[5]);
+        sub_46AB20(ok_twin, (int)(int32_t)go_btn[2], (int)(int32_t)go_btn[3]);
     }
 
-    /* Handle any remaining direct controls (such as 10120 game-mode dropdown) */
-    for (int i = 0; i < oth_cnt; ++i) {
-        uint32_t *c = others[i];
+    /* Reflow Game wrapper 10150 -> 10153 and any active sub-tab panels */
+    for (int i = 0; i < pnl_cnt; ++i) {
+        uint32_t *c = panels[i];
         int cid = (int)(int32_t)c[0];
-        int ox = (int)(int32_t)c[4];
-        int oy = (int)(int32_t)c[5];
-        int ow = (int)(int32_t)c[2];
-        int oh = (int)(int32_t)c[3];
-
-        int nx = pad_x + (int)((float)(ox - min_x) * sx + 0.5f);
-        int ny = pad_y + (int)((float)(oy - min_y) * sy + 0.5f);
-        int nw = (int)((float)ow * sx + 0.5f);
-        int nh = (int)((float)oh * sy + 0.5f);
-
-        if (cid == 10120) {
-            if (nw < ow) nw = ow;
-            if (nh < oh) nh = oh;
-            if (nx + nw > new_w - pad_x) nx = new_w - pad_x - nw;
-            if (nx < pad_x) nx = pad_x;
-            sub_46A9B0(c, nx, ny);
-            sub_46AB20(c, nw, nh);
-            continue;
+        if (cid == 10150) {
+            c[1] &= ~(0x80u | 0x1000u);
+            c[14] = (uint32_t)sub_4344A0(22, 18, 15);
+            c[16] = 0x80000000u;
+            sub_46A9B0(c, SERVOPTS_BODY_X, SERVOPTS_BODY_Y);
+            sub_46AB20(c, SERVOPTS_BODY_W, SERVOPTS_BODY_H);
+            for (uint32_t *sc = (uint32_t *)(uintptr_t)c[100]; sc; sc = (uint32_t *)(uintptr_t)sc[97]) {
+                if ((int)(int32_t)sc[0] == 10153)
+                    nox_3ds_ui_reflow_servopts_subpanel(sc);
+            }
+        } else {
+            nox_3ds_ui_reflow_servopts_subpanel(c);
         }
-        if (nx < pad_x) nx = pad_x;
-        if (ny < body_y) ny = body_y;
-        if (nx + nw > new_w - pad_x) nw = new_w - pad_x - nx;
-        if (ny + nh > footer_y - 4) nh = footer_y - 4 - ny;
-        if (nw < 16) nw = (ow > 16) ? ow : 16;
-        if (nh < 16) nh = (oh > 16) ? oh : 16;
-        sub_46A9B0(c, nx, ny);
-        sub_46AB20(c, nw, nh);
     }
 
     for (int a = 0; a < aux_count; ++a)

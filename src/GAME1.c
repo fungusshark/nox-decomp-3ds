@@ -53128,8 +53128,10 @@ LABEL_24:
 
             /* Screen-Space UI: centered notification / system message text
              * (sub_445530, skipped in the Top world pass) explicitly targets the
-             * Bottom Screen buffer, drawn above HUD/GUI windows and below the cursor. */
-            if ( *(_DWORD *)&byte_5D4594[2614252]
+             * Bottom Screen buffer during live world_mode, suppressed when modal
+             * dialogs or servopts takeover cover the Bottom Screen. */
+            if ( world_mode
+              && *(_DWORD *)&byte_5D4594[2614252]
               && *(_DWORD *)&byte_5D4594[1556112] != 1
               && !(*(_DWORD *)&byte_5D4594[2650636] & 0x40000) )
             {

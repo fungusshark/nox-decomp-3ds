@@ -52,6 +52,7 @@ const uint16_t *nox_3ds_ui_fit_ellipsis(int font_ptr, const uint16_t *src,
 void nox_3ds_ui_expand_modal_dialog(void *dlg_wnd);
 void nox_3ds_ui_takeover_form_dialog(void *root_wnd);
 void nox_3ds_ui_takeover_servopts(void *root_wnd);
+void nox_3ds_ui_reflow_servopts_subpanel(void *panel_wnd);
 
 /* Register or update an overflowing static/description text region keyed by
  * widget pointer or fixed 32-bit key (e.g. Spellbook right pane 0x5350424Bu).

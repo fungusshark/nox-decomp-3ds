@@ -5792,6 +5792,9 @@ int __cdecl sub_4541D0(int a1)
   if ( sub_40A5C0(1) )
     sub_46B340(*(int *)&byte_5D4594[1045516], sub_454A90);
   sub_46A8A0();
+#ifdef __3DS__
+  nox_3ds_ui_reflow_servopts_subpanel(*(_DWORD **)&byte_5D4594[1045516]);
+#endif
   return *(_DWORD *)&byte_5D4594[1045516];
 }
 
@@ -7005,6 +7008,9 @@ int __cdecl sub_456270(int a1)
     v10 = sub_40F1D0((char *)&byte_587000[129280], 0, (const char *)&byte_587000[129232], 631);
     sub_46B490((int)v9, 16385, (int)v10, -1);
   }
+#ifdef __3DS__
+  nox_3ds_ui_reflow_servopts_subpanel(*(_DWORD **)&byte_5D4594[1045684]);
+#endif
   return *(_DWORD *)&byte_5D4594[1045684];
 }
 
@@ -23540,6 +23546,10 @@ LABEL_51:
     goto LABEL_69;
   while ( 1 )
   {
+#ifdef __3DS__
+    if ( !nox_3ds_input_is_world_mode() && *(void **)&byte_5D4594[1062452] && (void *)v24 == *(void **)&byte_5D4594[1062452] )
+      goto LABEL_SKIP_V24_3DS;
+#endif
     v25 = v24[1];
     if ( v25 & 0x20 )
     {
@@ -23560,6 +23570,9 @@ LABEL_51:
         }
       }
     }
+#ifdef __3DS__
+LABEL_SKIP_V24_3DS:
+#endif
     v24 = (_DWORD *)v24[97];
     if ( !v24 )
       goto LABEL_69;
@@ -23574,6 +23587,10 @@ LABEL_69:
       goto LABEL_83;
     while ( 1 )
     {
+#ifdef __3DS__
+      if ( !nox_3ds_input_is_world_mode() && *(void **)&byte_5D4594[1062452] && (void *)v29 == *(void **)&byte_5D4594[1062452] )
+        goto LABEL_SKIP_V29_3DS;
+#endif
       if ( !(*(_BYTE *)(v29 + 4) & 0x70) )
       {
         v30 = v2->field_0;
@@ -23590,6 +23607,9 @@ LABEL_69:
           }
         }
       }
+#ifdef __3DS__
+LABEL_SKIP_V29_3DS:
+#endif
       v29 = *(_DWORD *)(v29 + 388);
       if ( !v29 )
         goto LABEL_83;
@@ -23604,6 +23624,10 @@ LABEL_83:
         goto LABEL_113;
       while ( 1 )
       {
+#ifdef __3DS__
+        if ( !nox_3ds_input_is_world_mode() && *(void **)&byte_5D4594[1062452] && (void *)v1 == *(void **)&byte_5D4594[1062452] )
+          goto LABEL_SKIP_V1_3DS;
+#endif
         v33 = *((_DWORD *)v1 + 1);
         if ( v33 & 0x40 )
         {
@@ -23624,6 +23648,9 @@ LABEL_83:
             }
           }
         }
+#ifdef __3DS__
+LABEL_SKIP_V1_3DS:
+#endif
         v1 = (wchar_t *)*((_DWORD *)v1 + 97);
         if ( !v1 )
           goto LABEL_113;
@@ -23642,13 +23669,13 @@ LABEL_99:
     void *invRoot = *(void **)&byte_5D4594[1062452];
     unsigned char st = inv_state();
 
-    // Only suppress "ghost" inventory hits when inventory is truly fully hidden.
-    // IMPORTANT: state==3 is likely the status/minibar strip; do NOT suppress then,
-    // or status icon tooltips will stop working.
-    // I think the proper fix has to do with the whole inventory window shifting up above the screen and the
-    // status icons are the bottom of the window and become the top of the screen
-    // maybe if we shift the hits by the dimensions of the inventory window it will fix.
+    // Only suppress "ghost" inventory hits when inventory is truly fully hidden,
+    // or on 3DS when a modal/takeover dialog (!world_mode, e.g. servopts.wnd) covers the Bottom Screen.
+#ifdef __3DS__
+    if ((st == 0 || !nox_3ds_input_is_world_mode()) && invRoot && v1 && ui_chain_contains((void*)v1, invRoot))
+#else
     if (st == 0 && invRoot && v1 && ui_chain_contains((void*)v1, invRoot))
+#endif
     {
         v1 = 0;
         v0 = 0;         // also prevent tooltip from ghost inventory widgets
@@ -45671,10 +45698,10 @@ int __cdecl sub_488160(int a1, int a2)
     sub_434390(*(_DWORD *)(a2 + 68));
 #ifdef __3DS__
     {
-      int min_eb = (v23[521] > 0) ? (int)v23[521] : (v21 / 3);
-      if ( min_eb < 44 && v21 > 80 )
-        min_eb = 44;
-      int max_lbl = v21 - min_eb - 6;
+      int min_eb = (v21 >= 180) ? 64 : ((v21 >= 110) ? 44 : (v21 * 2 / 5));
+      if ( min_eb < 32 )
+        min_eb = 32;
+      int max_lbl = v21 - min_eb - 8;
       if ( max_lbl < 20 )
         max_lbl = v21 / 2;
       nox_3ds_clip_guard_t lbl_cg;
