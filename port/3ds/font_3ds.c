@@ -210,6 +210,15 @@ static uint8_t        s_stock_w[FONT_SLOTS][FONT_GLYPH_COUNT];
 static queued_glyph_t s_queues[FONT_SCREENS][FONT_MAX_GLYPHS];
 static int            s_counts[FONT_SCREENS] = { 0, 0 };
 
+#define UI_MAX_SCROLLBARS 24
+typedef struct {
+    int16_t x, y, w, h;
+    int32_t total_h, view_h, scroll_y;
+    uint8_t highlighted;
+} queued_sb_t;
+static queued_sb_t    s_sb_queues[FONT_SCREENS][UI_MAX_SCROLLBARS];
+static int            s_sb_counts[FONT_SCREENS] = { 0, 0 };
+
 static uint16_t normalize_crisp_char(uint16_t ch)
 {
     if (ch >= 0x20 && ch <= 0x7E)
@@ -353,6 +362,8 @@ bool nox_3ds_font_init(void)
     s_atlas_inited = true;
     s_counts[0] = 0;
     s_counts[1] = 0;
+    s_sb_counts[0] = 0;
+    s_sb_counts[1] = 0;
     fprintf(stderr, "[font3ds] Smart auto-fit GPU font atlas prepared (%dx%d %s, default ON)\n",
             ATLAS_W, ATLAS_H, in_vram ? "VRAM" : "FCRAM");
     return true;
@@ -398,6 +409,8 @@ void nox_3ds_font_shutdown(void)
     s_atlas_uploaded = false;
     s_counts[0] = 0;
     s_counts[1] = 0;
+    s_sb_counts[0] = 0;
+    s_sb_counts[1] = 0;
 }
 
 bool nox_3ds_font_is_enabled(void)
@@ -416,6 +429,8 @@ void nox_3ds_font_set_enabled(bool enabled)
     s_shadow_depth = 0;
     s_counts[0] = 0;
     s_counts[1] = 0;
+    s_sb_counts[0] = 0;
+    s_sb_counts[1] = 0;
 }
 
 void nox_3ds_font_show_custom_toast(const char *msg, bool green)
@@ -456,6 +471,8 @@ void nox_3ds_font_toggle(void)
     s_shadow_depth = 0;
     s_counts[0] = 0;
     s_counts[1] = 0;
+    s_sb_counts[0] = 0;
+    s_sb_counts[1] = 0;
     nox_3ds_swbuf_invalidate_bottom();
     nox_3ds_font_show_custom_toast(
         s_native_enabled ? "NATIVE FONT: AUTO" : "NATIVE FONT: OFF",
@@ -495,14 +512,43 @@ void nox_3ds_font_pop_fallback(bool force_software)
 
 void nox_3ds_font_clear_screen(int screen)
 {
-    if (screen >= 0 && screen < FONT_SCREENS)
+    if (screen >= 0 && screen < FONT_SCREENS) {
         s_counts[screen] = 0;
+        s_sb_counts[screen] = 0;
+    }
 }
 
 void nox_3ds_font_clear_all(void)
 {
     s_counts[0] = 0;
     s_counts[1] = 0;
+    s_sb_counts[0] = 0;
+    s_sb_counts[1] = 0;
+}
+
+void nox_3ds_ui_queue_scrollbar(int screen, int x, int y, int w, int h,
+                                int total_h, int view_h, int scroll_y,
+                                bool highlighted)
+{
+    if (!s_native_enabled || !s_atlas_inited)
+        return;
+    if (screen < 0 || screen >= FONT_SCREENS)
+        return;
+    if (total_h <= view_h || view_h <= 0 || w <= 0 || h < 8)
+        return;
+    int cnt = s_sb_counts[screen];
+    if (cnt >= UI_MAX_SCROLLBARS)
+        return;
+    queued_sb_t *q = &s_sb_queues[screen][cnt];
+    q->x = (int16_t)x;
+    q->y = (int16_t)y;
+    q->w = (int16_t)w;
+    q->h = (int16_t)h;
+    q->total_h = total_h;
+    q->view_h = view_h;
+    q->scroll_y = scroll_y;
+    q->highlighted = highlighted ? 1u : 0u;
+    s_sb_counts[screen] = cnt + 1;
 }
 
 static int crisp_glyph_width_logical(uint16_t ch, bool is_bottom)
@@ -700,6 +746,25 @@ bool nox_3ds_font_enqueue_glyph(int screen, int font_slot, uint16_t ch,
     if (p1y >= sw_h) p1y = sw_h - 1;
 
     if (sw_rows && p0y >= 0 && p0x >= 0 && p1y >= 0 && p1x >= 0) {
+        /* If bit 15 is currently clear at a probe pixel, an opaque software draw
+         * (e.g. a popup/modal background) has overwritten this pixel since any
+         * earlier glyph was queued. Retire matching probes on earlier glyphs BEFORE
+         * re-stamping 0x8000u so foreground text never resurrects occluded text. */
+        bool p0_cleared = ((sw_rows[p0y][p0x] & 0x8000u) == 0);
+        bool p1_cleared = ((sw_rows[p1y][p1x] & 0x8000u) == 0);
+        if ((p0_cleared || p1_cleared) && cnt > 0) {
+            queued_glyph_t *arr = s_queues[screen];
+            for (int k = 0; k < cnt; ++k) {
+                if (p0_cleared) {
+                    if (arr[k].probe0_x == p0x && arr[k].probe0_y == p0y) arr[k].probe0_x = -1;
+                    if (arr[k].probe1_x == p0x && arr[k].probe1_y == p0y) arr[k].probe1_x = -1;
+                }
+                if (p1_cleared) {
+                    if (arr[k].probe0_x == p1x && arr[k].probe0_y == p1y) arr[k].probe0_x = -1;
+                    if (arr[k].probe1_x == p1x && arr[k].probe1_y == p1y) arr[k].probe1_x = -1;
+                }
+            }
+        }
         sw_rows[p0y][p0x] |= 0x8000u;
         sw_rows[p1y][p1x] |= 0x8000u;
     }
@@ -822,6 +887,16 @@ static void draw_tier_glyph_clipped(font_tier_t tier, uint16_t ch,
 void nox_3ds_font_set_show_version(bool show)
 {
     s_show_version_overlay = show;
+}
+
+bool nox_3ds_debug_hud_enabled(void)
+{
+    static int s_cached = -1;
+    if (s_cached < 0) {
+        const char *v = getenv("NOX_3DS_DEBUG_HUD");
+        s_cached = (v && (*v == '1' || *v == 'y' || *v == 'Y' || *v == 't' || *v == 'T')) ? 1 : 0;
+    }
+    return s_cached != 0;
 }
 
 static void draw_crisp_pill_overlay(int target_w, int target_h,
@@ -957,15 +1032,16 @@ void nox_3ds_font_render_screen(int screen,
     int target_w = (screen == NOX_3DS_SWBUF_TOP) ? NOX_3DS_TOP_W : NOX_3DS_BOT_W;
     int target_h = (screen == NOX_3DS_SWBUF_TOP) ? NOX_3DS_TOP_H : NOX_3DS_BOT_H;
 
-    if (s_native_enabled && s_counts[screen] > 0 && crop_w > 0 && crop_h > 0) {
+    if (s_native_enabled && crop_w > 0 && crop_h > 0 && (s_counts[screen] > 0 || s_sb_counts[screen] > 0)) {
         float scale_x = dst_w / (float)crop_w;
         float scale_y = dst_h / (float)crop_h;
         float g_mul = (gamma < 0.98f) ? ((gamma < 0.0f) ? 0.0f : gamma) : 1.0f;
 
-        C2D_SetTintMode(C2D_TintMult);
+        if (s_counts[screen] > 0) {
+            C2D_SetTintMode(C2D_TintMult);
 
-        int cnt = s_counts[screen];
-        const queued_glyph_t *arr = s_queues[screen];
+            int cnt = s_counts[screen];
+            const queued_glyph_t *arr = s_queues[screen];
 
         /* Pass 1: crisp 1px physical black drop-shadow behind explicitly shadowed / top glyphs */
         u32 shadow_rgba = C2D_Color32(0, 0, 0, (u8)(180.0f * g_mul));
@@ -1035,6 +1111,44 @@ void nox_3ds_font_render_screen(int screen,
             draw_tier_glyph_clipped((font_tier_t)q->tier, q->ch,
                                     px, py,
                                     cx0, cy0, cx1, cy1, fg);
+            }
+        }
+
+        int sb_cnt = s_sb_counts[screen];
+        const queued_sb_t *sb_arr = s_sb_queues[screen];
+        u32 track_bg   = C2D_Color32(14, 12, 10, (u8)(205.0f * g_mul));
+        u32 track_rim  = C2D_Color32(72, 54, 28, (u8)(220.0f * g_mul));
+        for (int i = 0; i < sb_cnt; ++i) {
+            const queued_sb_t *q = &sb_arr[i];
+            int px = (int)floorf(draw_x + (float)(q->x - crop_x) * scale_x + 0.5f);
+            int py = (int)floorf(draw_y + (float)(q->y - crop_y) * scale_y + 0.5f);
+            int pw = (int)floorf((float)q->w * scale_x + 0.5f);
+            int ph = (int)floorf((float)q->h * scale_y + 0.5f);
+            if (pw < 4) pw = 4;
+            if (ph < 10) continue;
+            if (px + pw <= 0 || py + ph <= 0 || px >= target_w || py >= target_h)
+                continue;
+
+            int max_scroll = q->total_h - q->view_h;
+            if (max_scroll <= 0)
+                continue;
+            int thumb_h = (int)((int64_t)ph * q->view_h / q->total_h);
+            if (thumb_h < 10) thumb_h = 10;
+            if (thumb_h > ph - 2) thumb_h = ph - 2;
+            int sy = q->scroll_y;
+            if (sy < 0) sy = 0;
+            if (sy > max_scroll) sy = max_scroll;
+            int max_track = ph - 2 - thumb_h;
+            int thumb_y = py + 1 + ((max_track > 0) ? (int)((int64_t)sy * max_track / max_scroll) : 0);
+
+            u32 thumb_fg = q->highlighted
+                ? C2D_Color32(252, 222, 124, (u8)(248.0f * g_mul))
+                : C2D_Color32(204, 158, 72, (u8)(238.0f * g_mul));
+
+            C2D_DrawRectSolid((float)px, (float)py, 0.0f, (float)pw, (float)ph, track_rim);
+            if (pw > 2 && ph > 2)
+                C2D_DrawRectSolid((float)(px + 1), (float)(py + 1), 0.0f, (float)(pw - 2), (float)(ph - 2), track_bg);
+            C2D_DrawRectSolid((float)(px + 1), (float)thumb_y, 0.0f, (float)(pw - 2), (float)thumb_h, thumb_fg);
         }
     }
 

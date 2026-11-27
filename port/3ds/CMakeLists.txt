@@ -86,6 +86,7 @@ add_executable(nox
     "${CMAKE_CURRENT_SOURCE_DIR}/audio_3ds.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/video_3ds.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/font_3ds.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/ui_scroll_3ds.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/input_3ds.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/swkbd_3ds.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/net_3ds.c"
@@ -104,6 +105,7 @@ set_source_files_properties(
     "${CMAKE_CURRENT_SOURCE_DIR}/audio_3ds.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/video_3ds.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/font_3ds.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/ui_scroll_3ds.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/input_3ds.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/swkbd_3ds.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/net_3ds.c"
@@ -161,6 +163,17 @@ if (NOX_3DS_STAGE_WIN_DEV AND EXISTS "/mnt/c" AND IS_DIRECTORY "/mnt/c")
     )
 else()
     add_custom_target(copy-nox-3dsx ALL DEPENDS nox_3dsx)
+endif()
+
+# Automatically stage tagged/release builds to ~/nox_prebuilts/ when present
+if (DEFINED ENV{HOME} AND EXISTS "$ENV{HOME}/nox_prebuilts" AND NOX_3DS_VERSION MATCHES "^v[0-9]")
+    add_custom_command(TARGET copy-nox-3dsx POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_CURRENT_BINARY_DIR}/nox.3dsx"
+            "$ENV{HOME}/nox_prebuilts/nox-${NOX_3DS_VERSION}.3dsx"
+        COMMAND chmod +x "$ENV{HOME}/nox_prebuilts/nox-${NOX_3DS_VERSION}.3dsx"
+        COMMENT "Staging nox-${NOX_3DS_VERSION}.3dsx to $ENV{HOME}/nox_prebuilts/"
+    )
 endif()
 
 # Wireless hardware push via 3dslink

@@ -48021,6 +48021,77 @@ int sub_4379F0()
         *(_DWORD *)&byte_5D4594[815024] = sub_46B0C0(*(_DWORD **)&byte_5D4594[814980], 10040);
         *(_DWORD *)&byte_5D4594[815028] = sub_46B0C0(*(_DWORD **)&byte_5D4594[814980], 10041);
         *(_DWORD *)&byte_5D4594[815032] = sub_46B0C0(*(_DWORD **)&byte_5D4594[814980], 10042);
+#ifdef __3DS__
+        /* Align Server Browser column listboxes (10038..10042) pixel-for-pixel with
+         * sort header buttons (10047..10051), pair synced scrolling, and expand
+         * the Game Description popup (10033/10034) when Native Text is enabled. */
+        if ( nox_3ds_font_is_enabled() )
+        {
+          _DWORD *c0 = *(_DWORD **)&byte_5D4594[815016];
+          _DWORD *c1 = *(_DWORD **)&byte_5D4594[815020];
+          _DWORD *c2 = *(_DWORD **)&byte_5D4594[815024];
+          _DWORD *c3 = *(_DWORD **)&byte_5D4594[815028];
+          _DWORD *c4 = *(_DWORD **)&byte_5D4594[815032];
+          _DWORD *lst = *(_DWORD **)&byte_5D4594[815012];
+          _DWORD *root = *(_DWORD **)&byte_5D4594[814980];
+          _DWORD *b0 = sub_46B0C0(root, 10047);
+          _DWORD *b1 = sub_46B0C0(root, 10048);
+          _DWORD *b2 = sub_46B0C0(root, 10049);
+          _DWORD *b3 = sub_46B0C0(root, 10050);
+          _DWORD *b4 = sub_46B0C0(root, 10051);
+          int bx = lst ? (int)lst[4] : 220;
+          if ( c0 ) { sub_46A9B0(c0, 16,  c0[5]); sub_46AB20(c0, 104, c0[3]); }
+          if ( c1 ) { sub_46A9B0(c1, 120, c1[5]); sub_46AB20(c1, 54,  c1[3]); }
+          if ( c2 ) { sub_46A9B0(c2, 174, c2[5]); sub_46AB20(c2, 78,  c2[3]); }
+          if ( c3 ) { sub_46A9B0(c3, 252, c3[5]); sub_46AB20(c3, 48,  c3[3]); }
+          if ( c4 ) { sub_46A9B0(c4, 300, c4[5]); sub_46AB20(c4, 92,  c4[3]); }
+          if ( b0 ) { sub_46A9B0(b0, bx + 16,  b0[5]); sub_46AB20(b0, 66, b0[3]); }
+          if ( b1 ) { sub_46A9B0(b1, bx + 120, b1[5]); sub_46AB20(b1, 52, b1[3]); }
+          if ( b2 ) { sub_46A9B0(b2, bx + 174, b2[5]); sub_46AB20(b2, 62, b2[3]); }
+          if ( b3 ) { sub_46A9B0(b3, bx + 252, b3[5]); sub_46AB20(b3, 46, b3[3]); }
+          if ( b4 ) { sub_46A9B0(b4, bx + 300, b4[5]); sub_46AB20(b4, 62, b4[3]); }
+          nox_3ds_ui_scroll_register_listbox_group(c0, c1, c2, c3, c4);
+
+          _DWORD *pop = *(_DWORD **)&byte_5D4594[815000];
+          _DWORD *desc = *(_DWORD **)&byte_5D4594[815004];
+          _DWORD *joinb = *(_DWORD **)&byte_5D4594[815008];
+          _DWORD *upb = sub_46B0C0(pop, 10035);
+          _DWORD *dnb = sub_46B0C0(pop, 10036);
+          _DWORD *sld = sub_46B0C0(pop, 10032);
+          if ( pop )
+          {
+            /* Clear fixed-size 130x120 sprite frame (0x80) so resizing pop to
+             * 190x148 renders a single clean 9-slice medieval stone frame. */
+            pop[1] &= ~0x80u;
+            pop[1] |= 0x1000u;
+            pop[11] |= 2048u;
+            pop[14] = sub_4344A0(22, 18, 15);
+            pop[15] = 0;
+            pop[21] = 0;
+            sub_46AB20(pop, 190, 148);
+            for ( _DWORD *ch = (_DWORD *)pop[100]; ch; ch = (_DWORD *)ch[97] )
+            {
+              if ( ch != desc && ch != joinb && ch != upb && ch != dnb && ch != sld )
+                sub_46AC00((int)ch, 1);
+            }
+          }
+          if ( desc )
+          {
+            /* Suppress fixed-size 114x90 listbox sprite (sub_4A3FC0 desc[15])
+             * and inner outline/stone frame so only pop's single frame draws. */
+            desc[1] &= ~(0x80u | 0x1000u);
+            desc[15] = 0;
+            desc[21] = 0;
+            desc[16] = 0x80000000u;
+            sub_46A9B0(desc, 10, 10);
+            sub_46AB20(desc, 152, 100);
+          }
+          if ( upb ) sub_46A9B0(upb, 164, 10);
+          if ( sld ) { sub_46A9B0(sld, 164, 26); sub_46AB20(sld, 16, 68); }
+          if ( dnb ) sub_46A9B0(dnb, 164, 94);
+          if ( joinb ) sub_46A9B0(joinb, (190 - (int)joinb[2]) / 2, 114);
+        }
+#endif
         v2 = sub_46B0C0(*(_DWORD **)&byte_5D4594[814980], 10002);
         if ( sub_40A5C0(0x1000000) )
           sub_46ABB0((int)v2, 0);
@@ -48885,10 +48956,17 @@ _DWORD *__cdecl sub_439450(int a1, int a2, _DWORD *a3)
   result = a3;
   *a3 = a1 - 65;
   a3[1] = a2 - 20;
+#ifdef __3DS__
+  if ( a1 - 65 + 184 > 630 )
+    *a3 = 446;
+  if ( a2 - 20 + 144 > 470 )
+    a3[1] = 326;
+#else
   if ( a1 - 65 + 130 > 600 )
     *a3 = 470;
   if ( a2 - 20 + 120 > 451 )
     a3[1] = 331;
+#endif
   if ( *(_DWORD *)&byte_587000[87408] == 1 )
   {
     v4 = 55;
@@ -53155,7 +53233,9 @@ LABEL_24:
           else
           {
             nox_3ds_swbuf_begin_bottom(NOX_3DS_BOT_BG_RGB555);
-            if ( minimap_on )
+            if ( minimap_on
+              && !(nox_3ds_font_is_enabled() && *(_DWORD *)&byte_5D4594[1046860]
+                   && !sub_46ACC0(*(int *)&byte_5D4594[1046860])) )
             {
               _DWORD *player_drw = sub_45A6F0(*(int *)&byte_5D4594[2616328]);
               if ( player_drw )
@@ -53177,8 +53257,10 @@ LABEL_24:
 
             /* Screen-Space UI: centered notification / system message text
              * (sub_445530, skipped in the Top world pass) explicitly targets the
-             * Bottom Screen buffer, drawn above HUD/GUI windows and below the cursor. */
-            if ( *(_DWORD *)&byte_5D4594[2614252]
+             * Bottom Screen buffer during live world_mode, suppressed when modal
+             * dialogs or servopts takeover cover the Bottom Screen. */
+            if ( world_mode
+              && *(_DWORD *)&byte_5D4594[2614252]
               && *(_DWORD *)&byte_5D4594[1556112] != 1
               && !(*(_DWORD *)&byte_5D4594[2650636] & 0x40000) )
             {
@@ -62081,11 +62163,17 @@ _DWORD *__cdecl sub_449A10(int a1, int a2, int a3, int a4, int (*a5)(void), int 
     result = (_DWORD *)a3;
     if ( a3 )
       result = (_DWORD *)sub_449E30(a3);
+#ifdef __3DS__
+    nox_3ds_ui_expand_modal_dialog(*(_DWORD **)&byte_5D4594[830224]);
+#endif
   }
   else
   {
     *(_DWORD *)&byte_5D4594[830240] = 0;
-#ifndef __3DS__
+#ifdef __3DS__
+    if ( v6 == 0 && sub_43AF70() != 1 && sub_43F320(0) > 10 )
+      v6 = 2;
+#else
     if ( sub_43F320(0) > 10 )
       v6 = 2;
 #endif
@@ -62116,6 +62204,9 @@ _DWORD *__cdecl sub_449A10(int a1, int a2, int a3, int a4, int (*a5)(void), int 
         (*(int *)&byte_5D4594[3805496] - *(int *)(*(_DWORD *)&byte_5D4594[830224] + 8)) / 2,
         (*(int *)&byte_5D4594[3807120] - *(int *)(*(_DWORD *)&byte_5D4594[830224] + 12)) / 2);
       sub_449EA0(a4);
+#ifdef __3DS__
+      nox_3ds_ui_expand_modal_dialog(*(_DWORD **)&byte_5D4594[830224]);
+#endif
       result = (_DWORD *)sub_46AE00();
       *(_DWORD *)&byte_5D4594[830236] = result;
       if ( result )
