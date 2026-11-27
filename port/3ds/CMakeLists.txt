@@ -48,6 +48,9 @@ add_compile_options(
     -fno-strict-overflow
     -fno-tree-vectorize
     -fno-aggressive-loop-optimizations
+    -fno-math-errno
+    -fno-trapping-math
+    -fdata-sections
     -U_FORTIFY_SOURCE
     -fcommon
     -Wno-error=int-conversion
@@ -128,6 +131,7 @@ target_link_libraries(nox PRIVATE
     abi_wrappers
     m
 )
+target_link_options(nox PRIVATE -Wl,--gc-sections)
 
 # Generate custom 3DS metadata & icon (nox.smdh)
 ctr_generate_smdh("${CMAKE_CURRENT_BINARY_DIR}/nox.smdh"

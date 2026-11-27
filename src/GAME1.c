@@ -7988,6 +7988,22 @@ size_t __cdecl sub_409200(char *a1, int a2, int a3, FILE *a4)
     v14 = v13 / 8;
     if ( v13 / 8 > 0 )
     {
+#ifdef __3DS__
+      unsigned char crypt_batch[4096];
+      int rem = v13 / 8;
+      v16 = &a1[v6];
+      while ( rem > 0 )
+      {
+        int blk = (rem > 512) ? 512 : rem;
+        int nbytes = blk * 8;
+        sub_4097C0(v16, nbytes, crypt_batch);
+        memcpy(&byte_5D4594[1276], &crypt_batch[nbytes - 8], 8);
+        v7 = fwrite(crypt_batch, (size_t)nbytes, 1u, a4);
+        *(_DWORD *)&byte_5D4594[1284] += nbytes;
+        v16 += nbytes;
+        rem -= blk;
+      }
+#else
       v15 = v13 / 8;
       v16 = &a1[v6];
       do
@@ -7999,6 +8015,7 @@ size_t __cdecl sub_409200(char *a1, int a2, int a3, FILE *a4)
         *(_DWORD *)&byte_5D4594[1284] += 8;
       }
       while ( v15 );
+#endif
       v13 = v20;
       v5 = v21;
     }
@@ -34814,6 +34831,14 @@ int __cdecl sub_426BD0(unsigned __int8 *a1, int a2)
   {
     v3 = *(_DWORD *)&byte_5D4594[739996];
     v4 = a1;
+#ifdef __3DS__
+    for ( i = a2; i; --i )
+    {
+      v6 = *v4++;
+      result = *(_DWORD *)&byte_581450[4 * (v6 ^ (unsigned __int8)v3) + 7288];
+      v3 = result ^ (v3 >> 8);
+    }
+#else
     for ( i = a2; i; *(_DWORD *)&byte_5D4594[739996] = v3 )
     {
       v6 = *v4++;
@@ -34821,6 +34846,7 @@ int __cdecl sub_426BD0(unsigned __int8 *a1, int a2)
       v3 = result ^ (v3 >> 8);
       --i;
     }
+#endif
     *(_DWORD *)&byte_5D4594[739996] = ~v3;
   }
   return result;
@@ -40937,6 +40963,35 @@ int sub_42EE00()
 }
 
 //----- (0042EE30) --------------------------------------------------------
+#ifdef __3DS__
+#define VBAG_FIFO_CAP 4096u
+typedef struct {
+  uint32_t start;
+  uint32_t end;
+  uint16_t seg_idx;
+} vbag_fifo_entry_t;
+
+static uint32_t          g_vbag_arena_size = 0;
+static uint32_t          g_vbag_write_off  = 0;
+static vbag_fifo_entry_t g_vbag_fifo[VBAG_FIFO_CAP];
+static uint32_t          g_vbag_fifo_head  = 0;
+static uint32_t          g_vbag_fifo_count = 0;
+
+static void vbag_evict_seg(uint16_t seg_idx)
+{
+  _DWORD *seg = (_DWORD *)(*(_DWORD *)&byte_5D4594[787148] + 36 * (uint32_t)seg_idx);
+  if ( seg[0] && seg[6] != -1 )
+  {
+    if ( seg[7] ) *(_DWORD *)(seg[7] + 32) = seg[8];
+    if ( seg[8] ) *(_DWORD *)(seg[8] + 28) = seg[7];
+    seg[7] = 0;
+    seg[8] = 0;
+    seg[0] = 0;
+    ++*(_DWORD *)&byte_5D4594[787220];
+  }
+}
+#endif
+
 int __cdecl sub_42EE30(int a1)
 {
   char *v1; // eax
@@ -41002,6 +41057,9 @@ int __cdecl sub_42EE30(int a1)
           v7 >>= 1;
         }
         *(_DWORD *)&byte_5D4594[787200] = result;
+#ifdef __3DS__
+        g_vbag_arena_size = result ? (uint32_t)v8 : 0u;
+#endif
         if ( result )
           printf("[3ds] video.bag cache: %d KB (%d slots x %d B)\n",
                  v8 / 1024, (int)*(_DWORD *)&byte_5D4594[787192], (int)*(_DWORD *)&v9[4]);
@@ -41092,6 +41150,11 @@ char *sub_42F030()
   *(_DWORD *)&byte_5D4594[787140] = &byte_5D4594[754108];
   *(_DWORD *)&byte_5D4594[754136] = &byte_5D4594[787108];
   *(_DWORD *)&byte_5D4594[754140] = 0;
+#ifdef __3DS__
+  g_vbag_write_off = 0;
+  g_vbag_fifo_head = 0;
+  g_vbag_fifo_count = 0;
+#endif
   return result;
 }
 
@@ -41401,6 +41464,12 @@ LPVOID sub_42F4D0()
   *(_DWORD *)&byte_5D4594[787140] = &byte_5D4594[754108];
   *(_DWORD *)&byte_5D4594[754136] = &byte_5D4594[787108];
   *(_DWORD *)&byte_5D4594[754140] = 0;
+#ifdef __3DS__
+  g_vbag_arena_size = 0;
+  g_vbag_write_off = 0;
+  g_vbag_fifo_head = 0;
+  g_vbag_fifo_count = 0;
+#endif
   sub_47D150();
   fclose(*(FILE **)&byte_5D4594[787204]);
   *(_DWORD *)&byte_5D4594[787204] = 0;
@@ -41718,6 +41787,59 @@ LABEL_19:
     }
     else
     {
+#ifdef __3DS__
+      uint16_t seg_idx = *(unsigned __int16 *)(a1 + 8);
+      uint32_t alloc_sz = ((uint32_t)v3[3] + 15u) & ~15u;
+      if ( alloc_sz < 16u )
+        alloc_sz = 16u;
+
+      if ( alloc_sz <= g_vbag_arena_size && *(_DWORD *)&byte_5D4594[787200] )
+      {
+        if ( g_vbag_write_off + alloc_sz > g_vbag_arena_size )
+        {
+          while ( g_vbag_fifo_count > 0 && g_vbag_fifo[g_vbag_fifo_head].start >= g_vbag_write_off )
+          {
+            vbag_evict_seg(g_vbag_fifo[g_vbag_fifo_head].seg_idx);
+            g_vbag_fifo_head = (g_vbag_fifo_head + 1u) & (VBAG_FIFO_CAP - 1u);
+            --g_vbag_fifo_count;
+          }
+          g_vbag_write_off = 0;
+        }
+        uint32_t end_off = g_vbag_write_off + alloc_sz;
+        while ( g_vbag_fifo_count > 0 )
+        {
+          vbag_fifo_entry_t *head = &g_vbag_fifo[g_vbag_fifo_head];
+          if ( (head->start < end_off && head->end > g_vbag_write_off) || g_vbag_fifo_count >= VBAG_FIFO_CAP )
+          {
+            vbag_evict_seg(head->seg_idx);
+            g_vbag_fifo_head = (g_vbag_fifo_head + 1u) & (VBAG_FIFO_CAP - 1u);
+            --g_vbag_fifo_count;
+          }
+          else
+          {
+            break;
+          }
+        }
+        *v3 = *(_DWORD *)&byte_5D4594[787200] + g_vbag_write_off;
+        uint32_t tail = (g_vbag_fifo_head + g_vbag_fifo_count) & (VBAG_FIFO_CAP - 1u);
+        g_vbag_fifo[tail].start = g_vbag_write_off;
+        g_vbag_fifo[tail].end = end_off;
+        g_vbag_fifo[tail].seg_idx = seg_idx;
+        ++g_vbag_fifo_count;
+        g_vbag_write_off = end_off;
+        sub_42FE30((int)v3);
+        v3[1] = *(_DWORD *)&byte_5D4594[2598000];
+      }
+      else
+      {
+        v3[6] = -1;
+        *v3 = (int)malloc(v3[3]);
+        sub_42FE30((int)v3);
+        v3[1] = *(_DWORD *)&byte_5D4594[2598000];
+        *(_DWORD *)&byte_5D4594[787224] = 0;
+        return *(_DWORD *)a1 + *v3;
+      }
+#else
       if ( !*(_DWORD *)&byte_5D4594[787188] )
       {
         v5 = *(_DWORD **)&byte_5D4594[754136];
@@ -41744,6 +41866,7 @@ LABEL_19:
                                                                                         * *(_DWORD *)&byte_5D4594[787176];
       sub_42FE30(*(_DWORD *)&byte_5D4594[787148] + 36 * *(unsigned __int16 *)(a1 + 8));
       *(_DWORD *)(*(_DWORD *)&byte_5D4594[787148] + 36 * *(unsigned __int16 *)(a1 + 8) + 4) = *(_DWORD *)&byte_5D4594[2598000];
+#endif
     }
     *(_DWORD *)(*(_DWORD *)&byte_5D4594[787140] + 28) = *(_DWORD *)&byte_5D4594[787148]
                                                       + 36 * *(unsigned __int16 *)(a1 + 8);
