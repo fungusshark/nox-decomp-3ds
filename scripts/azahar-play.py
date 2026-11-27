@@ -399,6 +399,15 @@ def capture_window_png(xdrv, win_info, out_png, crop_to_render=True):
         raise RuntimeError("XGetImage failed to capture Azahar render subwindow")
     im = img_p.contents
     buf = bytes(ctypes.cast(im.data, ctypes.POINTER(ctypes.c_ubyte * (im.bytes_per_line * im.height))).contents)
+    # Free the XImage (data + struct) now that pixels are copied; without this every capture leaked
+    # ~w*h*4 bytes (long-running recorders grew to multiple GB and got OOM-killed).
+    im_w, im_h, im_bpl = im.width, im.height, im.bytes_per_line
+    xdrv.x11.XFree(ctypes.cast(im.data, ctypes.c_void_p))
+    xdrv.x11.XFree(ctypes.cast(img_p, ctypes.c_void_p))
+
+    class _Dims:  # keep the rest of the function unchanged
+        width, height, bytes_per_line = im_w, im_h, im_bpl
+    im = _Dims
     rows = []
     for y in range(im.height):
         line = bytearray(im.width * 3)
