@@ -495,8 +495,10 @@ void nox_ctrl_inject_key_scancode(int sdl_scancode, int down)
     keyboard_event_widx = (keyboard_event_widx + 1) % 256;
 }
 
-/** Trigger a multiplayer emote: 0 = Shake Fist (Taunt), 1 = Laugh, 2 = Point. */
-void nox_ctrl_trigger_emote(int emote)
+static int g_pending_3ds_emote_mask = 0;
+static int g_pending_3ds_scoreboard = 0;
+
+static void nox_exec_emote(int emote)
 {
     if ( !sub_40A5C0(0x2000) )
         return;
@@ -528,11 +530,17 @@ void nox_ctrl_trigger_emote(int emote)
     }
 }
 
+/** Trigger a multiplayer emote: 0 = Shake Fist (Taunt), 1 = Laugh, 2 = Point. */
+void nox_ctrl_trigger_emote(int emote)
+{
+    if (emote >= 0 && emote <= 2)
+        g_pending_3ds_emote_mask |= (1 << emote);
+}
+
 /** Toggle/cycle the multiplayer scoreboard (action 0x32 -> 51). */
 void nox_ctrl_toggle_scoreboard(void)
 {
-    if ( sub_40A5C0(0x2000) )
-        sub_42E670(51, 0);
+    g_pending_3ds_scoreboard++;
 }
 
 void nox_ctrl_inject_text_utf8(const char *utf8)
@@ -1395,6 +1403,26 @@ int __cdecl sub_42D6B0(_DWORD *a3, int a4)
   v2 = *(_DWORD *)&byte_5D4594[2618908];
   if ( !sub_40A5C0(1) )
     *(_DWORD *)&byte_5D4594[754036] = 0;
+  if ( g_pending_3ds_emote_mask )
+  {
+    int mask = g_pending_3ds_emote_mask;
+    g_pending_3ds_emote_mask = 0;
+    for ( int e = 0; e < 3; ++e )
+    {
+      if ( mask & (1 << e) )
+        nox_exec_emote(e);
+    }
+  }
+  if ( g_pending_3ds_scoreboard > 0 )
+  {
+    int count = g_pending_3ds_scoreboard;
+    g_pending_3ds_scoreboard = 0;
+    if ( sub_40A5C0(0x2000) )
+    {
+      for ( int c = 0; c < count; ++c )
+        sub_42E670(51, 0);
+    }
+  }
   for ( i = a4; i; i = *(_DWORD *)(i + 84) )
   {
     for ( j = 0; j < *(int *)(i + 68); ++j )
@@ -1596,19 +1624,20 @@ int __cdecl sub_42D6B0(_DWORD *a3, int a4)
           sub_42E670(46, 0);
           break;
         case 0x2E:
-          nox_ctrl_trigger_emote(0);
+          nox_exec_emote(0);
           break;
         case 0x2F:
-          nox_ctrl_trigger_emote(1);
+          nox_exec_emote(1);
           break;
         case 0x30:
-          nox_ctrl_trigger_emote(2);
+          nox_exec_emote(2);
           break;
         case 0x31:
           sub_42E670(50, 0);
           break;
         case 0x32:
-          nox_ctrl_toggle_scoreboard();
+          if ( sub_40A5C0(0x2000) )
+            sub_42E670(51, 0);
           break;
         case 0x33:
           if ( !sub_413A50() )
