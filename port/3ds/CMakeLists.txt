@@ -145,7 +145,8 @@ ctr_create_3dsx(nox
 # Optional post-build staging to /mnt/c/3ds-dev (WSL2) when present.
 # Named ~/nox_prebuilts/nox-<tag>.3dsx archives are staged explicitly by scripts/publish-3ds-prebuilt.sh
 # so switching branches never overwrites an archived tag from a cached CMakeCache.txt value.
-if (EXISTS "/mnt/c" AND IS_DIRECTORY "/mnt/c")
+option(NOX_3DS_STAGE_WIN_DEV "Stage built nox.3dsx to /mnt/c/3ds-dev/nox.3dsx" ON)
+if (NOX_3DS_STAGE_WIN_DEV AND EXISTS "/mnt/c" AND IS_DIRECTORY "/mnt/c")
     add_custom_target(copy-nox-3dsx ALL
         COMMAND ${CMAKE_COMMAND} -E make_directory /mnt/c/3ds-dev
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
