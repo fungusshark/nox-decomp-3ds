@@ -47861,12 +47861,27 @@ int sub_4379F0()
           _DWORD *upb = sub_46B0C0(pop, 10035);
           _DWORD *dnb = sub_46B0C0(pop, 10036);
           _DWORD *sld = sub_46B0C0(pop, 10032);
-          if ( pop ) sub_46AB20(pop, 184, 144);
-          if ( desc ) sub_46AB20(desc, 168, 110);
-          if ( upb ) sub_46A9B0(upb, 168, 0);
-          if ( sld ) { sub_46A9B0(sld, 169, 15); sub_46AB20(sld, 16, 80); }
-          if ( dnb ) sub_46A9B0(dnb, 168, 95);
-          if ( joinb ) sub_46A9B0(joinb, 64, 117);
+          if ( pop )
+          {
+            /* Clear fixed-size 130x120 sprite frame (0x80) so resizing pop to
+             * 184x144 renders a single clean 9-slice medieval stone frame. */
+            pop[1] &= ~0x80u;
+            pop[1] |= 0x1000u;
+            pop[11] |= 2048u;
+            pop[14] = sub_4344A0(22, 18, 15);
+            sub_46AB20(pop, 184, 144);
+          }
+          if ( desc )
+          {
+            /* Suppress inner duplicate stone frame on desc listbox inside pop */
+            desc[1] &= ~0x1000u;
+            sub_46A9B0(desc, 6, 6);
+            sub_46AB20(desc, 158, 104);
+          }
+          if ( upb ) sub_46A9B0(upb, 166, 6);
+          if ( sld ) { sub_46A9B0(sld, 166, 22); sub_46AB20(sld, 16, 72); }
+          if ( dnb ) sub_46A9B0(dnb, 166, 94);
+          if ( joinb ) sub_46A9B0(joinb, (184 - (int)joinb[2]) / 2, 115);
         }
 #endif
         v2 = sub_46B0C0(*(_DWORD **)&byte_5D4594[814980], 10002);

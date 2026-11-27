@@ -86,6 +86,7 @@ typedef struct {
     int16_t  c_h[MAX_PANEL_CHILDREN];
     uint32_t c_flags[MAX_PANEL_CHILDREN];
     uint32_t c_bg[MAX_PANEL_CHILDREN];
+    uint32_t c_draw[MAX_PANEL_CHILDREN];
 } modal_snap_t;
 
 static scroll_slot_t s_slots[MAX_SCROLL_SLOTS];
@@ -875,6 +876,39 @@ static void convert_to_stone_takeover_bg(uint32_t *w)
     w[16] = (uint32_t)sub_4344A0(112, 88, 54);
 }
 
+static void convert_button_to_resizable(uint32_t *b)
+{
+    if (!b)
+        return;
+    /* sub_4A8380 always blits a fixed-size stock button image sprite at xLeft
+     * while centering text at xLeft + w/2. Switching to sub_4A81D0 renders a
+     * full-width medieval button box with text centered directly inside it. */
+    if ((uintptr_t)b[95] == (uintptr_t)sub_4A8380)
+        b[95] = (uint32_t)(uintptr_t)sub_4A81D0;
+    b[1] &= ~0x80u;
+    b[14] = (uint32_t)sub_4344A0(56, 40, 28);    /* enabled fill (a2+20) */
+    b[16] = (uint32_t)sub_4344A0(168, 134, 82);  /* normal border (a2+28) */
+    b[18] = (uint32_t)sub_4344A0(232, 196, 120); /* hover border (a2+36) */
+    b[20] = (uint32_t)sub_4344A0(36, 30, 26);    /* disabled fill (a2+44) */
+    b[22] = (uint32_t)sub_4344A0(92, 66, 40);    /* pressed fill (a2+52) */
+}
+
+static void scale_editbox_field_width(uint32_t *c, int new_w, float sx)
+{
+    if (!c || !is_editbox((uintptr_t)c[95]) || !valid_u32_ptr(c[8]))
+        return;
+    uint16_t *eb = (uint16_t *)(uintptr_t)c[8];
+    int ebw = (int)eb[521];
+    if (ebw > 0) {
+        int scaled = (int)((float)ebw * sx + 0.5f);
+        int max_eb = new_w / 2;
+        if (max_eb < 64) max_eb = 64;
+        if (scaled < 64 && new_w >= 140) scaled = 64;
+        if (scaled > max_eb) scaled = max_eb;
+        eb[521] = (uint16_t)scaled;
+    }
+}
+
 static void invalidate_panel_slot(const void *panel_wnd)
 {
     scroll_slot_t *s = find_slot(ptr_key(panel_wnd));
@@ -954,6 +988,7 @@ static modal_snap_t *get_or_create_modal_snap(uint32_t *w)
                     if (!c) continue;
                     c[1]  = sn->c_flags[k];
                     c[14] = sn->c_bg[k];
+                    c[95] = sn->c_draw[k];
                     sub_46A9B0(c, sn->c_x[k], sn->c_y[k]);
                     sub_46AB20(c, sn->c_w[k], sn->c_h[k]);
                 }
@@ -993,6 +1028,7 @@ static modal_snap_t *get_or_create_modal_snap(uint32_t *w)
         sn->c_h[idx]     = (int16_t)(int32_t)c[3];
         sn->c_flags[idx] = c[1];
         sn->c_bg[idx]    = c[14];
+        sn->c_draw[idx]  = c[95];
         ++idx;
     }
     sn->child_count = (uint8_t)idx;
@@ -1147,11 +1183,7 @@ void nox_3ds_ui_expand_modal_dialog(void *dlg_wnd)
                         nw = lw + 18;
                         if (nw > want_w / 2 - 12)
                             nw = want_w / 2 - 12;
-                        if (c[1] & 0x80u) {
-                            c[1] &= ~0x80u;
-                            c[14] = (uint32_t)sub_4344A0(52, 38, 26);
-                            c[16] = (uint32_t)sub_4344A0(148, 118, 72);
-                        }
+                        convert_button_to_resizable(c);
                     }
                 }
                 int nx = ox + dw / 2 - (nw - ow) / 2;
@@ -1329,6 +1361,9 @@ static int reflow_form_children(uint32_t **items, int count,
             cur_y += row_h + 6;
         } else if (is_editbox(fn)) {
             int row_h = (oh < 26) ? 26 : oh;
+            float esx = (ow > 0) ? ((float)avail_w / (float)ow) : 1.0f;
+            if (esx < 1.0f) esx = 1.0f;
+            scale_editbox_field_width(c, avail_w, esx);
             sub_46A9B0(c, start_x, cur_y);
             sub_46AB20(c, avail_w, row_h);
             cur_y += row_h + 8;
@@ -1365,14 +1400,9 @@ static int reflow_form_children(uint32_t **items, int count,
             if (*lbl) {
                 int lw = 0;
                 sub_43F840(fptr, lbl, &lw, NULL, 0);
-                if (lw + 18 > bw) {
+                if (lw + 18 > bw)
                     bw = lw + 18;
-                    if (c[1] & 0x80u) {
-                        c[1] &= ~0x80u;
-                        c[14] = (uint32_t)sub_4344A0(52, 38, 26);
-                        c[16] = (uint32_t)sub_4344A0(148, 118, 72);
-                    }
-                }
+                convert_button_to_resizable(c);
             }
             if (half_w >= 160 && bw <= half_w && i + 1 < count &&
                 is_pushbutton((uintptr_t)items[i + 1][95])) {
@@ -1382,14 +1412,9 @@ static int reflow_form_children(uint32_t **items, int count,
                 if (*lbl2) {
                     int lw2 = 0;
                     sub_43F840((int)c2[59], lbl2, &lw2, NULL, 0);
-                    if (lw2 + 18 > bw2) {
+                    if (lw2 + 18 > bw2)
                         bw2 = lw2 + 18;
-                        if (c2[1] & 0x80u) {
-                            c2[1] &= ~0x80u;
-                            c2[14] = (uint32_t)sub_4344A0(52, 38, 26);
-                            c2[16] = (uint32_t)sub_4344A0(148, 118, 72);
-                        }
-                    }
+                    convert_button_to_resizable(c2);
                 }
                 if (bw2 <= half_w) {
                     int h2 = (int)(int32_t)c2[3];
@@ -1404,7 +1429,7 @@ static int reflow_form_children(uint32_t **items, int count,
                 }
             }
             if (bw > avail_w) bw = avail_w;
-            if (bw < avail_w && !(c[1] & 0x80u)) bw = avail_w;
+            if (*lbl && bw < avail_w) bw = avail_w;
             sub_46A9B0(c, start_x, cur_y);
             sub_46AB20(c, bw, row_h);
             cur_y += row_h + 8;
@@ -1518,11 +1543,7 @@ void nox_3ds_ui_takeover_form_dialog(void *root_wnd)
         int by = new_h - pad_bot + 8;
         for (int i = 0; i < ftr_cnt; ++i) {
             uint32_t *b = footers[i];
-            if (b[1] & 0x80u) {
-                b[1] &= ~0x80u;
-                b[14] = (uint32_t)sub_4344A0(56, 40, 28);
-                b[16] = (uint32_t)sub_4344A0(158, 126, 76);
-            }
+            convert_button_to_resizable(b);
             sub_46A9B0(b, bx, by);
             sub_46AB20(b, btn_w, 30);
             bx += btn_w + gap;
@@ -1556,8 +1577,44 @@ void nox_3ds_ui_takeover_servopts(void *root_wnd)
     const int new_w = 624;
     const int new_h = 472;
 
-    float sx = (float)new_w / (float)orig_w;
-    float sy = (float)new_h / (float)orig_h;
+    lb_aux_t aux[12];
+    int aux_count = 0;
+    collect_lb_aux_rec(w, aux, &aux_count, 12);
+
+    /* Measure the ACTUAL occupied bounding box of servopts children so even if
+     * the root .wnd had wide unused margins, controls expand edge-to-edge! */
+    int min_x = orig_w, max_r = 0;
+    int min_y = orig_h, max_b = 0;
+    for (uint32_t *c = (uint32_t *)(uintptr_t)w[100]; c; c = (uint32_t *)(uintptr_t)c[97]) {
+        if (is_lb_aux_widget(c, aux, aux_count))
+            continue;
+        int cid = (int)(int32_t)c[0];
+        if (cid == 10120)
+            continue;
+        int ox = (int)(int32_t)c[4];
+        int oy = (int)(int32_t)c[5];
+        int ow = (int)(int32_t)c[2];
+        int oh = (int)(int32_t)c[3];
+        if (ow <= 0 || oh <= 0)
+            continue;
+        /* Ignore full-window backdrop children when measuring interactive span */
+        if (!c[100] && ow >= orig_w - 4 && oh >= orig_h - 4)
+            continue;
+        if (ox < min_x) min_x = ox;
+        if (oy < min_y) min_y = oy;
+        if (ox + ow > max_r) max_r = ox + ow;
+        if (oy + oh > max_b) max_b = oy + oh;
+    }
+
+    int span_w = max_r - min_x;
+    int span_h = max_b - min_y;
+    if (span_w < 80) { min_x = 0; span_w = orig_w; }
+    if (span_h < 80) { min_y = 0; span_h = orig_h; }
+
+    const int pad_x = 12;
+    const int pad_y = 10;
+    float sx = (float)(new_w - 2 * pad_x) / (float)span_w;
+    float sy = (float)(new_h - 2 * pad_y) / (float)span_h;
     if (sx < 1.0f) sx = 1.0f;
     if (sy < 1.0f) sy = 1.0f;
 
@@ -1565,11 +1622,7 @@ void nox_3ds_ui_takeover_servopts(void *root_wnd)
     sub_46AB20(w, new_w, new_h);
     sub_46A9B0(w, new_x, new_y);
 
-    lb_aux_t aux[12];
-    int aux_count = 0;
-    collect_lb_aux_rec(w, aux, &aux_count, 12);
-
-    /* First pass: scale direct children of servopts root (10100) across 624x472 */
+    /* Expand all direct children of servopts root (10100) edge-to-edge across 624x472 */
     for (uint32_t *c = (uint32_t *)(uintptr_t)w[100]; c; c = (uint32_t *)(uintptr_t)c[97]) {
         if (is_lb_aux_widget(c, aux, aux_count))
             continue;
@@ -1580,45 +1633,49 @@ void nox_3ds_ui_takeover_servopts(void *root_wnd)
         int ow = (int)(int32_t)c[2];
         int oh = (int)(int32_t)c[3];
 
-        int nx = (int)(ox * sx + 0.5f);
-        int ny = (int)(oy * sy + 0.5f);
-        int nw = (int)(ow * sx + 0.5f);
-        int nh = (int)(oh * sy + 0.5f);
+        int nx = pad_x + (int)((float)(ox - min_x) * sx + 0.5f);
+        int ny = pad_y + (int)((float)(oy - min_y) * sy + 0.5f);
+        int nw = (int)((float)ow * sx + 0.5f);
+        int nh = (int)((float)oh * sy + 0.5f);
 
         if (cid == 10120) {
-            /* Game-mode dropdown sized by sub_457A10: preserve at least stock width */
+            /* Game-mode dropdown sized by sub_457A10: keep at least stock width */
             if (nw < ow) nw = ow;
             if (nh < oh) nh = oh;
-            if (nx + nw > new_w - 8) nx = new_w - 8 - nw;
-            if (nx < 8) nx = 8;
+            if (nx + nw > new_w - pad_x) nx = new_w - pad_x - nw;
+            if (nx < pad_x) nx = pad_x;
             sub_46A9B0(c, nx, ny);
             sub_46AB20(c, nw, nh);
             continue;
         }
 
-        if (nx + nw > new_w - 8) nw = new_w - 8 - nx;
-        if (ny + nh > new_h - 6) nh = new_h - 6 - ny;
+        if (nx < pad_x) nx = pad_x;
+        if (ny < pad_y) ny = pad_y;
+        if (nx + nw > new_w - pad_x) nw = new_w - pad_x - nx;
+        if (ny + nh > new_h - pad_y) nh = new_h - pad_y - ny;
         if (nw < 16) nw = (ow > 16) ? ow : 16;
         if (nh < 16) nh = (oh > 16) ? oh : 16;
 
         if (is_pushbutton(fn)) {
             uint16_t *lbl = (uint16_t *)(c + 27);
-            if (!*lbl && (c[1] & 0x80u)) {
-                /* Icon-only button: keep stock size, scaled position */
+            if (!*lbl && ((c[1] & 0x80u) || fn == (uintptr_t)sub_4A8380)) {
+                /* Icon-only button: keep stock icon size at scaled position */
                 sub_46A9B0(c, nx, ny);
                 continue;
             }
-            if (*lbl && (c[1] & 0x80u)) {
-                int lw = 0;
-                sub_43F840((int)c[59], lbl, &lw, NULL, 0);
-                if (lw + 12 > ow || nw > ow + 16) {
-                    c[1] &= ~0x80u;
-                    c[14] = (uint32_t)sub_4344A0(54, 38, 26);
-                    c[16] = (uint32_t)sub_4344A0(152, 122, 74);
-                }
-            }
+            /* Convert any text button to resizable solid button so its box matches
+             * its widened width and the text overlays dead-center inside it. */
+            if (*lbl)
+                convert_button_to_resizable(c);
             sub_46A9B0(c, nx, ny);
-            sub_46AB20(c, nw, (nh > 34 && oh <= 30) ? 30 : nh);
+            sub_46AB20(c, nw, (nh > 32 && oh <= 28) ? 30 : nh);
+            continue;
+        }
+
+        if (is_editbox(fn)) {
+            scale_editbox_field_width(c, nw, sx);
+            sub_46A9B0(c, nx, ny);
+            sub_46AB20(c, nw, (nh < 24) ? 24 : ((nh > 30 && oh <= 26) ? 26 : nh));
             continue;
         }
 
@@ -1627,8 +1684,8 @@ void nox_3ds_ui_takeover_servopts(void *root_wnd)
             for (int a = 0; a < aux_count; ++a) {
                 if (aux[a].lb == c) { has_aux = true; break; }
             }
-            if (has_aux && nx + nw + 18 > new_w - 8)
-                nw = new_w - 8 - 18 - nx;
+            if (has_aux && nx + nw + 18 > new_w - pad_x)
+                nw = new_w - pad_x - 18 - nx;
             sub_46A9B0(c, nx, ny);
             sub_46AB20(c, nw, nh);
             continue;
@@ -1636,16 +1693,13 @@ void nox_3ds_ui_takeover_servopts(void *root_wnd)
 
         /* Sub-container panels (e.g. 10150, 10153, 10183, 10197, 10199) */
         if (c[100]) {
-            if (c[1] & 0x80u) {
-                c[1] &= ~0x80u;
-                c[14] = (uint32_t)sub_4344A0(26, 22, 18);
-                c[16] = (uint32_t)sub_4344A0(96, 76, 48);
-            }
+            c[1] &= ~0x80u;
+            c[14] = (uint32_t)sub_4344A0(26, 22, 18);
+            c[16] = (uint32_t)sub_4344A0(96, 76, 48);
             sub_46A9B0(c, nx, ny);
             sub_46AB20(c, nw, nh);
 
-            /* Reflow children inside this widened sub-panel into spacious
-             * vertically scrollable rows! */
+            /* Reflow children inside this widened sub-panel across its full width */
             uint32_t *sub_items[MAX_PANEL_CHILDREN];
             int scnt = 0;
             for (uint32_t *sc = (uint32_t *)(uintptr_t)c[100]; sc && scnt < MAX_PANEL_CHILDREN;
@@ -1654,7 +1708,7 @@ void nox_3ds_ui_takeover_servopts(void *root_wnd)
                     sub_items[scnt++] = sc;
             }
             if (scnt > 0) {
-                reflow_form_children(sub_items, scnt, 8, 6, nw - 24, aux, aux_count);
+                reflow_form_children(sub_items, scnt, 8, 6, nw - 22, aux, aux_count);
                 panel_meta_t *meta = alloc_panel_meta(c);
                 memset(meta, 0, sizeof(*meta));
                 meta->panel_wnd  = c;

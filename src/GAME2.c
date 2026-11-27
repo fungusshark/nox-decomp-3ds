@@ -10206,23 +10206,27 @@ unsigned int __cdecl sub_45AD70(int a1)
 }
 
 #ifdef __3DS__
-/* Upper Bottom-Screen Takeover geometry for the Spellbook (600x336 at 20,12),
- * leaving y=348..480 clear so the HUD, HP/Mana orbs, and Spell Bar stay
- * visible for direct drag-and-drop slotting. */
-#define NOX_3DS_SB_X           20
-#define NOX_3DS_SB_Y           12
-#define NOX_3DS_SB_W           600
+/* Exact 2x Upper Bottom-Screen Takeover for the Spellbook (570x336 at 35,10).
+ * Scaling the authentic 285x168 Westwood Spellbook sprites by exact 2x in the
+ * 640x480 logical buffer maps 1:1 to physical pixels on the 320x240 Bottom
+ * Screen (zero blur, 100% authentic art) while leaving y=350..480 clear for
+ * the HUD, HP/Mana orbs, and Spell Bar drag-and-drop slotting. */
+#define NOX_3DS_SB_X           35
+#define NOX_3DS_SB_Y           10
+#define NOX_3DS_SB_W           570
 #define NOX_3DS_SB_H           336
-#define NOX_3DS_SB_LPAGE_X     24
-#define NOX_3DS_SB_RPAGE_X     298
-#define NOX_3DS_SB_PAGE_W      240
-#define NOX_3DS_SB_SPINE_X     280
-#define NOX_3DS_SB_LIST_TOP    28
-#define NOX_3DS_SB_LIST_H      256
-#define NOX_3DS_SB_DESC_X      296
-#define NOX_3DS_SB_DESC_Y      24
-#define NOX_3DS_SB_DESC_W      242
-#define NOX_3DS_SB_DESC_H      264
+#define NOX_3DS_SB_LPAGE_X     48
+#define NOX_3DS_SB_RPAGE_X     292
+#define NOX_3DS_SB_PAGE_W      216
+#define NOX_3DS_SB_LCENTER_X   156
+#define NOX_3DS_SB_RCENTER_X   398
+#define NOX_3DS_SB_SPINE_X     290
+#define NOX_3DS_SB_LIST_TOP    38
+#define NOX_3DS_SB_LIST_H      236
+#define NOX_3DS_SB_DESC_X      306
+#define NOX_3DS_SB_DESC_Y      34
+#define NOX_3DS_SB_DESC_W      188
+#define NOX_3DS_SB_DESC_H      240
 
 static inline int nox_3ds_sb_row_h(void)
 {
@@ -10236,109 +10240,113 @@ static inline int nox_3ds_sb_rows_per_page(void)
   return (r < 4) ? 4 : r;
 }
 
-static void nox_3ds_sb_draw_tab(int tx, int ty, int tw, int th,
-                                const uint16_t *label, bool active, bool dim)
+static void nox_3ds_sb_draw_book_bg(int bx, int by, int tab_mode)
 {
-  int c_border = sub_4344A0(34, 20, 12);
-  int c_fill = active ? sub_4344A0(218, 194, 146)
-                      : (dim ? sub_4344A0(62, 44, 30) : sub_4344A0(118, 82, 50));
-  int c_trim = active ? sub_4344A0(168, 134, 78) : sub_4344A0(80, 54, 34);
-  int c_txt  = active ? sub_4344A0(22, 14, 8)
-                      : (dim ? sub_4344A0(120, 104, 84) : sub_4344A0(232, 212, 172));
-  sub_434460(c_border);
-  sub_49CE30(tx, ty, tw, th);
-  sub_434460(c_fill);
-  sub_49CE30(tx + (active ? 0 : 2), ty + 2, tw - (active ? 2 : 4), th - 4);
-  sub_434460(c_trim);
-  sub_49CE30(tx + 2, ty + 2, tw - 4, 2);
-  sub_49CE30(tx + 2, ty + th - 4, tw - 4, 2);
-  if ( label && *label )
+  enum { CAP_W = 640, CAP_H = 264, CAP_ANCHOR_X = 48, CAP_ANCHOR_Y = 84 };
+  static uint16_t *s_cap_buf = NULL;
+  static uint16_t *s_cap_rows[480];
+  static int s_cached_bg = 0;
+  static int s_cached_tab = 0;
+  static int s_min_x = 0, s_max_x = -1, s_min_y = 0, s_max_y = -1;
+
+  int spr_bg  = *(_DWORD *)&byte_5D4594[1046856];
+  int spr_tab = tab_mode ? *(_DWORD *)&byte_5D4594[1046660] : *(_DWORD *)&byte_5D4594[1046644];
+  if ( !spr_bg )
+    return;
+
+  if ( !s_cap_buf )
   {
-    int lw = 0;
-    int lh = sub_43F320(0);
-    sub_43F840(0, (unsigned __int16 *)label, &lw, 0, 0);
-    int dx = tx + (tw - lw) / 2;
-    if ( dx < tx + 2 ) dx = tx + 2;
-    sub_434390(c_txt);
-    nox_3ds_clip_guard_t tcg;
-    if ( nox_3ds_clip_push(&tcg, tx + 2, ty + 4, tw - 4, th - 8) )
-      sub_43F6E0(0, (__int16 *)label, dx, ty + (th - lh) / 2);
-    nox_3ds_clip_pop(&tcg);
+    s_cap_buf = (uint16_t *)malloc((size_t)CAP_W * (size_t)CAP_H * sizeof(uint16_t));
+    if ( !s_cap_buf )
+      return;
+    for ( int y = 0; y < 480; ++y )
+      s_cap_rows[y] = s_cap_buf + (size_t)((y < CAP_H) ? y : (CAP_H - 1)) * CAP_W;
   }
-}
 
-static void nox_3ds_sb_draw_book_bg(int bx, int by, int bw, int bh,
-                                    int mode, int player_class, int is_index)
-{
-  int book_w = 548;
-  /* Outer dark leather cover */
-  sub_434460(sub_4344A0(28, 16, 10));
-  sub_49CE30(bx, by, book_w, bh);
-  sub_434460(sub_4344A0(76, 46, 26));
-  sub_49CE30(bx + 3, by + 3, book_w - 6, bh - 6);
-  sub_434460(sub_4344A0(52, 32, 18));
-  sub_49CE30(bx + 7, by + 7, book_w - 14, bh - 14);
-
-  /* Right-edge bookmark tabs (match child widgets 1320 and 1310) */
-  static const uint16_t lbl_traps[]  = { 'T','R','A','P', 0 };
-  static const uint16_t lbl_spells[] = { 'S','P','E','L','L', 0 };
-  static const uint16_t lbl_abil[]   = { 'A','B','I','L', 0 };
-  static const uint16_t lbl_index[]  = { 'I','N','D','E','X', 0 };
-  const uint16_t *top_lbl = (mode == 1 && !is_index) ? lbl_index : lbl_traps;
-  const uint16_t *bot_lbl = (mode == 0 && !is_index) ? lbl_index
-                            : ((player_class == 0) ? lbl_abil : lbl_spells);
-  nox_3ds_sb_draw_tab(bx + 548, by + 22, 50, 74, top_lbl, mode == 1, player_class == 0);
-  nox_3ds_sb_draw_tab(bx + 548, by + 104, 50, 74, bot_lbl, mode == 0, false);
-
-  /* Page-edge shadow stacks */
-  sub_434460(sub_4344A0(172, 146, 106));
-  sub_49CE30(bx + 11, by + 11, book_w - 22, bh - 22);
-
-  /* Left & right parchment pages */
-  int c_page  = sub_4344A0(222, 200, 156);
-  int c_rule  = sub_4344A0(176, 146, 100);
-  int c_hi    = sub_4344A0(234, 214, 174);
-  sub_434460(c_page);
-  sub_49CE30(bx + 15, by + 14, 259, bh - 28);
-  sub_49CE30(bx + 286, by + 14, 247, bh - 28);
-
-  /* Subtle top highlight and decorative inner rule on each page */
-  sub_434460(c_hi);
-  sub_49CE30(bx + 16, by + 15, 257, 2);
-  sub_49CE30(bx + 287, by + 15, 245, 2);
-  sub_434460(c_rule);
-  sub_49CE30(bx + 20, by + 19, 248, 1);
-  sub_49CE30(bx + 20, by + bh - 20, 248, 1);
-  sub_49CE30(bx + 292, by + 19, 236, 1);
-  sub_49CE30(bx + 292, by + bh - 20, 236, 1);
-
-  /* Center binding spine gutter */
-  sub_434460(sub_4344A0(124, 96, 62));
-  sub_49CE30(bx + 274, by + 13, 2, bh - 26);
-  sub_49CE30(bx + 284, by + 13, 2, bh - 26);
-  sub_434460(sub_4344A0(58, 36, 20));
-  sub_49CE30(bx + 276, by + 12, 8, bh - 24);
-  sub_434460(sub_4344A0(92, 60, 34));
-  sub_49CE30(bx + 279, by + 12, 2, bh - 24);
-
-  /* Subtle framed pads under visible prev/next page-turn arrow widgets */
-  int prev_w = *(_DWORD *)&byte_5D4594[1046944];
-  int next_w = *(_DWORD *)&byte_5D4594[1046948];
-  if ( prev_w && !sub_46ACC0(prev_w) )
+  /* Capture the authentic Westwood Spellbook sprites into an offscreen scratch
+   * buffer using bit 15 (0x8000) as a lossless transparency sentinel. */
+  if ( spr_bg != s_cached_bg || spr_tab != s_cached_tab )
   {
-    sub_434460(c_rule);
-    sub_49CE30(bx + 22, by + 292, 34, 28);
-    sub_434460(c_hi);
-    sub_49CE30(bx + 24, by + 294, 30, 24);
+    size_t n = (size_t)CAP_W * (size_t)CAP_H;
+    for ( size_t i = 0; i < n; ++i )
+      s_cap_buf[i] = 0x8000u;
+
+    void *saved_buf  = *(void **)&byte_5D4594[3798780];
+    void *saved_rows = *(void **)&byte_5D4594[3798784];
+    *(void **)&byte_5D4594[3798780] = (void *)s_cap_buf;
+    *(void **)&byte_5D4594[3798784] = (void *)s_cap_rows;
+
+    nox_3ds_clip_guard_t cg;
+    if ( nox_3ds_clip_push(&cg, 0, 0, CAP_W, CAP_H) )
+    {
+      int sv1 = CAP_ANCHOR_X - 24;
+      int sv2 = CAP_ANCHOR_Y - 76;
+      sub_47D2C0(spr_bg, sv1, sv2);
+      if ( spr_tab )
+        sub_47D2C0(spr_tab, sv1, sv2);
+    }
+    nox_3ds_clip_pop(&cg);
+
+    *(void **)&byte_5D4594[3798780] = saved_buf;
+    *(void **)&byte_5D4594[3798784] = saved_rows;
+
+    s_min_x = CAP_W; s_max_x = -1;
+    s_min_y = CAP_H; s_max_y = -1;
+    for ( int y = 0; y < CAP_H; ++y )
+    {
+      const uint16_t *row = s_cap_buf + (size_t)y * CAP_W;
+      for ( int x = 0; x < CAP_W; ++x )
+      {
+        if ( !(row[x] & 0x8000u) )
+        {
+          if ( x < s_min_x ) s_min_x = x;
+          if ( x > s_max_x ) s_max_x = x;
+          if ( y < s_min_y ) s_min_y = y;
+          if ( y > s_max_y ) s_max_y = y;
+        }
+      }
+    }
+    s_cached_bg  = spr_bg;
+    s_cached_tab = spr_tab;
   }
-  if ( next_w && !sub_46ACC0(next_w) )
+
+  if ( s_max_x < s_min_x || s_max_y < s_min_y )
+    return;
+
+  uint16_t **dst_rows = *(uint16_t ***)&byte_5D4594[3798784];
+  if ( !dst_rows )
+    return;
+  int sw_w = *(_DWORD *)&byte_5D4594[3801784];
+  int sw_h = *(_DWORD *)&byte_5D4594[3801788];
+  int max_dst_y = (sw_h > 352) ? 352 : sw_h; /* keep bottom HUD/Spell Bar untouched */
+
+  for ( int sy = s_min_y; sy <= s_max_y; ++sy )
   {
-    sub_434460(c_rule);
-    sub_49CE30(bx + 492, by + 292, 34, 28);
-    sub_434460(c_hi);
-    sub_49CE30(bx + 494, by + 294, 30, 24);
+    int dy = by + (sy - CAP_ANCHOR_Y) * 2;
+    if ( dy + 1 < 0 || dy >= max_dst_y )
+      continue;
+    uint16_t *d0 = (dy >= 0 && dy < max_dst_y) ? dst_rows[dy] : NULL;
+    uint16_t *d1 = (dy + 1 >= 0 && dy + 1 < max_dst_y) ? dst_rows[dy + 1] : NULL;
+    const uint16_t *src = s_cap_buf + (size_t)sy * CAP_W;
+
+    for ( int sx = s_min_x; sx <= s_max_x; ++sx )
+    {
+      uint16_t px = src[sx];
+      if ( px & 0x8000u )
+        continue;
+      int dx = bx + (sx - CAP_ANCHOR_X) * 2;
+      if ( dx >= 0 && dx + 1 < sw_w )
+      {
+        if ( d0 ) { d0[dx] = px; d0[dx + 1] = px; }
+        if ( d1 ) { d1[dx] = px; d1[dx + 1] = px; }
+      }
+      else if ( dx >= 0 && dx < sw_w )
+      {
+        if ( d0 ) d0[dx] = px;
+        if ( d1 ) d1[dx] = px;
+      }
+    }
   }
-  (void)bw;
 }
 #endif
 
@@ -10752,7 +10760,7 @@ LABEL_47:
       v8 = v3 - (a3 + NOX_3DS_SB_LIST_TOP);
       v7 = v8 < 0;
       *(_DWORD *)&byte_5D4594[1047532] = v4;
-      if ( v7 || (v4 - v14) < 16 || (v4 - v14) > 544 )
+      if ( v7 || (v4 - v14) < 36 || (v4 - v14) > 512 )
       {
         *(_DWORD *)&byte_587000[132136] = -1;
         return 1;
@@ -10961,7 +10969,7 @@ int sub_45B9D0()
                             sub_46B430(*(_DWORD **)&byte_5D4594[1046860], sub_45B5F0, sub_45BD40, 0);
                             sub_46AC00(*(int *)&byte_5D4594[1046860], 1);
 #ifdef __3DS__
-                            result = sub_46C3E0(*(int *)&byte_5D4594[1046860], 8, 548, 22, 50, 74, 0);
+                            result = sub_46C3E0(*(int *)&byte_5D4594[1046860], 8, 514, 30, 54, 80, 0);
 #else
                             result = sub_46C3E0(*(int *)&byte_5D4594[1046860], 8, 257, 15, 27, 40, 0);
 #endif
@@ -10971,7 +10979,7 @@ int sub_45B9D0()
                               sub_46B430((_DWORD *)result, sub_45B360, (int)&sub_45BD30, sub_45CF00);
                               *v1 = 1320;
 #ifdef __3DS__
-                              result = sub_46C3E0(*(int *)&byte_5D4594[1046860], 8, 548, 104, 50, 74, 0);
+                              result = sub_46C3E0(*(int *)&byte_5D4594[1046860], 8, 506, 122, 54, 80, 0);
 #else
                               result = sub_46C3E0(*(int *)&byte_5D4594[1046860], 8, 253, 61, 27, 40, 0);
 #endif
@@ -10984,10 +10992,10 @@ int sub_45B9D0()
                                 *(_DWORD *)&byte_5D4594[1046944] = sub_46C3E0(
                                                                      *(int *)&byte_5D4594[1046860],
                                                                      136,
-                                                                     22,
-                                                                     292,
-                                                                     34,
-                                                                     28,
+                                                                     48,
+                                                                     276,
+                                                                     40,
+                                                                     40,
                                                                      0);
 #else
                                 *(_DWORD *)&byte_5D4594[1046944] = sub_46C3E0(
@@ -11003,13 +11011,17 @@ int sub_45B9D0()
                                 v3 = sub_42F970((const char *)&byte_587000[132328]);
                                 sub_46AE60(*(int *)&byte_5D4594[1046944], (int)v3);
 #ifdef __3DS__
+                                {
+                                  _DWORD *pw = *(_DWORD **)&byte_5D4594[1046944];
+                                  if ( pw ) { pw[24] = 10; pw[25] = 10; }
+                                }
                                 *(_DWORD *)&byte_5D4594[1046948] = sub_46C3E0(
                                                                      *(int *)&byte_5D4594[1046860],
                                                                      136,
-                                                                     492,
-                                                                     292,
-                                                                     34,
-                                                                     28,
+                                                                     466,
+                                                                     276,
+                                                                     40,
+                                                                     40,
                                                                      0);
 #else
                                 *(_DWORD *)&byte_5D4594[1046948] = sub_46C3E0(
@@ -11025,11 +11037,15 @@ int sub_45B9D0()
                                 v4 = sub_42F970((const char *)&byte_587000[132336]);
                                 sub_46AE60(*(int *)&byte_5D4594[1046948], (int)v4);
 #ifdef __3DS__
+                                {
+                                  _DWORD *nw = *(_DWORD **)&byte_5D4594[1046948];
+                                  if ( nw ) { nw[24] = 10; nw[25] = 10; }
+                                }
                                 *(_DWORD *)&byte_5D4594[1046952] = sub_46C3E0(
                                                                      *(int *)&byte_5D4594[1046860],
                                                                      8,
-                                                                     129,
-                                                                     26,
+                                                                     141,
+                                                                     44,
                                                                      32,
                                                                      32,
                                                                      0);
@@ -11157,14 +11173,7 @@ int __cdecl sub_45BD40(int a1)
   *(_DWORD *)&byte_5D4594[1046656] = nox_3ds_sb_row_h();
   if ( *(_DWORD *)&byte_5D4594[1046868] == 2 || *(_DWORD *)&byte_5D4594[1046868] == 3 )
     *(_DWORD *)&byte_5D4594[1046868] = *(_DWORD *)&byte_5D4594[1046872] ? 1 : 0;
-  {
-    int sb_cls = *(_DWORD *)&byte_5D4594[1047516]
-      ? (int)(unsigned char)*(_BYTE *)(*(_DWORD *)&byte_5D4594[1047516] + 2251)
-      : 0;
-    nox_3ds_sb_draw_book_bg(v66, v67, NOX_3DS_SB_W, NOX_3DS_SB_H,
-                            *(_DWORD *)&byte_5D4594[1046868], sb_cls,
-                            *(_DWORD *)&byte_587000[132132]);
-  }
+  nox_3ds_sb_draw_book_bg(v66, v67, *(_DWORD *)&byte_5D4594[1046872]);
   sub_434390(*(int *)&byte_5D4594[1046880]);
   (void)v1;
   (void)v2;
@@ -11202,7 +11211,7 @@ int __cdecl sub_45BD40(int a1)
     }
     v5 = 0;
 #ifdef __3DS__
-    v6 = v66 + NOX_3DS_SB_LPAGE_X + NOX_3DS_SB_PAGE_W / 2;
+    v6 = v66 + NOX_3DS_SB_LCENTER_X;
     v7 = v67 + NOX_3DS_SB_LIST_TOP;
 #else
     v6 = v66 + 78;
@@ -11218,7 +11227,7 @@ int __cdecl sub_45BD40(int a1)
         if ( v5 == *(_DWORD *)WideCharStr )
         {
 #ifdef __3DS__
-          v6 = v66 + NOX_3DS_SB_RPAGE_X + NOX_3DS_SB_PAGE_W / 2;
+          v6 = v66 + NOX_3DS_SB_RCENTER_X;
           v7 = v67 + NOX_3DS_SB_LIST_TOP;
 #else
           v6 = v66 + 199;
@@ -11280,7 +11289,7 @@ int __cdecl sub_45BD40(int a1)
   if ( *(_DWORD *)&byte_5D4594[1046868] == 1 )
   {
 #ifdef __3DS__
-    v14 = v67 + 66;
+    v14 = v67 + 84;
 #else
     v14 = v67 + 51;
 #endif
@@ -11386,7 +11395,7 @@ int __cdecl sub_45BD40(int a1)
         v34 = (NOX_3DS_SB_PAGE_W - v70) / 2 + v66 + NOX_3DS_SB_LPAGE_X;
       else
         v34 = v66 + NOX_3DS_SB_LPAGE_X + 4;
-      v58 = v67 + 72;
+      v58 = v67 + 86;
       v56 = v34;
       v35 = (_WORD *)v33;
       sub_43FD80(0, v35, v56, v58, NOX_3DS_SB_PAGE_W - 8, 0);
@@ -11436,8 +11445,8 @@ LABEL_53:
       v40 = (NOX_3DS_SB_PAGE_W - v65) / 2 + v66 + NOX_3DS_SB_LPAGE_X;
     else
       v40 = v66 + NOX_3DS_SB_LPAGE_X + 4;
-    v41 = v67 + 70;
-    v59 = v67 + 70;
+    v41 = v67 + 84;
+    v59 = v67 + 84;
     v57 = v40;
     v42 = (_WORD *)v39;
     sub_43FD80(0, v42, v57, v59, NOX_3DS_SB_PAGE_W - 8, 0);
