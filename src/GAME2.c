@@ -47524,12 +47524,21 @@ int __cdecl sub_48BE50(int a1)
 //----- (0048BE70) --------------------------------------------------------
 int sub_48BE70()
 {
+#ifdef __3DS__
+  /* 3DS blits cursors synchronously on Core 0 via nox_3ds_blit_cursor_to_top/bottom();
+   * skip spawning Win32's 33 ms cursor thread so it never races g_cursor_surf/SDL input
+   * or contends on Core 0. Leaving 1193656 == 0 also makes sub_48B350 teardown a clean no-op. */
+  *(_DWORD *)&byte_5D4594[1193680] = 0;
+  *(_DWORD *)&byte_5D4594[1193656] = 0;
+  return 1;
+#else
   *(_DWORD *)&byte_5D4594[1193680] = 1;
   *(_DWORD *)&byte_5D4594[1193656] = _beginthread(sub_48BEB0, 0, 0);
   if ( *(int *)&byte_5D4594[1193656] != -1 )
     return 1;
   *(_DWORD *)&byte_5D4594[1193656] = 0;
   return 0;
+#endif
 }
 
 //----- (0048BEB0) --------------------------------------------------------

@@ -20,6 +20,11 @@
 /* Nox has functions with 75-144 KB stack frames; libctru's default 32 KB is insufficient. */
 u32 __stacksize__ = 1024 * 1024;
 
+/* Nox uses ~5.77 MiB of linearAlloc (2.23 MiB safety margin inside 8 MiB), whereas
+ * libctru defaults to reserving ~31.9 MiB of linearAlloc on Old 3DS before letting
+ * malloc grow past 24 MiB — reclaiming ~24 MiB of stranded FCRAM for the C heap. */
+u32 __ctru_linear_heap_size = 8 * 1024 * 1024;
+
 static nox_3ds_state_t g_3ds_state;
 static PrintConsole g_boot_console;
 static bool g_initialized = false;

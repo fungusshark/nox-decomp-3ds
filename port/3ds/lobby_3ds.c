@@ -65,37 +65,71 @@ extern int nox_env_truthy(const char *s);
 #define NOX_3DS_NET_LOG_CAP             65536u
 
 static RecursiveLock g_netlog_lock;
-static bool          g_netlog_lock_inited = false;
-static bool          g_netlog_started     = false;
-static size_t        g_netlog_bytes       = 0;
+static int           g_netlog_init_state = 0; /* 0 = uninit, 1 = initing, 2 = ready */
+static int           g_netlog_file_enabled = 0;
+static bool          g_netlog_started    = false;
+static size_t        g_netlog_bytes      = 0;
+
+/* stdio-free small config file reader so Core 2 never touches _GLOBAL_REENT->__sglue. */
+static ssize_t lobby_read_raw_file(const char *path, char *buf, size_t cap)
+{
+    if (!path || !buf || cap < 2)
+        return -1;
+    int fd = open(path, O_RDONLY);
+    if (fd < 0)
+        return -1;
+    size_t total = 0;
+    while (total + 1u < cap) {
+        ssize_t r = read(fd, buf + total, (cap - 1u) - total);
+        if (r > 0) {
+            total += (size_t)r;
+            continue;
+        }
+        if (r < 0 && errno == EINTR)
+            continue;
+        break;
+    }
+    close(fd);
+    buf[total] = '\0';
+    return (ssize_t)total;
+}
+
+static void netlog_ensure_init(void)
+{
+    int state = __atomic_load_n(&g_netlog_init_state, __ATOMIC_ACQUIRE);
+    if (state == 2)
+        return;
+
+    int expected = 0;
+    if (__atomic_compare_exchange_n(&g_netlog_init_state, &expected, 1,
+                                    false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+        RecursiveLock_Init(&g_netlog_lock);
+        if (nox_env_truthy(getenv("NOX_3DS_NET_LOG")) != 0) {
+            g_netlog_file_enabled = 1;
+        } else {
+            char fbuf[32] = {0};
+            ssize_t fn = lobby_read_raw_file(NOX_3DS_DATA_ROOT "/net_log.txt", fbuf, sizeof(fbuf));
+            if (fn >= 0) {
+                g_netlog_file_enabled = (fn == 0 || nox_env_truthy(fbuf) != 0) ? 1 : 0;
+            } else {
+                g_netlog_file_enabled = 0;
+            }
+        }
+        __atomic_store_n(&g_netlog_init_state, 2, __ATOMIC_RELEASE);
+        return;
+    }
+
+    while (__atomic_load_n(&g_netlog_init_state, __ATOMIC_ACQUIRE) != 2) {
+        svcSleepThread(100000LL);
+    }
+}
 
 void nox_3ds_net_log(const char *fmt, ...)
 {
     if (!fmt)
         return;
 
-    static int s_file_log_enabled = -1;
-    if (s_file_log_enabled < 0) {
-        if (nox_env_truthy(getenv("NOX_3DS_NET_LOG")) != 0) {
-            s_file_log_enabled = 1;
-        } else {
-            FILE *flag_f = fopen(NOX_3DS_DATA_ROOT "/net_log.txt", "r");
-            if (flag_f) {
-                char fbuf[32] = {0};
-                size_t fn = fread(fbuf, 1, sizeof(fbuf) - 1u, flag_f);
-                fclose(flag_f);
-                fbuf[fn] = '\0';
-                s_file_log_enabled = (fn == 0 || nox_env_truthy(fbuf) != 0) ? 1 : 0;
-            } else {
-                s_file_log_enabled = 0;
-            }
-        }
-    }
-
-    if (!g_netlog_lock_inited) {
-        RecursiveLock_Init(&g_netlog_lock);
-        g_netlog_lock_inited = true;
-    }
+    netlog_ensure_init();
 
     char msg[512];
     va_list ap;
@@ -106,22 +140,33 @@ void nox_3ds_net_log(const char *fmt, ...)
         return;
 
     uint32_t ms = nox_3ds_get_ticks_ms();
-    fprintf(stderr, "[%ums] %s\n", (unsigned)ms, msg);
+    char line[560];
+    int line_len = snprintf(line, sizeof(line), "[%ums] %s\n", (unsigned)ms, msg);
+    if (line_len <= 0)
+        return;
+    if ((size_t)line_len >= sizeof(line))
+        line_len = (int)(sizeof(line) - 1u);
 
-    if (!s_file_log_enabled)
+    /* Emit directly via kernel debug SVC instead of fprintf(stderr, ...) so Core 2
+     * never touches newlib FILE* / _GLOBAL_REENT->__sglue while Core 0 runs fflush(NULL). */
+    svcOutputDebugString(line, (s32)line_len);
+
+    if (!g_netlog_file_enabled)
         return;
 
     RecursiveLock_Lock(&g_netlog_lock);
     if (g_netlog_bytes < NOX_3DS_NET_LOG_CAP) {
-        const char *mode = g_netlog_started ? "a" : "w";
-        FILE *f = fopen(NOX_3DS_DATA_ROOT "/net.log", mode);
-        if (f) {
+        int oflags = O_WRONLY | O_CREAT | (g_netlog_started ? O_APPEND : O_TRUNC);
+        int fd = open(NOX_3DS_DATA_ROOT "/net.log", oflags, 0666);
+        if (fd < 0 && !g_netlog_started) {
+            fd = open(NOX_3DS_DATA_ROOT "/net.log", O_WRONLY | O_CREAT | O_APPEND, 0666);
+        }
+        if (fd >= 0) {
             g_netlog_started = true;
-            int wrote = fprintf(f, "[%ums] %s\n", (unsigned)ms, msg);
+            ssize_t wrote = write(fd, line, (size_t)line_len);
             if (wrote > 0)
                 g_netlog_bytes += (size_t)wrote;
-            fflush(f);
-            fclose(f);
+            close(fd);
         }
     }
     RecursiveLock_Unlock(&g_netlog_lock);
@@ -157,13 +202,25 @@ typedef struct {
 } host_reg_job_t;
 
 /* Synchronization & worker lifecycle */
+static bool g_lobby_sync_inited = false;
 static bool g_lobby_inited = false;
 static RecursiveLock g_lobby_lock;
 static LightEvent g_lobby_event;
 static Thread g_worker_thread = NULL;
 static bool g_worker_started = false;
-static volatile bool g_worker_stop = false;
+static bool g_worker_alive = false;
+static bool g_worker_stop = false;
 static bool g_httpc_inited = false;
+
+static inline bool lobby_worker_should_stop(void)
+{
+    return __atomic_load_n(&g_worker_stop, __ATOMIC_ACQUIRE);
+}
+
+static inline void lobby_worker_set_stop(bool stop)
+{
+    __atomic_store_n(&g_worker_stop, stop, __ATOMIC_RELEASE);
+}
 
 typedef struct {
     nox_server_row row;
@@ -328,12 +385,20 @@ static size_t lobby_load_endpoints(lobby_endpoint_t *eps, size_t max_eps, bool *
 
         if (!s_eps_cached) {
             /* Optional SD card config: sdmc:/3ds/nox/lobby.txt
-             * One endpoint per line: "nox.nwca.xyz:8088", "https://...", or "disabled". */
-            FILE *f = fopen(NOX_3DS_DATA_ROOT "/lobby.txt", "r");
-            if (f) {
-                char line[256];
-                while (s_cached_ep_count < NOX_3DS_LOBBY_MAX_ENDPOINTS && fgets(line, sizeof(line), f)) {
-                    char *p = line;
+             * One endpoint per line: "nox.nwca.xyz:8088", "https://...", or "disabled".
+             * Read via raw POSIX fd so Core 2 never touches newlib FILE* lists. */
+            char cfg_buf[2048];
+            ssize_t cfg_len = lobby_read_raw_file(NOX_3DS_DATA_ROOT "/lobby.txt",
+                                                  cfg_buf, sizeof(cfg_buf));
+            if (cfg_len > 0) {
+                char *cursor = cfg_buf;
+                while (s_cached_ep_count < NOX_3DS_LOBBY_MAX_ENDPOINTS && *cursor) {
+                    char *nl = strchr(cursor, '\n');
+                    if (nl)
+                        *nl = '\0';
+                    char *p = cursor;
+                    cursor = nl ? (nl + 1) : (cursor + strlen(cursor));
+
                     while (*p && (unsigned char)*p <= ' ') p++;
                     if (*p == '\0' || *p == '#')
                         continue;
@@ -350,7 +415,6 @@ static size_t lobby_load_endpoints(lobby_endpoint_t *eps, size_t max_eps, bool *
                         s_cached_ep_count++;
                     }
                 }
-                fclose(f);
             }
 
             if (!s_eps_disabled && s_cached_ep_count == 0) {
@@ -393,12 +457,9 @@ static bool lobby_should_register_host(void)
 
     /* Enabled by default when hosting over Wi-Fi; create sdmc:/3ds/nox/lobby_host.txt
      * with "0" / "off" to keep a LAN host private. */
-    FILE *f = fopen(NOX_3DS_DATA_ROOT "/lobby_host.txt", "r");
-    if (f) {
-        char buf[32] = {0};
-        size_t n = fread(buf, 1, sizeof(buf) - 1, f);
-        fclose(f);
-        buf[n] = '\0';
+    char buf[32] = {0};
+    ssize_t n = lobby_read_raw_file(NOX_3DS_DATA_ROOT "/lobby_host.txt", buf, sizeof(buf));
+    if (n >= 0) {
         s_cached = (n == 0 || nox_env_truthy(buf) != 0) ? 1 : 0;
         return s_cached != 0;
     }
@@ -690,7 +751,8 @@ static size_t queue_cached_rows_locked(struct sockaddr_in *out_addrs,
         }
 
         /* Game flags @ offset 28..29 (little-endian) */
-        uint16_t base = g_last_serverinfo_flags ? g_last_serverinfo_flags : 0x0007u;
+        uint16_t cached_flags = __atomic_load_n(&g_last_serverinfo_flags, __ATOMIC_ACQUIRE);
+        uint16_t base = cached_flags ? cached_flags : 0x0007u;
         uint16_t modebit = lobby_mode_to_flagbit(row->mode);
         uint16_t flags = (uint16_t)((base & (uint16_t)~NOX_MODE_MASK) | modebit);
         out[28] = (uint8_t)(flags & 0xFFu);
@@ -848,7 +910,7 @@ static int httpc_get_body_with_proxy(const char *initial_url, char *out_buf, siz
     char url[512];
     snprintf(url, sizeof(url), "%s", initial_url);
 
-    for (int hop = 0; hop <= NOX_3DS_LOBBY_MAX_REDIRECTS && !g_worker_stop; ++hop) {
+    for (int hop = 0; hop <= NOX_3DS_LOBBY_MAX_REDIRECTS && !lobby_worker_should_stop(); ++hop) {
         httpcContext ctx;
         memset(&ctx, 0, sizeof(ctx));
 
@@ -933,9 +995,10 @@ static int httpc_get_body_with_proxy(const char *initial_url, char *out_buf, siz
                     prev_dl = dl_now;
                 }
             }
-        } while (rc == (Result)HTTPC_RESULTCODE_DOWNLOADPENDING && !g_worker_stop);
+        } while (rc == (Result)HTTPC_RESULTCODE_DOWNLOADPENDING && !lobby_worker_should_stop());
 
-        if (aborted || g_worker_stop || (rc != 0 && rc != (Result)HTTPC_RESULTCODE_DOWNLOADPENDING)) {
+        bool stop_now = lobby_worker_should_stop();
+        if (aborted || stop_now || (rc != 0 && rc != (Result)HTTPC_RESULTCODE_DOWNLOADPENDING)) {
             /* Always cancel before closing an incomplete stream so httpcCloseContext cannot hang. */
             httpcCancelConnection(&ctx);
             httpcCloseContext(&ctx);
@@ -943,7 +1006,7 @@ static int httpc_get_body_with_proxy(const char *initial_url, char *out_buf, siz
                 nox_3ds_net_log("[lobby3ds] http:C download failed for %s: 0x%08lX", url, (unsigned long)rc);
                 return -1;
             }
-            if (g_worker_stop)
+            if (stop_now)
                 return -1;
         } else {
             httpcCloseContext(&ctx);
@@ -959,7 +1022,7 @@ static int httpc_get_body_with_proxy(const char *initial_url, char *out_buf, siz
 static int httpc_get_body(const char *initial_url, char *out_buf, size_t out_cap)
 {
     int n = httpc_get_body_with_proxy(initial_url, out_buf, out_cap, 0);
-    if (n > 0 || g_worker_stop)
+    if (n > 0 || lobby_worker_should_stop())
         return n;
     return httpc_get_body_with_proxy(initial_url, out_buf, out_cap, 1);
 }
@@ -1019,7 +1082,7 @@ static int httpc_post_json_with_proxy(const char *url, const char *json_body, u3
 static int httpc_post_json(const char *url, const char *json_body)
 {
     int r = httpc_post_json_with_proxy(url, json_body, 0);
-    if (r >= 0 || g_worker_stop)
+    if (r >= 0 || lobby_worker_should_stop())
         return r;
     return httpc_post_json_with_proxy(url, json_body, 1);
 }
@@ -1192,7 +1255,7 @@ static int soc_connect_with_timeout(struct in_addr ip, uint16_t port, int timeou
     }
 
     uint32_t start_ms = nox_3ds_get_ticks_ms();
-    while (!g_worker_stop) {
+    while (!lobby_worker_should_stop()) {
         uint32_t elapsed = nox_3ds_get_ticks_ms() - start_ms;
         if ((int)elapsed >= timeout_ms) {
             nox_3ds_net_log("[lobby3ds] soc connect(%s:%u) timed out after %d ms",
@@ -1258,7 +1321,7 @@ static bool soc_send_all(int fd, const char *buf, size_t len, int timeout_ms)
 {
     size_t sent = 0;
     uint32_t start_ms = nox_3ds_get_ticks_ms();
-    while (sent < len && !g_worker_stop) {
+    while (sent < len && !lobby_worker_should_stop()) {
         ssize_t n = send(fd, buf + sent, len - sent, 0);
         if (n > 0) {
             sent += (size_t)n;
@@ -1301,7 +1364,7 @@ static int soc_http_request(const char *method, const char *initial_url,
         return -1;
 
     int final_ret = -1;
-    for (int hop = 0; hop <= NOX_3DS_LOBBY_MAX_REDIRECTS && !g_worker_stop; ++hop) {
+    for (int hop = 0; hop <= NOX_3DS_LOBBY_MAX_REDIRECTS && !lobby_worker_should_stop(); ++hop) {
         bool is_https = false;
         char host[256];
         char path[256];
@@ -1371,7 +1434,7 @@ static int soc_http_request(const char *method, const char *initial_url,
         size_t content_length = 0;
         bool is_chunked = false;
         uint32_t start_ms = nox_3ds_get_ticks_ms();
-        while (!g_worker_stop && raw_len + 1u < raw_cap) {
+        while (!lobby_worker_should_stop() && raw_len + 1u < raw_cap) {
             uint32_t elapsed = nox_3ds_get_ticks_ms() - start_ms;
             if ((int)elapsed >= NOX_3DS_LOBBY_HTTP_TIMEOUT_MS)
                 break;
@@ -1445,7 +1508,7 @@ static int soc_http_request(const char *method, const char *initial_url,
         }
         close(fd);
 
-        if (raw_len == 0 || g_worker_stop) {
+        if (raw_len == 0 || lobby_worker_should_stop()) {
             nox_3ds_net_log("[lobby3ds] soc recv empty/stopped for %s", url);
             break;
         }
@@ -1514,7 +1577,7 @@ static int http_get_body(const char *url, char *out_buf, size_t out_cap)
         int n = soc_http_request("GET", url, NULL, out_buf, out_cap);
         if (n > 0)
             return n;
-        if (g_worker_stop)
+        if (lobby_worker_should_stop())
             return -1;
         nox_3ds_net_log("[lobby3ds] soc GET failed for %s; falling back to http:C", url);
     }
@@ -1530,7 +1593,7 @@ static int http_post_json(const char *url, const char *json_body)
         int r = soc_http_request("POST", url, json_body, resp_tmp, sizeof(resp_tmp));
         if (r >= 0)
             return 0;
-        if (g_worker_stop)
+        if (lobby_worker_should_stop())
             return -1;
     }
     return httpc_post_json(url, json_body);
@@ -1559,7 +1622,7 @@ static void worker_do_fetch_list(char *json_buf,
     bool got_valid_response = false;
     char good_base[256] = {0};
 
-    for (size_t i = 0; i < ep_count && !g_worker_stop; ++i) {
+    for (size_t i = 0; i < ep_count && !lobby_worker_should_stop(); ++i) {
         char full_url[320];
         snprintf(full_url, sizeof(full_url), "%s/api/v0/games/list", endpoints[i].base_url);
         nox_3ds_net_log("[lobby3ds] Fetching %s", full_url);
@@ -1580,7 +1643,7 @@ static void worker_do_fetch_list(char *json_buf,
         /* Pre-resolve all server IPv4 addresses strictly on this background thread
          * so the 30 Hz main thread never blocks on DNS or holds g_lobby_lock during DNS. */
         resolved_count = 0;
-        for (size_t j = 0; j < parsed_count && !g_worker_stop; ++j) {
+        for (size_t j = 0; j < parsed_count && !lobby_worker_should_stop(); ++j) {
             struct in_addr srv_ip;
             if (!resolve_ipv4_addr(parsed[j].row.addr, &srv_ip)) {
                 nox_3ds_net_log("[lobby3ds] Skip unresolvable server '%s' (%s)",
@@ -1695,9 +1758,15 @@ static void worker_do_host_register(const host_reg_job_t *job)
     if (last_good[0] != '\0') {
         snprintf(url, sizeof(url), "%s/api/v0/games/register", last_good);
         if (http_post_json(url, body) == 0) {
+            bool log_ok = false;
+            RecursiveLock_Lock(&g_lobby_lock);
             if (s_last_reg_failed || strcmp(s_last_logged_reg_url, last_good) != 0) {
                 snprintf(s_last_logged_reg_url, sizeof(s_last_logged_reg_url), "%s", last_good);
                 s_last_reg_failed = false;
+                log_ok = true;
+            }
+            RecursiveLock_Unlock(&g_lobby_lock);
+            if (log_ok) {
                 nox_3ds_net_log("[lobby3ds] Registered host '%s' (port=%u) on %s",
                                 job->name, port, last_good);
             }
@@ -1710,24 +1779,35 @@ static void worker_do_host_register(const host_reg_job_t *job)
     size_t ep_count = lobby_load_endpoints(endpoints, NOX_3DS_LOBBY_MAX_ENDPOINTS, &disabled);
     if (disabled) return;
 
-    for (size_t i = 0; i < ep_count && !g_worker_stop; ++i) {
+    for (size_t i = 0; i < ep_count && !lobby_worker_should_stop(); ++i) {
         snprintf(url, sizeof(url), "%s/api/v0/games/register", endpoints[i].base_url);
         if (http_post_json(url, body) == 0) {
+            bool log_ok = false;
             RecursiveLock_Lock(&g_lobby_lock);
             snprintf(g_last_good_base_url, sizeof(g_last_good_base_url), "%s", endpoints[i].base_url);
-            RecursiveLock_Unlock(&g_lobby_lock);
             if (s_last_reg_failed || strcmp(s_last_logged_reg_url, endpoints[i].base_url) != 0) {
                 snprintf(s_last_logged_reg_url, sizeof(s_last_logged_reg_url), "%s", endpoints[i].base_url);
                 s_last_reg_failed = false;
+                log_ok = true;
+            }
+            RecursiveLock_Unlock(&g_lobby_lock);
+            if (log_ok) {
                 nox_3ds_net_log("[lobby3ds] Registered host '%s' (port=%u) on %s",
                                 job->name, port, endpoints[i].base_url);
             }
             return;
         }
     }
+
+    bool log_fail = false;
+    RecursiveLock_Lock(&g_lobby_lock);
     if (!s_last_reg_failed) {
         s_last_reg_failed = true;
         s_last_logged_reg_url[0] = '\0';
+        log_fail = true;
+    }
+    RecursiveLock_Unlock(&g_lobby_lock);
+    if (log_fail) {
         nox_3ds_net_log("[lobby3ds] Host registration failed for '%s'", job->name);
     }
 }
@@ -1742,11 +1822,12 @@ static void lobby_worker_main(void *arg)
         free(json_buf);
         free(parsed);
         free(resolved);
-        printf("[lobby3ds] OOM allocating worker buffers\n");
+        nox_3ds_net_log("[lobby3ds] OOM allocating worker buffers");
+        __atomic_store_n(&g_worker_alive, false, __ATOMIC_RELEASE);
         return;
     }
 
-    while (!g_worker_stop) {
+    while (!lobby_worker_should_stop()) {
         bool do_fetch = false;
         host_reg_job_t reg_copy;
         memset(&reg_copy, 0, sizeof(reg_copy));
@@ -1773,19 +1854,33 @@ static void lobby_worker_main(void *arg)
 
         /* Block with zero periodic wakeup until signaled by main thread or shutdown. */
         LightEvent_Wait(&g_lobby_event);
-        if (g_worker_stop)
+        if (lobby_worker_should_stop())
             break;
     }
 
     free(resolved);
     free(parsed);
     free(json_buf);
+    __atomic_store_n(&g_worker_alive, false, __ATOMIC_RELEASE);
 }
 
 static bool ensure_worker_started_locked(void)
 {
-    if (g_worker_started)
-        return true;
+    if (g_worker_started && g_worker_thread) {
+        if (__atomic_load_n(&g_worker_alive, __ATOMIC_ACQUIRE)) {
+            /* If a prior shutdown timed out and the worker is still unwinding, do not
+             * clear g_worker_stop or spawn a second worker until it exits. */
+            return !lobby_worker_should_stop();
+        }
+        /* Reap a previously exited worker handle (e.g. post-timeout unwind or OOM). */
+        if (R_SUCCEEDED(threadJoin(g_worker_thread, 0))) {
+            threadFree(g_worker_thread);
+            g_worker_thread = NULL;
+            g_worker_started = false;
+        } else {
+            return false;
+        }
+    }
 
     s32 main_prio = 0x30;
     svcGetThreadPriority(&main_prio, CUR_THREAD_HANDLE);
@@ -1795,7 +1890,8 @@ static bool ensure_worker_started_locked(void)
     if (worker_prio < 0x18)
         worker_prio = 0x18;
 
-    g_worker_stop = false;
+    lobby_worker_set_stop(false);
+    __atomic_store_n(&g_worker_alive, true, __ATOMIC_RELEASE);
     bool n3ds = nox_3ds_get_state()->is_new_3ds;
     g_worker_thread = n3ds
         ? threadCreate(lobby_worker_main, NULL, NOX_3DS_LOBBY_WORKER_STACK, worker_prio, 2, false)
@@ -1806,6 +1902,7 @@ static bool ensure_worker_started_locked(void)
                                        worker_prio, -2, false);
     }
     if (!g_worker_thread) {
+        __atomic_store_n(&g_worker_alive, false, __ATOMIC_RELEASE);
         nox_3ds_net_log("[lobby3ds] threadCreate() failed");
         return false;
     }
@@ -1823,8 +1920,14 @@ void nox_3ds_lobby_init(void)
     if (g_lobby_inited)
         return;
 
-    RecursiveLock_Init(&g_lobby_lock);
-    LightEvent_Init(&g_lobby_event, RESET_ONESHOT);
+    netlog_ensure_init();
+    if (!g_lobby_sync_inited) {
+        RecursiveLock_Init(&g_lobby_lock);
+        LightEvent_Init(&g_lobby_event, RESET_ONESHOT);
+        g_lobby_sync_inited = true;
+    }
+
+    RecursiveLock_Lock(&g_lobby_lock);
     memset(g_fake_packets, 0, sizeof(g_fake_packets));
     memset(g_srv_cache, 0, sizeof(g_srv_cache));
     memset(&g_host_reg_job, 0, sizeof(g_host_reg_job));
@@ -1832,11 +1935,14 @@ void nox_3ds_lobby_init(void)
     g_srv_cache_count = 0;
     g_cache_valid = false;
     g_fetch_requested = false;
-    g_fetch_inflight = false;
+    if (!__atomic_load_n(&g_worker_alive, __ATOMIC_ACQUIRE))
+        g_fetch_inflight = false;
     g_active_ping_valid = false;
     g_active_ping_sockfd = -1;
     g_host_active = false;
     g_lobby_inited = true;
+    RecursiveLock_Unlock(&g_lobby_lock);
+
     nox_3ds_net_log("[boot] version=%s", NOX_3DS_VERSION_STR);
     /* NOTE: httpcInit() and worker thread are intentionally NOT started here. */
 }
@@ -1864,24 +1970,35 @@ void nox_3ds_lobby_on_mode_change(nox_3ds_net_mode_t mode)
 
 void nox_3ds_lobby_shutdown(void)
 {
-    if (!g_lobby_inited)
+    if (!g_lobby_inited && !g_worker_started)
         return;
 
-    g_worker_stop = true;
-    LightEvent_Signal(&g_lobby_event);
+    if (g_lobby_sync_inited) {
+        RecursiveLock_Lock(&g_lobby_lock);
+        g_fetch_requested = false;
+        g_host_reg_job.pending = false;
+        RecursiveLock_Unlock(&g_lobby_lock);
+    }
+
+    lobby_worker_set_stop(true);
+    if (g_lobby_sync_inited)
+        LightEvent_Signal(&g_lobby_event);
 
     bool worker_joined = true;
     if (g_worker_started && g_worker_thread) {
-        /* Wait up to 5 seconds (> 3s per-request httpc timeout) for clean unwind */
-        Result jrc = threadJoin(g_worker_thread, 5000000000ULL);
+        /* Wait up to 6 seconds (> 5s per-request HTTP timeout) for clean unwind */
+        Result jrc = threadJoin(g_worker_thread, 6000000000ULL);
         if (R_SUCCEEDED(jrc)) {
             threadFree(g_worker_thread);
             g_worker_thread = NULL;
             g_worker_started = false;
+            __atomic_store_n(&g_worker_alive, false, __ATOMIC_RELEASE);
         } else {
             worker_joined = false;
-            printf("[lobby3ds] WARN: worker threadJoin timed out (0x%08lX); skipping httpcExit\n",
-                   (unsigned long)jrc);
+            /* Keep g_worker_thread / g_worker_started / g_worker_stop=true intact so
+             * worker liveness remains tracked and can be reaped once it unwinds. */
+            nox_3ds_net_log("[lobby3ds] WARN: worker threadJoin timed out (0x%08lX); deferring reap & httpcExit",
+                            (unsigned long)jrc);
         }
     }
 
@@ -1889,17 +2006,22 @@ void nox_3ds_lobby_shutdown(void)
         httpcExit();
         g_httpc_inited = false;
         nox_3ds_state_mut()->httpc_ready = false;
-        printf("[lobby3ds] httpcExit() complete\n");
+        nox_3ds_net_log("[lobby3ds] httpcExit() complete");
     }
 
-    RecursiveLock_Lock(&g_lobby_lock);
-    flush_fake_packets_locked(-1);
-    g_active_ping_valid = false;
-    g_host_active = false;
-    s_last_logged_reg_url[0] = '\0';
-    s_last_reg_failed = false;
-    RecursiveLock_Unlock(&g_lobby_lock);
-    dns_cache_clear();
+    if (g_lobby_sync_inited) {
+        RecursiveLock_Lock(&g_lobby_lock);
+        flush_fake_packets_locked(-1);
+        g_pending_udp_ping_sockfd = -1;
+        g_pending_udp_ping_count = 0;
+        g_active_ping_valid = false;
+        g_active_ping_sockfd = -1;
+        g_host_active = false;
+        s_last_logged_reg_url[0] = '\0';
+        s_last_reg_failed = false;
+        RecursiveLock_Unlock(&g_lobby_lock);
+        dns_cache_clear();
+    }
 
     g_lobby_inited = false;
 }
@@ -2104,7 +2226,7 @@ void nox_netextras_on_host_serverinfo(const void *packet, size_t len)
         return;
 
     uint16_t flags = (uint16_t)((uint16_t)pkt[28] | ((uint16_t)pkt[29] << 8));
-    g_last_serverinfo_flags = flags;
+    __atomic_store_n(&g_last_serverinfo_flags, flags, __ATOMIC_RELEASE);
 
     if (nox_3ds_net_get_mode() != NOX_3DS_NET_MODE_WIFI)
         return;
