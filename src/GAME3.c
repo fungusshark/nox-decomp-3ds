@@ -47038,6 +47038,229 @@ int __cdecl sub_4DF5E0(int a1, int a2)
 }
 
 //----- (004DF630) --------------------------------------------------------
+#ifdef __3DS__
+/* O(M) spatial-bucketed 0xA4 proximity-delta encoder on 128px cells (48x48 covers 0..6143px).
+ * Replaces sub_4DF8F0's up-to-32-pass O(M^2) linked-list scan while preserving exact
+ * |dx| < 127 && |dy| < 127 signed int8 delta chaining and 0x00 absolute-coord escapes. */
+static char *nox_3ds_encode_0xa4_items(int player_idx, char *dst, char *dst_end)
+{
+  static uint16_t s_a4_grid[48 * 48];
+  static const uint8_t *s_a4_items[512];
+  static uint16_t s_a4_next[512];
+  static uint16_t s_a4_cell_of[512];
+  static uint8_t s_a4_used[512];
+
+  int count = 0;
+  _DWORD item_len = 0;
+  int **raw;
+  while ( (raw = sub_40F080(player_idx, &item_len)) != 0 )
+  {
+    const uint8_t *p = (const uint8_t *)raw;
+    uint16_t x = nox_read_u16(p + 5);
+    uint16_t y = nox_read_u16(p + 7);
+    if ( x <= 0x1770u && y <= 0x1770u && count < 512 )
+      s_a4_items[count++] = p;
+  }
+  if ( count == 0 )
+    return dst;
+
+  for ( int i = count - 1; i >= 0; --i )
+  {
+    const uint8_t *p = s_a4_items[i];
+    unsigned int cx = (unsigned int)nox_read_u16(p + 5) >> 7;
+    unsigned int cy = (unsigned int)nox_read_u16(p + 7) >> 7;
+    uint16_t cell = (uint16_t)(cy * 48u + cx);
+    s_a4_cell_of[i] = cell;
+    s_a4_used[i] = 0;
+    s_a4_next[i] = s_a4_grid[cell];
+    s_a4_grid[cell] = (uint16_t)(i + 1);
+  }
+
+  int cur_x = *(_DWORD *)&byte_5D4594[1563292];
+  int cur_y = *(_DWORD *)&byte_5D4594[1563296];
+  int alias_tbl = *(_DWORD *)&byte_5D4594[1563304];
+  unsigned int tick = *(unsigned int *)&byte_5D4594[2598000];
+  int scan_cursor = 0;
+  int emitted = 0;
+  uint8_t *out = (uint8_t *)dst;
+  uint8_t *out_end = (uint8_t *)dst_end;
+
+  while ( emitted < count )
+  {
+    int found_idx = -1;
+    int is_abs = 0;
+    int cx0 = (cur_x > 126) ? ((cur_x - 126) >> 7) : 0;
+    int cx1 = (cur_x + 126) >> 7;
+    if ( cx1 > 47 )
+      cx1 = 47;
+    int cy0 = (cur_y > 126) ? ((cur_y - 126) >> 7) : 0;
+    int cy1 = (cur_y + 126) >> 7;
+    if ( cy1 > 47 )
+      cy1 = 47;
+
+    int ccx = cur_x >> 7;
+    int ccy = cur_y >> 7;
+    int center_cell = ((unsigned int)ccx <= 47u && (unsigned int)ccy <= 47u) ? (ccy * 48 + ccx) : -1;
+    if ( center_cell >= 0 && s_a4_grid[center_cell] != 0 )
+    {
+      uint16_t prev = 0;
+      uint16_t h = s_a4_grid[center_cell];
+      while ( h != 0 )
+      {
+        int idx = h - 1;
+        uint16_t nxt = s_a4_next[idx];
+        if ( s_a4_used[idx] )
+        {
+          if ( prev == 0 )
+            s_a4_grid[center_cell] = nxt;
+          else
+            s_a4_next[prev - 1] = nxt;
+          h = nxt;
+          continue;
+        }
+        const uint8_t *p = s_a4_items[idx];
+        int dx = (int)nox_read_u16(p + 5) - cur_x;
+        int dy = (int)nox_read_u16(p + 7) - cur_y;
+        if ( dx > -127 && dx < 127 && dy > -127 && dy < 127 )
+        {
+          if ( prev == 0 )
+            s_a4_grid[center_cell] = nxt;
+          else
+            s_a4_next[prev - 1] = nxt;
+          found_idx = idx;
+          break;
+        }
+        prev = h;
+        h = nxt;
+      }
+    }
+
+    if ( found_idx < 0 )
+    {
+      for ( int cy = cy0; cy <= cy1 && found_idx < 0; ++cy )
+      {
+        int row_base = cy * 48;
+        for ( int cx = cx0; cx <= cx1; ++cx )
+        {
+          int c = row_base + cx;
+          if ( c == center_cell || s_a4_grid[c] == 0 )
+            continue;
+          uint16_t prev = 0;
+          uint16_t h = s_a4_grid[c];
+          while ( h != 0 )
+          {
+            int idx = h - 1;
+            uint16_t nxt = s_a4_next[idx];
+            if ( s_a4_used[idx] )
+            {
+              if ( prev == 0 )
+                s_a4_grid[c] = nxt;
+              else
+                s_a4_next[prev - 1] = nxt;
+              h = nxt;
+              continue;
+            }
+            const uint8_t *p = s_a4_items[idx];
+            int dx = (int)nox_read_u16(p + 5) - cur_x;
+            int dy = (int)nox_read_u16(p + 7) - cur_y;
+            if ( dx > -127 && dx < 127 && dy > -127 && dy < 127 )
+            {
+              if ( prev == 0 )
+                s_a4_grid[c] = nxt;
+              else
+                s_a4_next[prev - 1] = nxt;
+              found_idx = idx;
+              break;
+            }
+            prev = h;
+            h = nxt;
+          }
+          if ( found_idx >= 0 )
+            break;
+        }
+      }
+    }
+
+    if ( found_idx < 0 )
+    {
+      while ( scan_cursor < count && s_a4_used[scan_cursor] )
+        ++scan_cursor;
+      if ( scan_cursor >= count )
+        break;
+      found_idx = scan_cursor++;
+      is_abs = 1;
+    }
+
+    const uint8_t *p = s_a4_items[found_idx];
+    uint16_t ext = nox_read_u16(p + 1);
+    uint16_t typ = nox_read_u16(p + 3);
+    uint16_t ix = nox_read_u16(p + 5);
+    uint16_t iy = nox_read_u16(p + 7);
+    signed char tag = (signed char)p[0];
+    signed char alias = (signed char)sub_57B930(alias_tbl, ext, typ, tick);
+
+    int tail_len = 0;
+    if ( tag == 48 || tag == -61 )
+    {
+      tail_len = (tag == -61) ? 2 : 1;
+      if ( (signed char)p[10] != -1 )
+        ++tail_len;
+    }
+    int entry_len = (is_abs ? 1 : 0) + ((alias == -1) ? 5 : 1) + (is_abs ? 4 : 2) + tail_len;
+    if ( out_end - out < entry_len + 3 )
+      break;
+
+    s_a4_used[found_idx] = 1;
+    ++emitted;
+
+    if ( is_abs )
+      *out++ = 0;
+    *out++ = (uint8_t)alias;
+    if ( alias == -1 )
+    {
+      nox_write_u16(out, ext);
+      nox_write_u16(out + 2, typ);
+      out += 4;
+    }
+    if ( is_abs )
+    {
+      nox_write_u16(out, ix);
+      nox_write_u16(out + 2, iy);
+      out += 4;
+    }
+    else
+    {
+      *out++ = (uint8_t)(ix - cur_x);
+      *out++ = (uint8_t)(iy - cur_y);
+    }
+    cur_x = ix;
+    cur_y = iy;
+
+    if ( tag == 48 || tag == -61 )
+    {
+      uint8_t b9 = p[9];
+      if ( (signed char)p[10] != -1 )
+      {
+        *out++ = b9 | 0x80u;
+        *out++ = p[10];
+      }
+      else
+      {
+        *out++ = b9;
+      }
+      if ( tag == -61 )
+        *out++ = p[11];
+    }
+  }
+
+  *(_DWORD *)&byte_5D4594[1563292] = cur_x;
+  *(_DWORD *)&byte_5D4594[1563296] = cur_y;
+  for ( int i = 0; i < count; ++i )
+    s_a4_grid[s_a4_cell_of[i]] = 0;
+  return (char *)out;
+}
+#endif
+
 int __cdecl sub_4DF630(int a1, char *a2, unsigned int a3)
 {
   char *v3; // edi
@@ -47050,7 +47273,9 @@ int __cdecl sub_4DF630(int a1, char *a2, unsigned int a3)
   char *v10; // edi
   int v11; // eax
   char *v13; // edi
+#ifndef __3DS__
   _BYTE *v14; // eax
+#endif
   int **i; // esi
   signed int v16; // eax
   int **j; // eax
@@ -47078,12 +47303,16 @@ int __cdecl sub_4DF630(int a1, char *a2, unsigned int a3)
       if ( !v11 )
         return v10 - a2 - 1;
       v13 = &v10[v11];
+#ifdef __3DS__
+      v13 = nox_3ds_encode_0xa4_items(v4, v13, v5);
+#else
       do
       {
         v14 = sub_4DF8F0(v4, v13, (int)v5);
         v13 = &v13[(_DWORD)v14];
       }
       while ( v14 );
+#endif
       v3 = &v13[sub_4DF8C0(v13, (int)v5)];
     }
   }
@@ -50777,6 +51006,9 @@ int __cdecl sub_4E3BF0(int a1)
 //----- (004E3C20) --------------------------------------------------------
 int sub_4E3C20()
 {
+#ifdef __3DS__
+  return *(_DWORD *)&byte_5D4594[1563664];
+#else
   int v0; // edi
   LPVOID i; // esi
   int result; // eax
@@ -50788,6 +51020,7 @@ int sub_4E3C20()
   if ( v0 != *(_DWORD *)&byte_5D4594[1563664] )
     nullsub_31(1);
   return result;
+#endif
 }
 // 560840: using guessed type void __cdecl nullsub_31(_DWORD);
 
