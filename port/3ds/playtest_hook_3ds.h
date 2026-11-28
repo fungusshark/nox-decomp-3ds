@@ -24,7 +24,10 @@ extern "C" {
 /* Wire constants. Keep in sync with scripts/playtest_hook_client.py. */
 #define NOX_PT_MAGIC_STATE      0x5450584Eu /* bytes "NXPT" (little-endian u32) */
 #define NOX_PT_MAGIC_CMD        0x4350584Eu /* bytes "NXPC" */
-#define NOX_PT_VERSION          1u
+#define NOX_PT_VERSION          2u  /* state packet: v2 = v1 + trailing names block */
+#define NOX_PT_CMD_VERSION      1u  /* command packet */
+#define NOX_PT_MAX_NAMES        (NOX_PT_MAX_OBJECTS + 1u) /* exported players + local */
+#define NOX_PT_NAME_BYTES       15u /* UTF-8, NUL-padded, truncated on a char boundary */
 #define NOX_PT_MAX_OBJECTS      32u
 #define NOX_PT_NUM_ABILITIES    5u
 
@@ -40,6 +43,7 @@ extern "C" {
 #define NOX_PT_F_BOTS_OK        0x0100u /* server name contains "[bots-ok]" */
 #define NOX_PT_F_CMDS_ACTIVE    0x0200u /* commands are being accepted this frame */
 #define NOX_PT_F_OBJ_TRUNCATED  0x0400u /* more candidate objects than n_obj */
+#define NOX_PT_F_ALLOWLISTED    0x0800u /* server name matches cfg mp_server_allow */
 
 /* Command opcodes. */
 enum {
@@ -97,7 +101,7 @@ typedef struct __attribute__((packed)) nox_pt_obj {
 
 typedef struct __attribute__((packed)) nox_pt_cmd {
     uint32_t magic;         /* NOX_PT_MAGIC_CMD */
-    uint8_t  version;       /* NOX_PT_VERSION */
+    uint8_t  version;       /* NOX_PT_CMD_VERSION */
     uint8_t  op;            /* NOX_PT_OP_* */
     uint16_t ttl_ms;        /* latch lifetime for MOVE/AIM (0 -> 250, max 2000) */
     uint32_t seq;
@@ -107,7 +111,16 @@ typedef struct __attribute__((packed)) nox_pt_cmd {
 _Static_assert(sizeof(nox_pt_ability_t)   == 8,  "nox_pt_ability_t wire size");
 _Static_assert(sizeof(nox_pt_state_hdr_t) == 96, "nox_pt_state_hdr_t wire size");
 _Static_assert(sizeof(nox_pt_obj_t)       == 20, "nox_pt_obj_t wire size");
+/* v2 names block, after the objects: u8 n_names, u8 entry_size (=18), then
+ * n_names entries. Players only; local player first if known. */
+typedef struct __attribute__((packed)) nox_pt_name {
+    uint16_t net_id;
+    uint8_t  len;                       /* bytes used in name[] */
+    char     name[NOX_PT_NAME_BYTES];   /* UTF-8 from playerInfo+4704 (UTF-16) */
+} nox_pt_name_t;
+
 _Static_assert(sizeof(nox_pt_cmd_t)       == 20, "nox_pt_cmd_t wire size");
+_Static_assert(sizeof(nox_pt_name_t)      == 18, "nox_pt_name_t wire size");
 
 /* Call once per event pump, right after nox_gamepad_update(). */
 void nox_pt_frame(void);

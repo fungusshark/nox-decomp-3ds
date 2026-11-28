@@ -24,7 +24,8 @@ import time
 
 MAGIC_STATE = 0x5450584E  # b"NXPT"
 MAGIC_CMD = 0x4350584E    # b"NXPC"
-VERSION = 1
+VERSION = 2          # state packet (v2 = v1 base layout + trailing names block)
+CMD_VERSION = 1      # command packet
 MAX_OBJECTS = 32
 NUM_ABILITIES = 5
 
@@ -34,17 +35,21 @@ HDR_FMT_PREFIX = "<IHHIIIHBBIHHHHiiBBHii"
 HDR_FMT = HDR_FMT_PREFIX + ABILITY_FMT[1:] * NUM_ABILITIES
 OBJ_FMT = "<HHIiiBBH"
 CMD_FMT = "<IBBHIii"
+NAME_FMT = "<HB15s"
+NAME_BYTES = 15
 
 # Must equal the C _Static_asserts in playtest_hook_3ds.h.
 ABILITY_SIZE = 8
 HDR_SIZE = 96
 OBJ_SIZE = 20
 CMD_SIZE = 20
+NAME_SIZE = 18
 
 assert struct.calcsize(ABILITY_FMT) == ABILITY_SIZE
 assert struct.calcsize(HDR_FMT) == HDR_SIZE
 assert struct.calcsize(OBJ_FMT) == OBJ_SIZE
 assert struct.calcsize(CMD_FMT) == CMD_SIZE
+assert struct.calcsize(NAME_FMT) == NAME_SIZE
 
 FLAGS = {
     0x0001: "menu_shell",
@@ -58,6 +63,7 @@ FLAGS = {
     0x0100: "bots_ok",
     0x0200: "cmds_active",
     0x0400: "obj_truncated",
+    0x0800: "allowlisted",
 }
 
 OPS = {
@@ -103,10 +109,22 @@ def decode_state(data):
      cam_x, cam_y) = f[:21]
     if magic != MAGIC_STATE:
         raise ValueError("bad magic 0x%08X" % magic)
-    if version != VERSION or header_size != HDR_SIZE or obj_size != OBJ_SIZE:
+    if version not in (1, 2) or header_size != HDR_SIZE or obj_size != OBJ_SIZE:
         raise ValueError("version/size mismatch v=%d hdr=%d obj=%d" % (version, header_size, obj_size))
-    if len(data) != HDR_SIZE + n_obj * OBJ_SIZE:
-        raise ValueError("length %d != %d" % (len(data), HDR_SIZE + n_obj * OBJ_SIZE))
+    base_len = HDR_SIZE + n_obj * OBJ_SIZE
+    names = {}
+    if version == 1:
+        if len(data) != base_len:
+            raise ValueError("length %d != %d" % (len(data), base_len))
+    else:
+        if len(data) < base_len + 2:
+            raise ValueError("v2 packet missing names block")
+        n_names, entry_size = data[base_len], data[base_len + 1]
+        if entry_size != NAME_SIZE or len(data) != base_len + 2 + n_names * NAME_SIZE:
+            raise ValueError("bad names block n=%d size=%d len=%d" % (n_names, entry_size, len(data)))
+        for i in range(n_names):
+            nid, nlen, raw = struct.unpack_from(NAME_FMT, data, base_len + 2 + i * NAME_SIZE)
+            names[nid] = raw[:min(nlen, NAME_BYTES)].decode("utf-8", "replace")
     abilities = []
     ab = f[21:]
     for i in range(NUM_ABILITIES):
@@ -126,6 +144,7 @@ def decode_state(data):
             "is_player": bool(o_cls & 4), "is_monster": bool(o_cls & 2),
             "x": o_x, "y": o_y, "facing": o_face,
             "hp_pct": None if o_hp == 0xFF else o_hp,
+            "name": names.get(o_net) if o_cls & 4 else None,
         })
     valid = bool(flags & 0x0020)
 
@@ -138,6 +157,7 @@ def decode_state(data):
         "mode": derive_mode(flags),
         "player": {
             "net_id": net_id,
+            "name": names.get(net_id & 0xFFFF),
             "class_id": None if pclass == 0xFF else pclass,
             "class": CLASSES.get(pclass),
             "valid": valid,
@@ -149,37 +169,50 @@ def decode_state(data):
         },
         "camera": {"x": cam_x, "y": cam_y},
         "objects": objects,
+        "version": version,
     }
 
 
 def encode_state(seq=1, game_frame=0, hook_tick=0, flags=0, pclass=0xFF, net_id=0,
                  hp=0, hp_max=0, mp=0, mp_max=0, x=0, y=0, facing=0, anim=0,
-                 cam_x=0, cam_y=0, abilities=(), objects=()):
+                 cam_x=0, cam_y=0, abilities=(), objects=(), names=(), version=VERSION):
     """Encoder mirroring publish_state() (used by --selftest and fakes)."""
     ab = list(abilities) + [(0, 0, 0, 0, 0, 0)] * (NUM_ABILITIES - len(abilities))
     ab_flat = []
     for aid, ready, active, level, cd_rem, cd_total in ab[:NUM_ABILITIES]:
         ab_flat += [aid, ready, active, level, cd_rem, cd_total]
     objs = list(objects)[:MAX_OBJECTS]
-    hdr = struct.pack(HDR_FMT, MAGIC_STATE, VERSION, HDR_SIZE, seq, game_frame, hook_tick,
+    hdr = struct.pack(HDR_FMT, MAGIC_STATE, version, HDR_SIZE, seq, game_frame, hook_tick,
                       flags, pclass, len(objs), net_id, hp, hp_max, mp, mp_max, x, y,
                       facing, anim, OBJ_SIZE, cam_x, cam_y, *ab_flat)
     body = b"".join(struct.pack(OBJ_FMT, o[0], o[1], o[2], o[3], o[4], o[5], o[6], 0)
                     for o in objs)
-    return hdr + body
+    if version == 1:
+        return hdr + body
+    entries = []
+    for nid, name in names:
+        raw = name.encode("utf-8")[:NAME_BYTES]
+        while raw:  # truncate on a UTF-8 char boundary, like the C side
+            try:
+                raw.decode("utf-8")
+                break
+            except UnicodeDecodeError:
+                raw = raw[:-1]
+        entries.append(struct.pack(NAME_FMT, nid, len(raw), raw))
+    return hdr + body + bytes([len(entries), NAME_SIZE]) + b"".join(entries)
 
 
 def encode_cmd(op, a=0, b=0, ttl_ms=0, seq=0):
     if isinstance(op, str):
         op = OPS[op]
-    return struct.pack(CMD_FMT, MAGIC_CMD, VERSION, op, ttl_ms, seq, a, b)
+    return struct.pack(CMD_FMT, MAGIC_CMD, CMD_VERSION, op, ttl_ms, seq, a, b)
 
 
 def decode_cmd(data):
     if len(data) != CMD_SIZE:
         raise ValueError("cmd size %d" % len(data))
     magic, version, op, ttl_ms, seq, a, b = struct.unpack(CMD_FMT, data)
-    if magic != MAGIC_CMD or version != VERSION:
+    if magic != MAGIC_CMD or version != CMD_VERSION:
         raise ValueError("bad cmd header")
     return {"op": op, "ttl_ms": ttl_ms, "seq": seq, "a": a, "b": b}
 
@@ -244,8 +277,9 @@ def selftest():
     pkt = encode_state(seq=7, game_frame=123456, hook_tick=99, flags=0x0226, pclass=0,
                        net_id=42, hp=150, hp_max=150, mp=0, mp_max=0, x=2048, y=-1,
                        facing=6, anim=1, cam_x=1900, cam_y=-120, abilities=abilities,
-                       objects=objects)
-    assert len(pkt) == HDR_SIZE + 2 * OBJ_SIZE, len(pkt)
+                       objects=objects, names=[(42, "Jack 3"), (17, "Jäck-Wizard-Long-Name")])
+    assert len(pkt) == HDR_SIZE + 2 * OBJ_SIZE + 2 + 2 * NAME_SIZE, len(pkt)
+    assert pkt[6:8] == struct.pack("<H", HDR_SIZE) and pkt[4] == 2
     st = decode_state(pkt)
     assert st["seq"] == 7 and st["game_frame"] == 123456 and st["hook_tick"] == 99
     assert st["mode"] == "in_world" and "cmds_active" in st["flag_names"]
@@ -263,6 +297,12 @@ def selftest():
     assert (o[0]["net_id"], o[0]["type_id"], o[0]["is_player"], o[0]["x"], o[0]["y"],
             o[0]["hp_pct"]) == (17, 1234, True, 100, -20, None)
     assert (o[1]["class_flags"], o[1]["hp_pct"]) == (0x2000000, 50)
+    assert p["name"] == "Jack 3" and o[1]["name"] is None
+    assert o[0]["name"] == "Jäck-Wizard-Lo"  # 15-byte UTF-8 cut ("ä" is 2 bytes)
+    assert len(o[0]["name"].encode("utf-8")) <= NAME_BYTES
+    # v1 packets (no names block) still decode.
+    v1 = decode_state(encode_state(flags=0x0026, objects=objects[:1], version=1))
+    assert v1["version"] == 1 and v1["objects"][0]["name"] is None
     inv = decode_state(encode_state(flags=0x0006, hp=0xFFFF, hp_max=0xFFFF, mp=0xFFFF,
                                     mp_max=0xFFFF, facing=0xFF, anim=0xFF))
     assert not inv["player"]["valid"] and inv["player"]["hp"] is None and inv["player"]["x"] is None

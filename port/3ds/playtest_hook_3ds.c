@@ -63,6 +63,13 @@ extern void nox_ctrl_inject_key_scancode(int sdl_scancode, int down);
 #define OFF_DRAWABLE_LIST     1046572u  /* sub_45A060 / sub_45A6F0, GAME2.c:9801 */
 #define OFF_DRAW_GRID         1301784u  /* int** grid[x][y] of bucket heads, chain +400 */
 #define OFF_DRAW_GRID_N       1301788u  /* grid dimension (buckets per axis) */
+#define OFF_PLAYERINFO_TABLE  371780u   /* 32 x 4828 B client player table (sub_417040) */
+#define PLAYERINFO_STRIDE     4828u
+#define PLAYERINFO_SLOTS      32u
+#define PI_NETCODE            2060u     /* sub_417040 key */
+#define PI_ACTIVE             2092u     /* sub_417040 requires nonzero */
+#define PI_NAME               4704u     /* wchar_t[] (-fshort-wchar UTF-16), GAME2.c:19547 */
+#define PI_NAME_MAX_WCHARS    31u
 #define OFF_PLAYER_DR_LIST    1046600u  /* client player-drawable list, next +416 (sub_459ED0) */
 #define OFF_NPC_DIALOG_WND    1123524u  /* Dialog.wnd root (sub_479... GAME2.c:34289) */
 #define OFF_HP_CUR            1093040u  /* sub_470C80, GAME2.c:27447 */
@@ -105,6 +112,7 @@ extern void nox_ctrl_inject_key_scancode(int sdl_scancode, int down);
 #define PT_AIM_DIR_RADIUS     64.0f
 #define PT_BOTS_OK_TAG        "[bots-ok]"
 #define PT_RETRY_MS           10000u
+#define PT_MAX_ALLOW          8
 
 enum { PT_UNINIT = 0, PT_DISABLED, PT_RETRY, PT_ACTIVE };
 
@@ -112,11 +120,13 @@ typedef struct {
     uint32_t host_ip_be;
     uint16_t port;
     uint16_t listen_port;
-    uint32_t every;          /* publish every N calls */
+    uint32_t every;          /* publish every N calls (publish_every_n_frames) */
     uint32_t max_objects;
     bool     commands;
     bool     clip_viewport;
     bool     accept_any_src;
+    uint32_t n_allow;
+    char     allow[PT_MAX_ALLOW][16]; /* mp_server_allow entries (<=15 chars) */
 } pt_cfg_t;
 
 typedef enum { TAP_KEY = 0, TAP_MOUSE = 1 } tap_kind_t;
@@ -160,7 +170,8 @@ static bool       g_srv_name_valid;
 static bool       g_was_map_loaded;
 
 /* Static send buffer: header + max objects. No per-frame allocation. */
-static uint8_t    g_txbuf[sizeof(nox_pt_state_hdr_t) + NOX_PT_MAX_OBJECTS * sizeof(nox_pt_obj_t)];
+static uint8_t    g_txbuf[sizeof(nox_pt_state_hdr_t) + NOX_PT_MAX_OBJECTS * sizeof(nox_pt_obj_t)
+                          + 2u + NOX_PT_MAX_NAMES * sizeof(nox_pt_name_t)];
 
 typedef struct { uint32_t key; uint32_t ptr; } pt_cand_t;
 static pt_cand_t  g_cand[NOX_PT_MAX_OBJECTS];
@@ -229,13 +240,13 @@ static bool load_cfg(void)
     memset(&g_cfg, 0, sizeof(g_cfg));
     g_cfg.port = PT_DEFAULT_PORT;
     g_cfg.listen_port = PT_DEFAULT_LISTEN;
-    g_cfg.every = 2;
+    g_cfg.every = 1;
     g_cfg.max_objects = NOX_PT_MAX_OBJECTS;
     g_cfg.commands = true;
     g_cfg.clip_viewport = true;
     bool have_host = false;
 
-    char line[128];
+    char line[256];
     while (fgets(line, sizeof(line), f)) {
         char *p = line;
         while (*p == ' ' || *p == '\t') ++p;
@@ -248,6 +259,26 @@ static bool load_cfg(void)
         char *k = p, *v = eq + 1;
         for (char *e = eq - 1; e >= k && (*e == ' ' || *e == '\t'); --e) *e = '\0';
         while (*v == ' ' || *v == '\t') ++v;
+        if (!strcmp(k, "mp_server_allow")) {
+            /* Comma-separated; names may contain spaces; each entry trimmed. */
+            v[strcspn(v, "\r\n#")] = '\0';
+            g_cfg.n_allow = 0;
+            for (char *tok = v; tok && g_cfg.n_allow < PT_MAX_ALLOW;) {
+                char *comma = strchr(tok, ',');
+                if (comma) *comma = '\0';
+                while (*tok == ' ' || *tok == '\t') ++tok;
+                size_t tl = strlen(tok);
+                while (tl && (tok[tl - 1] == ' ' || tok[tl - 1] == '\t')) --tl;
+                if (tl > 15) tl = 15; /* Nox server names are <=15 chars */
+                if (tl) {
+                    memcpy(g_cfg.allow[g_cfg.n_allow], tok, tl);
+                    g_cfg.allow[g_cfg.n_allow][tl] = '\0';
+                    ++g_cfg.n_allow;
+                }
+                tok = comma ? comma + 1 : NULL;
+            }
+            continue;
+        }
         v[strcspn(v, " \t\r\n#")] = '\0';
 
         if (!strcmp(k, "host")) {
@@ -262,7 +293,7 @@ static bool load_cfg(void)
         } else if (!strcmp(k, "listen_port")) {
             long n = strtol(v, NULL, 10);
             if (n > 0 && n < 65536) g_cfg.listen_port = (uint16_t)n;
-        } else if (!strcmp(k, "every")) {
+        } else if (!strcmp(k, "every") || !strcmp(k, "publish_every_n_frames")) {
             long n = strtol(v, NULL, 10);
             if (n >= 1 && n <= 60) g_cfg.every = (uint32_t)n;
         } else if (!strcmp(k, "max_objects")) {
@@ -375,16 +406,46 @@ void nox_pt_note_server_name(const char *name)
     g_srv_name_valid = true;
 }
 
-static bool server_bots_ok(void)
+static bool ci_equal(const char *a, const char *b, size_t max_len)
 {
-    /* Host: its own configured server name (always current).
-     * Client: only the snapshot from a 0xB0 received this session; the engine
-     * copy at byte_5D4594[371389] survives across sessions, so it is not used. */
-    if (sub_40A5C0(1)) {
-        const char *name = sub_40A4C0();
-        return name && ci_contains(name, 15, PT_BOTS_OK_TAG);
+    size_t la = strnlen(a, max_len), lb = strnlen(b, max_len);
+    if (la != lb)
+        return false;
+    for (size_t i = 0; i < la; ++i) {
+        char x = a[i], y = b[i];
+        if (x >= 'A' && x <= 'Z') x = (char)(x - 'A' + 'a');
+        if (y >= 'A' && y <= 'Z') y = (char)(y - 'A' + 'a');
+        if (x != y)
+            return false;
     }
-    return g_srv_name_valid && ci_contains(g_srv_name, 15, PT_BOTS_OK_TAG);
+    return true;
+}
+
+/* Current server name, or NULL while unknown (fail closed).
+ * Host: its own configured server name (always current).
+ * Client: only the snapshot from a 0xB0 received this session; the engine
+ * copy at byte_5D4594[371389] survives across sessions, so it is not used. */
+static const char *current_server_name(void)
+{
+    if (sub_40A5C0(1))
+        return sub_40A4C0();
+    return g_srv_name_valid ? g_srv_name : NULL;
+}
+
+static bool server_has_tag(const char *name)
+{
+    return name && ci_contains(name, 15, PT_BOTS_OK_TAG);
+}
+
+/* Dev-only allowlist (cfg mp_server_allow): case-insensitive exact match. */
+static bool server_allowlisted(const char *name)
+{
+    if (!name || !name[0])
+        return false;
+    for (uint32_t i = 0; i < g_cfg.n_allow; ++i)
+        if (ci_equal(name, g_cfg.allow[i], 15))
+            return true;
+    return false;
 }
 
 /* ---- local-player + visible-object snapshot ---------------------------- */
@@ -541,6 +602,58 @@ static uint32_t collect_objects(uint32_t self_d, const pt_view_t *v, uint32_t ma
     return count;
 }
 
+/* Client player table lookup by net code (read-only reimplementation of
+ * sub_417040, which also writes a slot-index byte, so it is not called). */
+static uint32_t playerinfo_off_for(uint32_t netcode)
+{
+    for (uint32_t i = 0; i < PLAYERINFO_SLOTS; ++i) {
+        uint32_t off = OFF_PLAYERINFO_TABLE + PLAYERINFO_STRIDE * i;
+        if (rd_u32(off + PI_ACTIVE) && rd_u32(off + PI_NETCODE) == netcode)
+            return off;
+    }
+    return 0;
+}
+
+/* UTF-16 (BMP; surrogates -> '?') to UTF-8, truncated on a char boundary. */
+static uint8_t pt_utf16_to_utf8(const uint8_t *src, uint32_t max_wchars, char *dst, uint32_t cap)
+{
+    uint32_t o = 0;
+    for (uint32_t i = 0; i < max_wchars; ++i) {
+        uint32_t c = nox_read_u16(src + 2u * i);
+        if (!c)
+            break;
+        if (c >= 0xD800 && c <= 0xDFFF)
+            c = '?';
+        uint32_t need = c < 0x80 ? 1u : c < 0x800 ? 2u : 3u;
+        if (o + need > cap)
+            break;
+        if (need == 1) {
+            dst[o++] = (char)c;
+        } else if (need == 2) {
+            dst[o++] = (char)(0xC0 | (c >> 6));
+            dst[o++] = (char)(0x80 | (c & 0x3F));
+        } else {
+            dst[o++] = (char)(0xE0 | (c >> 12));
+            dst[o++] = (char)(0x80 | ((c >> 6) & 0x3F));
+            dst[o++] = (char)(0x80 | (c & 0x3F));
+        }
+    }
+    return (uint8_t)o;
+}
+
+static bool append_name(uint8_t *dst, uint32_t netcode)
+{
+    uint32_t off = playerinfo_off_for(netcode);
+    if (!off)
+        return false;
+    nox_pt_name_t e;
+    memset(&e, 0, sizeof(e));
+    e.net_id = (uint16_t)netcode;
+    e.len = pt_utf16_to_utf8(&byte_5D4594[off + PI_NAME], PI_NAME_MAX_WCHARS, e.name, NOX_PT_NAME_BYTES);
+    memcpy(dst, &e, sizeof(e));
+    return true;
+}
+
 static void publish_state(uint16_t flags_in, uint32_t netcode, uint32_t self_d, const pt_view_t *v,
                           bool export_objects, bool clip)
 {
@@ -629,12 +742,35 @@ static void publish_state(uint16_t flags_in, uint32_t netcode, uint32_t self_d, 
     h.n_obj = (uint8_t)n_obj;
     memcpy(g_txbuf, &h, sizeof(h));
 
+    /* v2 names block: local player (if known), then exported player objects. */
+    uint8_t *nb = g_txbuf + sizeof(h) + n_obj * sizeof(nox_pt_obj_t);
+    uint8_t n_names = 0;
+    uint8_t *ne = nb + 2;
+    if (netcode && append_name(ne, netcode)) {
+        ne += sizeof(nox_pt_name_t);
+        ++n_names;
+    }
+    for (uint32_t i = 0; i < n_obj && n_names < NOX_PT_MAX_NAMES; ++i) {
+        uint32_t d = g_cand[i].ptr;
+        if (!(dr_u32(d, DR_CLASS) & 4u))
+            continue;
+        uint32_t nc = dr_u32(d, DR_NETCODE);
+        if (nc == netcode)
+            continue;
+        if (append_name(ne, nc)) {
+            ne += sizeof(nox_pt_name_t);
+            ++n_names;
+        }
+    }
+    nb[0] = n_names;
+    nb[1] = (uint8_t)sizeof(nox_pt_name_t);
+
     struct sockaddr_in to;
     memset(&to, 0, sizeof(to));
     to.sin_family = AF_INET;
     to.sin_port = htons(g_cfg.port);
     to.sin_addr.s_addr = g_cfg.host_ip_be;
-    size_t len = sizeof(h) + n_obj * sizeof(nox_pt_obj_t);
+    size_t len = (size_t)(ne - g_txbuf);
     if (sendto(g_sock, g_txbuf, len, 0, (struct sockaddr *)&to, sizeof(to)) < 0 && !g_send_err_logged) {
         g_send_err_logged = true;
         nox_3ds_net_log("[pt] sendto failed errno=%d (logged once)", errno);
@@ -774,7 +910,7 @@ static void drain_cmds(bool accept, uint32_t now_ms)
             continue;
         nox_pt_cmd_t c;
         memcpy(&c, buf, sizeof(c));
-        if (c.magic != NOX_PT_MAGIC_CMD || c.version != NOX_PT_VERSION)
+        if (c.magic != NOX_PT_MAGIC_CMD || c.version != NOX_PT_CMD_VERSION)
             continue;
         apply_cmd(&c, now_ms);
     }
@@ -851,13 +987,17 @@ void nox_pt_frame(void)
     if ((menu_shell && g_was_map_loaded) || !is_mp)
         g_srv_name_valid = false;
     g_was_map_loaded = map_loaded;
-    bool bots_ok = is_mp && server_bots_ok();
+    const char *srv = is_mp ? current_server_name() : NULL;
+    bool tag_ok = is_mp && server_has_tag(srv);
+    bool allow_ok = is_mp && server_allowlisted(srv);
+    bool bots_ok = tag_ok || allow_ok;
     if (menu_shell) flags |= NOX_PT_F_MENU_SHELL;
     if (map_loaded) flags |= NOX_PT_F_MAP_LOADED;
     if (in_world)   flags |= NOX_PT_F_IN_WORLD;
     if (is_mp)      flags |= NOX_PT_F_IS_MP;
     if (sub_40A5C0(1)) flags |= NOX_PT_F_IS_HOST;
-    if (bots_ok)    flags |= NOX_PT_F_BOTS_OK;
+    if (tag_ok)     flags |= NOX_PT_F_BOTS_OK;
+    if (allow_ok)   flags |= NOX_PT_F_ALLOWLISTED;
 
     pt_view_t v;
     memset(&v, 0, sizeof(v));

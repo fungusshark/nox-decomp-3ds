@@ -37,11 +37,12 @@ hook stays inert (one predictable branch per frame, no socket, no `socInit`).
 host=127.0.0.1
 port=47800          # host UDP port for state (default 47800)
 listen_port=47801   # 3DS UDP port for commands (default 47801)
-every=2             # publish every N event pumps (1..60, default 2)
+publish_every_n_frames=1  # publish every N event pumps (1..60, default 1; alias: every=)
 max_objects=32      # 0..32 (default 32)
 commands=1          # 0 = state-only (default 1)
 clip_viewport=1     # only objects inside the camera rect (default 1)
 accept_any_src=0    # 1 = accept commands from any IP, not only host= (default 0)
+mp_server_allow=giraffepus   # dev-only MP allowlist (comma-separated, up to 8, <=15 chars each)
 ```
 
 **LAN risk:** with `accept_any_src=1`, any device on the network that can reach
@@ -59,7 +60,7 @@ via `nox_3ds_net_log` (`[pt] ...`), stays inert, and retries silently every 10 s
 logged once and otherwise ignored. In Solo, the hook pays the same 1 MB soc:u
 buffer the Multiplayer path uses. `socExit` still happens only at shutdown.
 
-## 3. Wire schema (v1, little-endian, packed)
+## 3. Wire schema (state v2 / command v1, little-endian, packed)
 
 The C `_Static_assert`s and the Python `*_SIZE` constants must agree. Run
 `python3 -I scripts/playtest_hook_client.py --selftest` after any change.
@@ -135,9 +136,29 @@ read-only), and the renderer calls it before drawing each drawable
 nearest first, and capped at `max_objects`. `obj_truncated` is set when more
 candidates passed the filters than `max_objects`, or the visit budget ran out.
 
+### Names block (state v2 only)
+
+The 96 B header and 20 B objects keep the v1 layout. The header's `version`
+is 2, and the objects are followed by:
+
+`u8 n_names, u8 entry_size (=18)`, then `n_names` x `{u16 net_id, u8 len,
+char name[15]}`.
+
+Each name is UTF-8 converted from the client player table's UTF-16 name
+(`-fshort-wchar`). The table is `byte_5D4594[371780]`, 32 x 4828 B, net code
+at +2060, active at +2092, name at +4704; it is the table `sub_417040` and the
+scoreboard and name tags use. The hook reads it with its own lookup, because
+`sub_417040` writes a slot byte. Names are cut to 15 bytes on a character
+boundary and NUL-padded. Surrogate pairs become `?`. The local player comes
+first (if known), then each exported player-class object. This means no other
+player's name is sent when object export is gated off. The Python client
+accepts v1 and v2, and adds `name` to `player` and to player objects. A
+decoder that only knows v1 can parse the base layout by ignoring `version` and
+any trailing bytes.
+
 ### Command packet (host to 3DS): 20 B
 
-`u32 magic "NXPC", u8 version=1, u8 op, u16 ttl_ms, u32 seq, i32 a, i32 b`.
+`u32 magic "NXPC", u8 version=1 (command version, independent of state v2), u8 op, u16 ttl_ms, u32 seq, i32 a, i32 b`.
 
 | op | name | a / b | Applied via |
 |---|---|---|---|
@@ -168,9 +189,22 @@ standing still.
 
 ## 4. Gating and cheat surface
 
+**Dev allowlist (`mp_server_allow`).** MP commands and the export of other
+objects and names are also enabled when the current server name equals an
+allowlist entry: case-insensitive, **exact match**, not prefix, since Nox server
+names are 15 chars max. The same fail-closed name snapshot applies: no
+`0xB0` in this session means not allowed. Flag `0x800 allowlisted` is set on a
+match; `0x100 bots_ok` still reports only the tag. Rationale: this exists for the
+developer's own LAN games (for example `giraffepus`), where the host agrees
+but renaming the server to fit `[bots-ok]` into 15 chars is impractical. It
+lives only in hook builds (`NOX_PLAYTEST_HOOK=ON`) and in a cfg file on the
+bot's own SD card. Release builds are unaffected. It is a dev convenience, not
+an opt-in from the other players: use it only for servers whose players know
+a bot is present.
+
 - Commands are accepted only when `commands=1` and `in_world` is set.
 - **Multiplayer** (net mode WIFI): commands also need the server name to
-  contain `[bots-ok]` (case-insensitive). The host checks its own name
+  contain `[bots-ok]` (case-insensitive) or match `mp_server_allow` (see above). The host checks its own name
   (`sub_40A4C0()`, `byte_5D4594[1324]`). A client checks the name received in
   opcode `0xB0` (`sub_416590(0)+9` = `byte_5D4594[371389]`, GAME2.c:52317).
   The client never reads the engine copy at `byte_5D4594[371389]` for the gate.
