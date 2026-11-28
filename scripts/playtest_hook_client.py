@@ -25,8 +25,8 @@ import time
 
 MAGIC_STATE = 0x5450584E  # b"NXPT"
 MAGIC_CMD = 0x4350584E    # b"NXPC"
-VERSION = 5          # state packet (v2 = v1 + names block; v3 = v2 + obj class_id/hp_flags; v4 = v3 + ext block;
-                     # v5 = v4 + spell set / missile block)
+VERSION = 6          # state packet (v2 = v1 + names block; v3 = v2 + obj class_id/hp_flags; v4 = v3 + ext block;
+                     # v5 = v4 + spell set / missile block; v6 = v5 + session / events / scoreboard / obelisks)
 CMD_VERSION = 1      # command packet
 MAX_OBJECTS = 32
 NUM_ABILITIES = 5
@@ -42,7 +42,12 @@ NAME_BYTES = 15
 EXT_FMT = "<HBBIIIhh"
 MIS_FMT = "<HBBIHH"
 MAX_MIS = 16
-RECV_BUF = 4096     # max v5 packet is about 2.2 KB
+SESSION_FMT = "<24sIIIHBBIBBBBBBH"
+EVENT_FMT = "<IIBBHHHHh"
+SCORE_FMT = "<HBBii"
+OBL_FMT = "<HBB"
+MAX_EV_PKT = 40
+RECV_BUF = 8192     # max v6 packet is about 3.5 KB
 
 # Must equal the C _Static_asserts in playtest_hook_3ds.h.
 ABILITY_SIZE = 8
@@ -52,6 +57,10 @@ CMD_SIZE = 20
 NAME_SIZE = 18
 EXT_SIZE = 20
 MIS_SIZE = 12
+SESSION_SIZE = 52
+EVENT_SIZE = 20
+SCORE_SIZE = 12
+OBL_SIZE = 4
 
 assert struct.calcsize(ABILITY_FMT) == ABILITY_SIZE
 assert struct.calcsize(HDR_FMT) == HDR_SIZE
@@ -60,6 +69,10 @@ assert struct.calcsize(CMD_FMT) == CMD_SIZE
 assert struct.calcsize(NAME_FMT) == NAME_SIZE
 assert struct.calcsize(EXT_FMT) == EXT_SIZE
 assert struct.calcsize(MIS_FMT) == MIS_SIZE
+assert struct.calcsize(SESSION_FMT) == SESSION_SIZE
+assert struct.calcsize(EVENT_FMT) == EVENT_SIZE
+assert struct.calcsize(SCORE_FMT) == SCORE_SIZE
+assert struct.calcsize(OBL_FMT) == OBL_SIZE
 
 FLAGS = {
     0x0001: "menu_shell",
@@ -89,7 +102,7 @@ CLASSES = {0: "warrior", 1: "wizard", 2: "conjurer"}
 # v3 object hp_flags: where hp_pct came from (both are bars the client draws).
 HP_FLAGS = {0x01: "quest_tag", 0x02: "unit_bar", 0x04: "poisoned"}
 # v4 ext_flags.
-EXT_FLAGS = {0x01: "vel", 0x02: "owned", 0x04: "missile", 0x08: "equip"}
+EXT_FLAGS = {0x01: "vel", 0x02: "owned", 0x04: "missile", 0x08: "equip", 0x10: "friend"}
 # v4 enchant mask bits (drawable +124, opcode 0x5A). Bit 0 invisible and 21
 # infravision are used by the renderer (GAME2.c:30355, 32368); the other names
 # follow the OpenNox ENCHANT_* enum order (UNVERIFIED live per bit).
@@ -109,6 +122,34 @@ MIS_FLAGS = {0x01: "incoming", 0x02: "near", 0x04: "tracked", 0x08: "approaching
 # Counterspell / Inversion use bit 0 / bit 1, GAME4.c:45711). Arrows and bolts
 # are MISSILE+WEAPON things whose subclass uses the weapon table instead.
 MIS_SUBCLASS = {0x1: "counterspell", 0x2: "magic"}
+# v6 (port/3ds/playtest_events.h PT_EV_*).
+EV_TYPES = {1: "dmg", 2: "kill", 3: "died", 4: "respawn", 5: "chant", 6: "cast", 7: "dspell",
+            8: "summon", 9: "summon_cancel", 10: "obelisk", 11: "map", 12: "game_over"}
+SESSION_FLAGS = {0x01: "game_over", 0x02: "timer_on", 0x04: "events_gated"}
+GAME_OVER_KIND = {1: "flagball", 2: "flag", 3: "deathmatch", 4: "team_deathmatch"}
+# Spell ids: the client spell name table (byte_587000[65448], SPELL_* strings).
+SPELLS = dict(enumerate((
+    "invalid anchor arachnaphobia blind blink burn cancel chain_lightning_bolt channel_life charm "
+    "cleansing_flame cleansing_mana_flame confuse counterspell cure_poison death death_ray detect_magic "
+    "detonate detonate_glyphs disenchant_all turn_undead drain_mana earthquake lightning explosion fear "
+    "fireball firewalk fist force_field force_of_nature freeze fumble glyph greater_heal haste infravision "
+    "inversion invisibility invulnerability lesser_heal light chain_lightning lock mark mark_1 mark_2 mark_3 "
+    "mark_4 magic_missile shield meteor meteor_shower moonglow nullify mana_bomb phantom pixie_swarm plasma "
+    "poison protection_from_electricity protection_from_fire protection_from_magic protection_from_poison "
+    "pull push oval_shield restore_health restore_mana run shock slow small_zap stun summon_bat "
+    "summon_black_bear summon_bear summon_beholder summon_bomber summon_carnivorous_plant "
+    "summon_albino_spider summon_small_albino_spider summon_evil_cherub summon_ember_demon summon_ghost "
+    "summon_giant_leech summon_imp summon_mechanical_flyer summon_mechanical_golem summon_mimic summon_ogre "
+    "summon_ogre_brute summon_ogre_warlord summon_scorpion summon_shade summon_skeleton summon_skeleton_lord "
+    "summon_spider summon_small_spider summon_spitting_spider summon_stone_golem summon_troll summon_urchin "
+    "summon_wasp summon_willowisp summon_wolf summon_black_wolf summon_white_wolf summon_zombie "
+    "summon_vile_zombie summon_demon summon_lich summon_dryad summon_urchin_shaman swap tag "
+    "teleport_other_to_mark_1 teleport_other_to_mark_2 teleport_other_to_mark_3 teleport_other_to_mark_4 "
+    "teleport_pop teleport_to_mark_1 teleport_to_mark_2 teleport_to_mark_3 teleport_to_mark_4 "
+    "teleport_to_target telekinesis toxic_cloud trigger_glyph vampirism villain wall wink summon_creature "
+    "mark_location teleport_to_marker").split()))
+assert len(SPELLS) == 137 and SPELLS[27] == "fireball" and SPELLS[128] == "toxic_cloud"
+
 ABILITY_NAMES = {1: "berserker_charge", 2: "war_cry", 3: "harpoon",
                  4: "tread_lightly", 5: "eye_of_the_wolf"}
 
@@ -136,6 +177,100 @@ def derive_mode(flags):
     return "in_world_modal"
 
 
+def decode_event(seq, frame, typ, b, a, c, d, e, f):
+    """One v6 event as a dict (field meaning per type, see docs/PLAYTEST_HOOK.md)."""
+    t = EV_TYPES.get(typ, "type%d" % typ)
+    ev = {"seq": seq, "frame": frame, "type": t}
+    if t == "dmg":
+        ev.update(target_net_id=a, amount=-f, delta=f)
+    elif t == "kill":
+        ev.update(victim_net_id=a, killer_net_id=c or None, assist_net_id=d or None, kind=b, code=e)
+    elif t in ("died", "respawn"):
+        ev.update(net_id=a)
+        if t == "respawn":
+            ev.update(flags=b, arg=c)
+    elif t == "chant":
+        ev.update(phoneme=b, female=bool(c), volume=d, pan=f)
+    elif t == "cast":
+        ev.update(caster_net_id=None, spell_id=c, spell=SPELLS.get(c), female=bool(b), volume=d, pan=f,
+                  phonemes=e)
+    elif t == "dspell":
+        ev.update(caster_net_id=a, target_net_id=d, spell_id=c or None, spell=SPELLS.get(c) if c else "harpoon",
+                  sub=b, level=e, start=bool(f))
+    elif t == "summon":
+        ev.update(summon_id=a, x=c, y=d, thing_type=e, dir=b, frames=f)
+    elif t == "summon_cancel":
+        ev.update(summon_id=a)
+    elif t == "obelisk":
+        ev.update(net_id=a, charge=b)
+    elif t == "game_over":
+        ev.update(kind=GAME_OVER_KIND.get(b, b), winner_id=a, arg=c)
+    else:
+        ev.update(a=a, b=b, c=c, d=d, e=e, f=f)
+    return ev
+
+
+def decode_v6(data, off):
+    """v6 block at off -> (dict, end)."""
+    if len(data) < off + SESSION_SIZE:
+        raise ValueError("v6 packet missing session block")
+    (mraw, map_seq, gflags, timer_ms, frag_limit, tlim, sflags, ev_next,
+     n_ev, ev_size, n_sc, sc_size, n_ob, ob_size, _r) = struct.unpack_from(SESSION_FMT, data, off)
+    if ev_size < EVENT_SIZE or sc_size < SCORE_SIZE or ob_size < OBL_SIZE:
+        raise ValueError("bad v6 entry sizes %d/%d/%d" % (ev_size, sc_size, ob_size))
+    p = off + SESSION_SIZE
+    end = p + n_ev * ev_size + n_sc * sc_size + n_ob * ob_size
+    if len(data) < end:
+        raise ValueError("short v6 block len=%d need=%d" % (len(data), end))
+    events = []
+    for i in range(n_ev):
+        events.append(decode_event(*struct.unpack_from(EVENT_FMT, data, p + i * ev_size)))
+    p += n_ev * ev_size
+    scores = []
+    for i in range(n_sc):
+        nid, cls, pf, score, deaths = struct.unpack_from(SCORE_FMT, data, p + i * sc_size)
+        scores.append({"net_id": nid, "class_id": None if cls == 0xFF else cls, "class": CLASSES.get(cls),
+                       "observer": bool(pf & 1), "score": score, "deaths": deaths})
+    p += n_sc * sc_size
+    obl = {}
+    for i in range(n_ob):
+        nid, charge, _ = struct.unpack_from(OBL_FMT, data, p + i * ob_size)
+        obl[nid] = charge
+    return {
+        "map": mraw.split(b"\0", 1)[0].decode("latin-1"),
+        "map_seq": map_seq, "game_flags": gflags,
+        "timer_ms": None if timer_ms == 0xFFFFFFFF else timer_ms,
+        "frag_limit": frag_limit, "time_limit_min": tlim,
+        "flags": [n for b, n in SESSION_FLAGS.items() if sflags & b],
+        "game_over": bool(sflags & 1), "events_gated": bool(sflags & 4),
+        "ev_next_seq": ev_next, "events": events, "scores": scores, "obelisks": obl,
+    }, end
+
+
+class EventDedup:
+    """Host-side v6 event stream: feed decoded states, get each event once, in
+    order. `lost` counts seq gaps (events that fell out of the 40-event window
+    before a packet carried them)."""
+
+    def __init__(self):
+        self.last = 0
+        self.lost = 0
+
+    def feed(self, st):
+        sess = st.get("session")
+        if not sess:
+            return []
+        out = []
+        for ev in sess["events"]:
+            if ev["seq"] <= self.last:
+                continue
+            if self.last and ev["seq"] > self.last + 1:
+                self.lost += ev["seq"] - self.last - 1
+            self.last = ev["seq"]
+            out.append(ev)
+        return out
+
+
 def decode_state(data):
     if len(data) < HDR_SIZE:
         raise ValueError("short packet: %d" % len(data))
@@ -145,13 +280,14 @@ def decode_state(data):
      cam_x, cam_y) = f[:21]
     if magic != MAGIC_STATE:
         raise ValueError("bad magic 0x%08X" % magic)
-    if version not in (1, 2, 3, 4, 5) or header_size != HDR_SIZE or obj_size != OBJ_SIZE:
+    if version not in (1, 2, 3, 4, 5, 6) or header_size != HDR_SIZE or obj_size != OBJ_SIZE:
         raise ValueError("version/size mismatch v=%d hdr=%d obj=%d" % (version, header_size, obj_size))
     base_len = HDR_SIZE + n_obj * OBJ_SIZE
     names = {}
     exts = []
     mis = {}
     spell_set = None
+    session = None
     if version == 1:
         if len(data) != base_len:
             raise ValueError("length %d != %d" % (len(data), base_len))
@@ -183,6 +319,10 @@ def decode_state(data):
                 # v6+ may append after the v5 block; v5 itself must end here.
                 if mis_size < MIS_SIZE or len(data) < mis_end or (version == 5 and len(data) != mis_end):
                     raise ValueError("bad v5 block n=%d size=%d len=%d" % (n_mis, mis_size, len(data)))
+                if version >= 6:
+                    session, v6_end = decode_v6(data, mis_end)
+                    if version == 6 and len(data) != v6_end:
+                        raise ValueError("length %d != %d" % (len(data), v6_end))
                 spell_set = None if ss == 0xFF else ss
                 for i in range(n_mis):
                     m_net, m_f, _r, m_sub, m_miss, m_tca = struct.unpack_from(
@@ -276,13 +416,14 @@ def decode_state(data):
         "objects": objects,
         "version": version,
         "spell_set": spell_set,
+        "session": session,   # v6: map/timer/limits/game over, events, scoreboard, obelisks (None before v6)
     }
 
 
 def encode_state(seq=1, game_frame=0, hook_tick=0, flags=0, pclass=0xFF, net_id=0,
                  hp=0, hp_max=0, mp=0, mp_max=0, x=0, y=0, facing=0, anim=0,
                  cam_x=0, cam_y=0, abilities=(), objects=(), names=(), exts=(), version=VERSION,
-                 spell_set=0xFF, missiles=()):
+                 spell_set=0xFF, missiles=(), session=None):
     """Encoder mirroring publish_state() (used by --selftest and fakes)."""
     ab = list(abilities) + [(0, 0, 0, 0, 0, 0)] * (NUM_ABILITIES - len(abilities))
     ab_flat = []
@@ -319,8 +460,25 @@ def encode_state(seq=1, game_frame=0, hook_tick=0, flags=0, pclass=0xFF, net_id=
         return out
     # missiles: (net_id, mis_flags, subclass, miss_px, tca_f)
     mis = list(missiles)[:MAX_MIS]
-    return out + bytes([spell_set, 0, len(mis), MIS_SIZE]) + b"".join(
+    out += bytes([spell_set, 0, len(mis), MIS_SIZE]) + b"".join(
         struct.pack(MIS_FMT, m[0], m[1], 0, m[2], m[3], m[4]) for m in mis)
+    if version < 6:
+        return out
+    # session: dict(map, map_seq, game_flags, timer_ms, frag_limit, time_limit_min, s_flags, ev_next_seq,
+    #   events=[(seq, frame, type, b, a, c, d, e, f)], scores=[(net, class, pflags, score, deaths)],
+    #   obelisks=[(net, charge)])
+    ss = dict(session or {})
+    evs = list(ss.get("events", ()))[:MAX_EV_PKT]
+    scs = list(ss.get("scores", ()))
+    obs = list(ss.get("obelisks", ()))
+    out += struct.pack(SESSION_FMT, ss.get("map", "").encode("latin-1")[:23], ss.get("map_seq", 0),
+                       ss.get("game_flags", 0), ss.get("timer_ms", 0xFFFFFFFF), ss.get("frag_limit", 0),
+                       ss.get("time_limit_min", 0), ss.get("s_flags", 0),
+                       ss.get("ev_next_seq", (evs[-1][0] + 1) if evs else 1),
+                       len(evs), EVENT_SIZE, len(scs), SCORE_SIZE, len(obs), OBL_SIZE, 0)
+    out += b"".join(struct.pack(EVENT_FMT, *e) for e in evs)
+    out += b"".join(struct.pack(SCORE_FMT, *c) for c in scs)
+    return out + b"".join(struct.pack(OBL_FMT, o[0], o[1], 0) for o in obs)
 
 
 def encode_cmd(op, a=0, b=0, ttl_ms=0, seq=0):
@@ -481,7 +639,7 @@ def selftest():
              (700, 0, 0x05, 0, 0, 0, -160, 0), (701, 0, 0x04, 0, 0, 0, 0, 0)]
     p5 = encode_state(seq=8, flags=0x0226, net_id=42, x=2048, y=-1, objects=mobjs,
                       names=[(42, "Jack 3")], exts=mexts, spell_set=3,
-                      missiles=[(700, 0x0F, 0x3, 0, 10), (701, 0x02, 0x10, 0xFFFF, 0xFFFF)])
+                      missiles=[(700, 0x0F, 0x3, 0, 10), (701, 0x02, 0x10, 0xFFFF, 0xFFFF)], version=5)
     assert p5[4] == 5 and len(p5) == (HDR_SIZE + 5 * OBJ_SIZE + 2 + NAME_SIZE + 2 + 6 * EXT_SIZE
                                       + 4 + 2 * MIS_SIZE), len(p5)
     s5 = decode_state(p5)
@@ -504,6 +662,51 @@ def selftest():
             pass
         else:
             raise AssertionError("bad v5 packet accepted")
+    # v6: session block, event window, scoreboard, obelisks.
+    sess = {"map": "Estate", "map_seq": 3, "game_flags": 0x2000 | 0x400, "timer_ms": 61000,
+            "frag_limit": 15, "time_limit_min": 10, "s_flags": 0x03,
+            "events": [(5, 900, 1, 0, 17, 0, 0, 0, -12),           # dmg 12 on 17
+                       (6, 901, 2, 2, 17, 42, 0, 2, 0),            # 42 killed 17
+                       (7, 902, 6, 1, 0, 27, 90, 3, -40),          # chant decoded: fireball
+                       (8, 903, 7, 11, 18, 24, 42, 2, 1),          # lightning 18 -> 42
+                       (9, 904, 10, 60, 0x55, 0, 0, 0, 0),         # obelisk 0x55 at 60
+                       (10, 905, 12, 3, 42, 1, 0, 0, 0)],          # DM winner 42
+            "scores": [(42, 1, 0, 3, 1), (17, 2, 1, -1, 4)], "obelisks": [(0x55, 60)]}
+    p6 = encode_state(seq=9, flags=0x0226, net_id=42, objects=mobjs[:1], names=[(42, "Jack 3")],
+                      exts=[(42, 1, 0x19, 0, 0, 0, 0, 0), (17, 0, 0x10, 0, 0, 0, 0, 0)],
+                      spell_set=0, session=sess)
+    assert p6[4] == 6
+    s6 = decode_state(p6)
+    se = s6["session"]
+    assert se["map"] == "Estate" and se["map_seq"] == 3 and se["timer_ms"] == 61000
+    assert se["frag_limit"] == 15 and se["time_limit_min"] == 10 and se["game_over"]
+    assert se["flags"] == ["game_over", "timer_on"] and se["ev_next_seq"] == 11
+    ev = se["events"]
+    assert ev[0] == {"seq": 5, "frame": 900, "type": "dmg", "target_net_id": 17, "amount": 12, "delta": -12}
+    assert ev[1]["killer_net_id"] == 42 and ev[1]["victim_net_id"] == 17 and ev[1]["assist_net_id"] is None
+    assert ev[2]["spell"] == "fireball" and ev[2]["pan"] == -40 and ev[2]["caster_net_id"] is None
+    assert ev[3]["spell"] == "lightning" and ev[3]["caster_net_id"] == 18 and ev[3]["start"]
+    assert ev[4]["charge"] == 60 and ev[5]["kind"] == "deathmatch" and ev[5]["winner_id"] == 42
+    assert se["scores"][0] == {"net_id": 42, "class_id": 1, "class": "wizard", "observer": False,
+                               "score": 3, "deaths": 1}
+    assert se["scores"][1]["score"] == -1 and se["scores"][1]["observer"]
+    assert se["obelisks"] == {0x55: 60}
+    assert "friend" in s6["player"]["ext"]["ext_flags"] and s6["objects"][0]["ext"]["ext_flags"] == ["friend"]
+    v6o = len(p6) - SESSION_SIZE - 6 * EVENT_SIZE - 2 * SCORE_SIZE - OBL_SIZE
+    assert p6[v6o:v6o + 6] == b"Estate" and struct.unpack_from("<I", p6, v6o + 24)[0] == 3
+    assert struct.unpack_from("<h", p6, v6o + SESSION_SIZE + 18)[0] == -12     # event f offset
+    for bad in (p6[:-1], p6 + b"\0"):
+        try:
+            decode_state(bad)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("bad v6 packet accepted")
+    assert decode_state(p5)["session"] is None
+    dd = EventDedup()
+    assert [e["seq"] for e in dd.feed(s6)] == [5, 6, 7, 8, 9, 10] and dd.feed(s6) == []
+    later = dict(sess, events=[(10, 905, 12, 3, 42, 1, 0, 0, 0), (13, 950, 3, 0, 17, 0, 0, 0, 0)])
+    assert [e["seq"] for e in dd.feed(decode_state(encode_state(session=later)))] == [13] and dd.lost == 2
     assert decode_cmd(encode_cmd("spellset", 4)) == {"op": 10, "ttl_ms": 0, "seq": 0, "a": 4, "b": 0}
     # v3 packets (no ext block) still decode.
     v3 = decode_state(encode_state(flags=0x0026, objects=objects[:1], names=[(17, "x")],

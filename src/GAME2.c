@@ -50162,6 +50162,7 @@ int __cdecl sub_48EA70__abi_raw(int a1, unsigned int a2, int a3)
   while ( 2 )
   {
     v7 = *(_BYTE *)v3;
+    nox_pt_note_msg((const unsigned char *)(uintptr_t)v3, (int)(v4 - v3)); /* playtest hook v6 events: no-op unless NOX_PLAYTEST_HOOK */
     LOBYTE(v375) = *(_BYTE *)v3;
     v8 = (unsigned __int8)v375;
     switch ( (unsigned __int8)v375 )

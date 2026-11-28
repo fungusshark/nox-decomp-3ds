@@ -1,4 +1,4 @@
-/* Host unit test for port/3ds/playtest_gate.h + playtest_aim.h + playtest_missile.h (issue #36).
+/* Host unit test for port/3ds/playtest_gate.h + playtest_aim.h + playtest_missile.h + playtest_events.h (issue #36).
  *   cc -std=c99 -Wall -Wextra -Iport/3ds scripts/test_playtest_gate.c -o /tmp/t && /tmp/t
  * Also run by: python3 -I scripts/playtest_hook_client.py --selftest */
 #include <stdio.h>
@@ -6,6 +6,7 @@
 #include "playtest_gate.h"
 #include "playtest_aim.h"
 #include "playtest_missile.h"
+#include "playtest_events.h"
 
 static int fails;
 #define CHECK(c) do { if (!(c)) { printf("FAIL %s:%d %s\n", __FILE__, __LINE__, #c); ++fails; } } while (0)
@@ -19,6 +20,41 @@ static int name_is(const pt_gate_t *g, const char *n)
 static void browse(pt_gate_t *g, bool is_mp, const char *row) { pt_gate_frame(g, is_mp, true, false, row); }
 static void loading(pt_gate_t *g, const char *row) { pt_gate_frame(g, true, false, false, row); }
 static void in_map(pt_gate_t *g) { pt_gate_frame(g, true, false, true, NULL); }
+
+/* Fake spell trie for the chant decoder: node = index into k_tn. */
+typedef struct { int spell; int child[9]; } fake_node_t;
+static fake_node_t k_tn[16];
+static uintptr_t fk_child(uintptr_t n, int p) { return (n && p >= 0 && p <= 8) ? (uintptr_t)k_tn[n].child[p] : 0; }
+static int fk_spell(uintptr_t n) { return n ? k_tn[n].spell : 0; }
+static void fk_build(void)
+{
+    memset(k_tn, 0, sizeof(k_tn));
+    /* root 1. "1 2" -> spell 27 (leaf). "3" -> 50 with child "3 0" -> 52 (leaf). "5 6 7" -> 128. */
+    k_tn[1].child[1] = 2; k_tn[2].child[2] = 3; k_tn[3].spell = 27;
+    k_tn[1].child[3] = 4; k_tn[4].spell = 50; k_tn[4].child[0] = 5; k_tn[5].spell = 52;
+    k_tn[1].child[5] = 6; k_tn[6].child[6] = 7; k_tn[7].child[7] = 8; k_tn[8].spell = 128;
+}
+static int snd_of(int ph, int female)
+{
+    for (int s = 186; s <= 201; ++s) { int f, q = pt_phoneme_from_sound(s, &f); if (q == ph && f == female) return s; }
+    return -1;
+}
+static pt_event_t *audio(pt_ev_ring_t *r, pt_chant_t *ch, const pt_trie_t *t, int ph, int female, int pan, uint32_t fr)
+{
+    int snd = snd_of(ph, female);
+    uint8_t m[4] = { 0xA7, (uint8_t)(int8_t)pan, (uint8_t)(snd & 0xFF), (uint8_t)(((snd >> 8) & 3) | (40 << 2)) };
+    pt_msg_ctx_t cx = { fr, 0, true, true };
+    return pt_ev_parse_msg(r, ch, t, m, 4, &cx);
+}
+static int count_type(const pt_ev_ring_t *r, int type, int *last_c)
+{
+    int n = 0;
+    for (uint32_t s = 1; s < r->next_seq; ++s) {
+        const pt_event_t *e = &r->ev[s & (PT_EV_RING - 1u)];
+        if (e->type == type) { ++n; if (last_c) *last_c = e->c; }
+    }
+    return n;
+}
 
 int main(void)
 {
@@ -190,6 +226,111 @@ int main(void)
         CHECK(pt_spellset_steps(3, 1, &next) == 2 && !next);
         CHECK(pt_spellset_steps(0xFF, 1, &next) == 0);
         CHECK(pt_spellset_steps(1, 5, &next) == 0);
+    }
+
+    /* v6 event ring + message parser */
+    {
+        static pt_ev_ring_t r;
+        pt_chant_t ch[PT_CHANT_STREAMS];
+        memset(ch, 0, sizeof(ch));
+        pt_trie_t none = { 0, fk_child, fk_spell };
+        pt_ev_reset(&r);
+        pt_msg_ctx_t cx = { 500, 100, true, true };
+        uint8_t dmg[5] = { 0x42, 0x11, 0x80, 0xF6, 0xFF };          /* net 0x8011 -> 0x11, delta -10 */
+        pt_event_t *e = pt_ev_parse_msg(&r, ch, &none, dmg, 5, &cx);
+        CHECK(e && e->type == PT_EV_DMG && e->a == 0x11 && e->f == -10 && e->seq == 1 && e->frame == 500);
+        CHECK(!pt_ev_parse_msg(&r, ch, &none, dmg, 4, &cx));          /* truncated */
+        uint8_t kill[11] = { 0xA9, 14, 7, 0, 9, 0, 5, 0, 2, 0, 2 };  /* killer 7, assist 9, victim 5 */
+        e = pt_ev_parse_msg(&r, ch, &none, kill, 11, &cx);
+        CHECK(e && e->type == PT_EV_KILL && e->a == 5 && e->c == 7 && e->d == 9 && e->e == 2 && e->b == 2);
+        kill[1] = 13;
+        CHECK(!pt_ev_parse_msg(&r, ch, &none, kill, 11, &cx));        /* other inform subtypes ignored */
+        uint8_t ds[7] = { 0x9E, 11, 3, 7, 0, 9, 0 };                  /* Lightning start, 7 -> 9 */
+        e = pt_ev_parse_msg(&r, ch, &none, ds, 7, &cx);
+        CHECK(e && e->type == PT_EV_DSPELL && e->c == 24 && e->a == 7 && e->d == 9 && e->f == 1 && e->e == 3);
+        ds[1] = 13;                                                   /* Greater Heal: target first */
+        e = pt_ev_parse_msg(&r, ch, &none, ds, 7, &cx);
+        CHECK(e && e->c == 35 && e->a == 9 && e->d == 7);
+        ds[1] = 4;
+        e = pt_ev_parse_msg(&r, ch, &none, ds, 7, &cx);
+        CHECK(e && e->c == 24 && e->f == 0);
+        uint8_t ob[4] = { 0xB3, 0x30, 0x00, 55 };
+        e = pt_ev_parse_msg(&r, ch, &none, ob, 4, &cx);
+        CHECK(e && e->type == PT_EV_OBELISK && e->a == 0x30 && e->b == 55);
+        uint8_t map[41] = { 0x2B };
+        map[37] = 101;                                                /* > map_gate 100 */
+        e = pt_ev_parse_msg(&r, ch, &none, map, 41, &cx);
+        CHECK(e && e->type == PT_EV_MAP);
+        map[37] = 100;
+        CHECK(!pt_ev_parse_msg(&r, ch, &none, map, 41, &cx));         /* stale 0x2B */
+        uint8_t win[8] = { 0x58, 5, 0, 1, 200, 0, 0, 0 };
+        e = pt_ev_parse_msg(&r, ch, &none, win, 8, &cx);
+        CHECK(e && e->type == PT_EV_GAME_OVER && e->b == 3 && e->a == 5 && e->c == 1);
+        /* gate closed: nothing about other objects, map/game over still recorded */
+        pt_msg_ctx_t gx = { 501, 100, true, false };
+        CHECK(!pt_ev_parse_msg(&r, ch, &none, dmg, 5, &gx));
+        map[37] = 102;
+        CHECK(pt_ev_parse_msg(&r, ch, &none, map, 41, &gx) != NULL);
+        /* sliding window: newest N, oldest first */
+        pt_event_t w[4];
+        uint32_t n = pt_ev_newest(&r, w, 4);
+        CHECK(n == 4 && w[3].seq == r.next_seq - 1 && w[0].seq == r.next_seq - 4);
+        for (int i = 0; i < 300; ++i)
+            pt_ev_parse_msg(&r, ch, &none, dmg, 5, &cx);
+        static pt_event_t big[PT_EV_RING + 8];
+        n = pt_ev_newest(&r, big, PT_EV_RING + 8);
+        CHECK(n == PT_EV_RING && big[n - 1].seq == r.next_seq - 1 && big[0].seq == r.next_seq - PT_EV_RING);
+        int fem;
+        CHECK(pt_phoneme_from_sound(193, &fem) == 0 && fem == 0);
+        CHECK(pt_phoneme_from_sound(194, &fem) == 1 && fem == 1);
+        CHECK(pt_phoneme_from_sound(185, &fem) == -1 && pt_phoneme_from_sound(202, &fem) == -1);
+    }
+
+    /* v6 chant decoding (fake trie) */
+    {
+        static pt_ev_ring_t r;
+        pt_chant_t ch[PT_CHANT_STREAMS];
+        fk_build();
+        pt_trie_t t = { 1, fk_child, fk_spell };
+        int c = 0;
+        pt_ev_reset(&r); memset(ch, 0, sizeof(ch));
+        audio(&r, ch, &t, 1, 0, 10, 100);
+        CHECK(count_type(&r, PT_EV_CAST, NULL) == 0 && count_type(&r, PT_EV_CHANT, NULL) == 1);
+        pt_event_t *e = audio(&r, ch, &t, 2, 0, 12, 103);             /* leaf: cast now */
+        CHECK(e && e->type == PT_EV_CAST && e->c == 27 && e->e == 2 && e->f == 12 && e->d == 80);
+        /* prefix spell: "3" waits, then times out as 50 */
+        audio(&r, ch, &t, 3, 1, -20, 200);
+        pt_chant_tick(ch, &t, &r, 205);
+        CHECK(count_type(&r, PT_EV_CAST, &c) == 1);
+        pt_chant_tick(ch, &t, &r, 200 + PT_CHANT_DONE_F + 1);
+        CHECK(count_type(&r, PT_EV_CAST, &c) == 2 && c == 50);
+        /* "3 0" -> 52 (phoneme 4 has no sound) */
+        audio(&r, ch, &t, 3, 1, -20, 300);
+        audio(&r, ch, &t, 0, 1, -20, 303);
+        CHECK(count_type(&r, PT_EV_CAST, &c) == 3 && c == 52);
+        /* two interleaved casters (different gender): both decode */
+        audio(&r, ch, &t, 5, 0, 0, 400);
+        audio(&r, ch, &t, 1, 1, 0, 401);
+        audio(&r, ch, &t, 6, 0, 0, 403);
+        audio(&r, ch, &t, 2, 1, 0, 404);
+        audio(&r, ch, &t, 7, 0, 0, 406);
+        CHECK(count_type(&r, PT_EV_CAST, NULL) == 5);
+        /* same gender, opposite sides: separate streams by pan */
+        audio(&r, ch, &t, 1, 0, -100, 500);
+        audio(&r, ch, &t, 5, 0, 100, 501);
+        audio(&r, ch, &t, 2, 0, -100, 503);
+        audio(&r, ch, &t, 6, 0, 100, 504);
+        audio(&r, ch, &t, 7, 0, 100, 507);
+        CHECK(count_type(&r, PT_EV_CAST, NULL) == 7);
+        /* junk phoneme not starting any spell: chant event only */
+        audio(&r, ch, &t, 8, 0, 0, 600);
+        pt_chant_tick(ch, &t, &r, 700);
+        CHECK(count_type(&r, PT_EV_CAST, NULL) == 7);
+        /* obelisk table */
+        pt_obl_t ob[PT_OBL_SLOTS];
+        memset(ob, 0, sizeof(ob));
+        pt_obl_note(ob, 9, 10); pt_obl_note(ob, 9, 80); pt_obl_note(ob, 11, 0);
+        CHECK(ob[0].used && ob[0].net == 9 && ob[0].charge == 80 && ob[1].net == 11);
     }
 
     if (fails) {

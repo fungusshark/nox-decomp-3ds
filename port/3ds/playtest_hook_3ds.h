@@ -24,7 +24,7 @@ extern "C" {
 /* Wire constants. Keep in sync with scripts/playtest_hook_client.py. */
 #define NOX_PT_MAGIC_STATE      0x5450584Eu /* bytes "NXPT" (little-endian u32) */
 #define NOX_PT_MAGIC_CMD        0x4350584Eu /* bytes "NXPC" */
-#define NOX_PT_VERSION          5u  /* state packet: v2 = v1 + names block; v3 = v2 + obj hp_pct/class_id/hp_flags; v4 = v3 + ext block; v5 = v4 + spell set / missile block */
+#define NOX_PT_VERSION          6u  /* state packet: v2 = v1 + names block; v3 = v2 + obj hp_pct/class_id/hp_flags; v4 = v3 + ext block; v5 = v4 + spell set / missile block; v6 = v5 + session / event ring / scoreboard / obelisks */
 #define NOX_PT_CMD_VERSION      1u  /* command packet */
 #define NOX_PT_MAX_NAMES        (NOX_PT_MAX_OBJECTS + 1u) /* exported players + local */
 #define NOX_PT_NAME_BYTES       15u /* UTF-8, NUL-padded, truncated on a char boundary */
@@ -146,6 +146,7 @@ typedef struct __attribute__((packed)) nox_pt_ext {
 #define NOX_PT_XF_OWNED         0x02u /* in this client's owned-unit table [1200916] (own summon/pet) */
 #define NOX_PT_XF_MISSILE       0x04u /* class_flags & 1 (missile/projectile object) */
 #define NOX_PT_XF_EQUIP         0x08u /* player: playerInfo entry found, weapon/armor flags valid */
+#define NOX_PT_XF_FRIEND        0x10u /* v6: in the client friend list (MSG_OBJECT_FRIEND_ADD 0x34, byte_5D4594[1203864]) */
 
 _Static_assert(sizeof(nox_pt_ext_t)       == 20, "nox_pt_ext_t wire size");
 
@@ -164,6 +165,49 @@ typedef struct __attribute__((packed)) nox_pt_mis {
 } nox_pt_mis_t;
 _Static_assert(sizeof(nox_pt_mis_t)       == 12, "nox_pt_mis_t wire size");
 _Static_assert(sizeof(nox_pt_cmd_t)       == 20, "nox_pt_cmd_t wire size");
+
+/* v6 block, after the v5 block: one nox_pt_session_t, then n_ev x event
+ * (pt_event_t, playtest_events.h, 20 B), n_score x nox_pt_score_t, n_obl x
+ * nox_pt_obl_t. See docs/PLAYTEST_HOOK.md section 3, "v6 block". */
+#define NOX_PT_MAX_EV_PKT       40u /* newest events per packet (sliding window, host dedups by seq) */
+#define NOX_PT_MAX_SCORES       32u
+#define NOX_PT_MAX_OBL          16u
+#define NOX_PT_MAP_BYTES        24u
+#define NOX_PT_SF_GAME_OVER     0x01u /* sub_40A5C0(8): winner banner up (set by 0x56..0x59, cleared by 0x2B) */
+#define NOX_PT_SF_TIMER_ON      0x02u /* sub_40A220(): game timer running, timer_ms valid */
+#define NOX_PT_SF_EV_GATED      0x04u /* MP gate closed: events about other objects are not recorded */
+typedef struct __attribute__((packed)) nox_pt_session {
+    char     map[NOX_PT_MAP_BYTES]; /* sub_409B40() = byte_5D4594[2649740], NUL padded */
+    uint32_t map_seq;       /* hook counter: +1 per accepted MSG_USE_MAP (0x2B) */
+    uint32_t game_flags;    /* sub_40A5B0() = byte_5D4594[3600]: mode bits (0x17F0 mask), 8 game over, 0x1000 quest ... */
+    uint32_t timer_ms;      /* sub_40A230() remaining, 0xFFFFFFFF if no timer */
+    uint16_t frag_limit;    /* sub_416590(0)+54 (0xAF byte +18): kill/lesson limit */
+    uint8_t  time_limit_min;/* sub_416590(0)+56 (0xAF byte +19) */
+    uint8_t  s_flags;       /* NOX_PT_SF_* */
+    uint32_t ev_next_seq;   /* seq the next event will get */
+    uint8_t  n_ev, ev_size; /* events (oldest first) */
+    uint8_t  n_score, score_size;
+    uint8_t  n_obl, obl_size;
+    uint16_t reserved;
+} nox_pt_session_t;
+_Static_assert(sizeof(nox_pt_session_t)   == 52, "nox_pt_session_t wire size");
+
+typedef struct __attribute__((packed)) nox_pt_score {
+    uint16_t net_id;        /* playerInfo +2060 */
+    uint8_t  class_id;      /* +2251 */
+    uint8_t  pflags;        /* +3680 low byte (bit0 observer) */
+    int32_t  score;         /* +2136 "lessons" (kills; -1 for suicide / team kill), MSG_REPORT_LESSON 0x4E */
+    int32_t  deaths;        /* +2140, MSG_REPORT_LESSON 0x4E */
+} nox_pt_score_t;
+_Static_assert(sizeof(nox_pt_score_t)     == 12, "nox_pt_score_t wire size");
+
+typedef struct __attribute__((packed)) nox_pt_obl {
+    uint16_t net_id;
+    uint8_t  charge;        /* 0..100, last MSG_OBELISK_CHARGE (0xB3) */
+    uint8_t  reserved;
+} nox_pt_obl_t;
+_Static_assert(sizeof(nox_pt_obl_t)       == 4,  "nox_pt_obl_t wire size");
+
 _Static_assert(sizeof(nox_pt_name_t)      == 18, "nox_pt_name_t wire size");
 
 /* Call once per event pump, right after nox_gamepad_update(). */
@@ -172,6 +216,9 @@ void nox_pt_frame(void);
 void nox_pt_shutdown(void);
 /* GAME2.c opcode 0xB0 (client): server name just received from the server. */
 void nox_pt_note_server_name(const char *name);
+/* GAME2.c client dispatcher: every server message, before its handler runs
+ * (p = message start, avail = bytes left in the frame). Read-only. */
+void nox_pt_note_msg(const unsigned char *p, int avail);
 /* net_sockets_3ds.c: socInit regardless of the current net mode. */
 bool nox_3ds_soc_ensure_ready_any_mode(void);
 
@@ -180,6 +227,7 @@ bool nox_3ds_soc_ensure_ready_any_mode(void);
 static inline void nox_pt_frame(void) {}
 static inline void nox_pt_shutdown(void) {}
 static inline void nox_pt_note_server_name(const char *name) { (void)name; }
+static inline void nox_pt_note_msg(const unsigned char *p, int avail) { (void)p; (void)avail; }
 
 #endif /* NOX_PLAYTEST_HOOK */
 

@@ -22,6 +22,7 @@
 #include "playtest_gate.h"
 #include "playtest_aim.h"
 #include "playtest_missile.h"
+#include "playtest_events.h"
 
 #include <3ds.h>
 #include <SDL2/SDL.h>
@@ -52,6 +53,8 @@ extern int   sub_46ACC0(int a1);        /* GUI window hidden check: 1 = hidden *
 /* Client drawable spatial-grid walker (GAME2.c:58737): calls cb(drawable, arg)
  * for every drawable in 128 px buckets overlapping rect {l,t,r,b}. Read-only. */
 extern void  sub_49AB00(void *rect4, void (*cb)(int, int), int arg);
+extern int   sub_40A220(void);          /* game timer on (byte_587000[4660]) */
+extern int   sub_40A230(void);          /* timer remaining ms: deadline [3468] - sub_416BB0() */
 
 extern void nox_ctrl_set_thumbstick_move(int active, int orientation, int move_cmd, double mag);
 extern void nox_ctrl_set_radial_aim(int active, int orientation, int screen_x, int screen_y);
@@ -90,6 +93,17 @@ extern void nox_ctrl_inject_key_scancode(int sdl_scancode, int down);
 #define OFF_ABILITY_DELAY     599160u   /* sub_4252D0(id) = [52*id + 599160] */
 #define OFF587_SPELLBAR       133480u   /* byte_587000: spell-bar struct* (= &byte_5D4594[1049220]) */
 #define SPELLBAR_CUR_SET      200u      /* u8 active spell set 0..4: sub_45E180 (GAME2.c), set by sub_45E110 */
+/* v6 */
+#define OFF_MAP_NAME          2649740u  /* sub_409B40(): map name without path/extension (sub_409D70) */
+#define OFF_GAME_FLAGS        3600u     /* sub_40A5B0() game flags; sub_40A5C0(f) tests it */
+#define OFF_MAP_GATE          1200804u  /* frame of the last accepted MSG_USE_MAP (GAME2.c:50235) */
+#define OFF_SETTINGS0         371380u   /* sub_416590(0): +54 u16 kill limit, +56 u8 time limit (0xAF) */
+#define OFF_FRIEND_LIST       1203864u  /* client friend list head {u32 netcode, next*} (sub_4959F0/sub_495A80) */
+#define OFF587_SPELL_TRIE     66120u    /* byte_587000: spell phoneme trie root* (sub_424820) */
+#define PI_SCORE              2136u     /* i32 lessons/kills (0x4E) */
+#define PI_DEATHS             2140u     /* i32 deaths (0x4E) */
+#define PT_MAX_FRIEND_WALK    128
+#define GAMEFLAG_GAME_OVER    8
 
 /* playerInfo fields */
 #define PI_CLASS              2251u     /* u8, GAME2.c:2214 */
@@ -195,7 +209,17 @@ static bool       g_in_session;       /* is_mp && map_loaded, last frame */
 static uint8_t    g_txbuf[sizeof(nox_pt_state_hdr_t) + NOX_PT_MAX_OBJECTS * sizeof(nox_pt_obj_t)
                           + 2u + NOX_PT_MAX_NAMES * sizeof(nox_pt_name_t)
                           + 2u + (NOX_PT_MAX_OBJECTS + 1u) * sizeof(nox_pt_ext_t)
-                          + 4u + NOX_PT_MAX_MIS * sizeof(nox_pt_mis_t)];
+                          + 4u + NOX_PT_MAX_MIS * sizeof(nox_pt_mis_t)
+                          + sizeof(nox_pt_session_t) + NOX_PT_MAX_EV_PKT * sizeof(pt_event_t)
+                          + NOX_PT_MAX_SCORES * sizeof(nox_pt_score_t) + NOX_PT_MAX_OBL * sizeof(nox_pt_obl_t)];
+
+/* v6: client message events (playtest_events.h), filled by nox_pt_note_msg. */
+static pt_ev_ring_t g_ev;
+static pt_chant_t   g_chant[PT_CHANT_STREAMS];
+static pt_obl_t     g_obl[PT_OBL_SLOTS];
+static uint32_t     g_map_seq;
+static bool         g_ev_others_ok;   /* export gate of the last pump (MP gate open or not MP) */
+static bool         g_ev_init;
 
 /* v5 missile tracker: visible missiles sampled on every pump (playtest_missile.h). */
 static pt_mtrk_t  g_mtrk[PT_MTRK_SLOTS];
@@ -729,6 +753,21 @@ static bool obj_owned_by_me(uint32_t netcode)
     return false;
 }
 
+/* Client friend list (MSG_OBJECT_FRIEND_ADD 0x34 / REMOVE 0x35 / RESET 0x36):
+ * objects the server marks as not hostile to this player (teammates, own and
+ * team creatures; server test sub_4E7F90 = !sub_5330C0). Read-only walk
+ * like sub_495A80. */
+static bool obj_is_friend(uint32_t netcode)
+{
+    uint32_t n = rd_u32(OFF_FRIEND_LIST);
+    for (int i = 0; n && i < PT_MAX_FRIEND_WALK; ++i) {
+        if (nox_read_u32(ptr_of(n)) == netcode)
+            return true;
+        n = nox_read_u32(ptr_of(n) + 4);
+    }
+    return false;
+}
+
 static int16_t clamp_s16(int32_t v)
 {
     if (v < -32768) return -32768;
@@ -764,6 +803,8 @@ static void fill_ext(uint32_t d, nox_pt_ext_t *e, uint32_t now_frame, pt_prev_t 
     } else if (obj_owned_by_me(nc)) {
         e->ext_flags |= NOX_PT_XF_OWNED;
     }
+    if (obj_is_friend(nc))
+        e->ext_flags |= NOX_PT_XF_FRIEND;
     uint32_t df = now_frame - g_prev_frame;
     const pt_mtrk_t *tr = (cls & 1u) ? pt_mtrk_find(g_mtrk, PT_MTRK_SLOTS, nc) : NULL;
     if (tr && tr->vel) {
@@ -798,6 +839,135 @@ static uint8_t read_spell_set(void)
         return 0xFF;
     uint8_t s = dr_u8(bar, SPELLBAR_CUR_SET);
     return s < PT_SPELL_SETS ? s : 0xFF;
+}
+
+/* ---- v6 events --------------------------------------------------------- */
+/* Client spell phoneme trie (sub_424820 root, sub_424830 child): node +0
+ * spell id, +4+4*p child for phoneme p (0..8). Read-only. */
+static uintptr_t trie_child(uintptr_t node, int p)
+{
+    if (!node || p < 0 || p > 8)
+        return 0;
+    return nox_read_u32((const uint8_t *)node + 4u + 4u * (uint32_t)p);
+}
+static int trie_spell(uintptr_t node)
+{
+    if (!node)
+        return 0;
+    int32_t v = nox_read_s32((const uint8_t *)node);
+    return (v > 0 && v < 137) ? v : 0;
+}
+static void trie_get(pt_trie_t *t)
+{
+    t->root = nox_read_u32(&byte_587000[OFF587_SPELL_TRIE]);
+    t->child = trie_child;
+    t->spell = trie_spell;
+}
+
+static void ev_init_once(void)
+{
+    if (g_ev_init)
+        return;
+    g_ev_init = true;
+    pt_ev_reset(&g_ev);
+    memset(g_chant, 0, sizeof(g_chant));
+    memset(g_obl, 0, sizeof(g_obl));
+}
+
+void nox_pt_note_msg(const unsigned char *p, int avail)
+{
+    if (g_pt_state != PT_ACTIVE || !p || avail <= 0)
+        return;
+    ev_init_once();
+    pt_msg_ctx_t cx;
+    cx.frame = rd_u32(OFF_CLIENT_FRAME);
+    cx.map_gate = rd_s32(OFF_MAP_GATE);
+    cx.map_loaded = sub_43C700() != 0;
+    cx.rec_others = g_ev_others_ok;
+    pt_trie_t t;
+    trie_get(&t);
+    pt_event_t *e = pt_ev_parse_msg(&g_ev, g_chant, &t, p, (uint32_t)avail, &cx);
+    if (!e)
+        return;
+    if (e->type == PT_EV_OBELISK) {
+        pt_obl_note(g_obl, e->a, e->b);
+    } else if (e->type == PT_EV_MAP) {
+        ++g_map_seq;
+        memset(g_obl, 0, sizeof(g_obl));
+        memset(g_chant, 0, sizeof(g_chant));
+    }
+}
+
+/* v6 block: session, newest events, scoreboard, obelisks. Returns the end. */
+static uint8_t *append_v6(uint8_t *ne, uint32_t netcode, bool export_objects)
+{
+    ev_init_once();
+    nox_pt_session_t ss;
+    memset(&ss, 0, sizeof(ss));
+    const char *mp = (const char *)&byte_5D4594[OFF_MAP_NAME];
+    size_t ml = strnlen(mp, NOX_PT_MAP_BYTES - 1u);
+    memcpy(ss.map, mp, ml);
+    ss.map_seq = g_map_seq;
+    ss.game_flags = rd_u32(OFF_GAME_FLAGS);
+    ss.timer_ms = 0xFFFFFFFFu;
+    if (sub_40A220()) {
+        int32_t ms = sub_40A230();
+        ss.timer_ms = ms < 0 ? 0u : (uint32_t)ms;
+        ss.s_flags |= NOX_PT_SF_TIMER_ON;
+    }
+    ss.frag_limit = nox_read_u16(&byte_5D4594[OFF_SETTINGS0 + 54u]);
+    ss.time_limit_min = byte_5D4594[OFF_SETTINGS0 + 56u];
+    if (sub_40A5C0(GAMEFLAG_GAME_OVER))
+        ss.s_flags |= NOX_PT_SF_GAME_OVER;
+    if (!g_ev_others_ok)
+        ss.s_flags |= NOX_PT_SF_EV_GATED;
+    ss.ev_next_seq = g_ev.next_seq;
+    uint8_t *o = ne + sizeof(ss);
+
+    static pt_event_t evs[NOX_PT_MAX_EV_PKT];
+    uint32_t n_ev = pt_ev_newest(&g_ev, evs, NOX_PT_MAX_EV_PKT);
+    memcpy(o, evs, n_ev * sizeof(pt_event_t));
+    o += n_ev * sizeof(pt_event_t);
+
+    /* Scoreboard: the client player table the rank screen (guirank.c,
+     * GAME2.c:25430-25850) reads. With a closed MP gate, the local entry only. */
+    uint32_t n_sc = 0;
+    for (uint32_t i = 0; i < PLAYERINFO_SLOTS && n_sc < NOX_PT_MAX_SCORES; ++i) {
+        uint32_t off = OFF_PLAYERINFO_TABLE + PLAYERINFO_STRIDE * i;
+        if (!rd_u32(off + PI_ACTIVE))
+            continue;
+        uint32_t nc = rd_u32(off + PI_NETCODE);
+        if (!export_objects && nc != netcode)
+            continue;
+        nox_pt_score_t sc;
+        sc.net_id = (uint16_t)nc;
+        sc.class_id = byte_5D4594[off + PI_CLASS];
+        sc.pflags = byte_5D4594[off + PI_FLAGS];
+        sc.score = rd_s32(off + PI_SCORE);
+        sc.deaths = rd_s32(off + PI_DEATHS);
+        memcpy(o, &sc, sizeof(sc));
+        o += sizeof(sc);
+        ++n_sc;
+    }
+    uint32_t n_ob = 0;
+    if (export_objects) {
+        for (uint32_t i = 0; i < PT_OBL_SLOTS && n_ob < NOX_PT_MAX_OBL; ++i) {
+            if (!g_obl[i].used)
+                continue;
+            nox_pt_obl_t ob = { g_obl[i].net, g_obl[i].charge, 0 };
+            memcpy(o, &ob, sizeof(ob));
+            o += sizeof(ob);
+            ++n_ob;
+        }
+    }
+    ss.n_ev = (uint8_t)n_ev;
+    ss.ev_size = (uint8_t)sizeof(pt_event_t);
+    ss.n_score = (uint8_t)n_sc;
+    ss.score_size = (uint8_t)sizeof(nox_pt_score_t);
+    ss.n_obl = (uint8_t)n_ob;
+    ss.obl_size = (uint8_t)sizeof(nox_pt_obl_t);
+    memcpy(ne, &ss, sizeof(ss));
+    return o;
 }
 
 static void publish_state(uint16_t flags_in, uint32_t netcode, uint32_t self_d, const pt_view_t *v,
@@ -970,6 +1140,8 @@ static void publish_state(uint16_t flags_in, uint32_t netcode, uint32_t self_d, 
     vb[1] = 0;
     vb[2] = n_mis;
     vb[3] = (uint8_t)sizeof(nox_pt_mis_t);
+
+    ne = append_v6(ne, netcode, export_objects);
 
     struct sockaddr_in to;
     memset(&to, 0, sizeof(to));
@@ -1265,6 +1437,14 @@ void nox_pt_frame(void)
 
     bool export_objects = !is_mp || bots_ok;
     bool clip = is_mp || g_cfg.clip_viewport;
+    /* v6: events about other objects follow the same gate as the object export. */
+    g_ev_others_ok = export_objects;
+    {
+        ev_init_once();
+        pt_trie_t t;
+        trie_get(&t);
+        pt_chant_tick(g_chant, &t, &g_ev, rd_u32(OFF_CLIENT_FRAME));
+    }
     if (!map_loaded)
         pt_mtrk_reset(g_mtrk, PT_MTRK_SLOTS);
     if ((g_tick % g_cfg.every) == 0) {
