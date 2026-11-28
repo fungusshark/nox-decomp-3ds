@@ -60,7 +60,7 @@ via `nox_3ds_net_log` (`[pt] ...`), stays inert, and retries silently every 10 s
 logged once and otherwise ignored. In Solo, the hook pays the same 1 MB soc:u
 buffer the Multiplayer path uses. `socExit` still happens only at shutdown.
 
-## 3. Wire schema (state v3 / command v1, little-endian, packed)
+## 3. Wire schema (state v4 / command v1, little-endian, packed)
 
 The C `_Static_assert`s and the Python `*_SIZE` constants must agree. Run
 `python3 -I scripts/playtest_hook_client.py --selftest` after any change.
@@ -196,6 +196,60 @@ v1/v2 these are `None`, because a reserved 0 must not read as Warrior. The
 v3 bump exists for this reason only: the byte layout is the same as v2. A
 decoder that only knows v1 can parse the base layout by ignoring `version` and
 any trailing bytes.
+
+### Ext block (state v4)
+
+When `version` is 4 or more, the names block is followed by:
+
+`u8 n_ext, u8 entry_size (=20)`, then `n_ext` x
+`{u16 net_id, u8 anim, u8 ext_flags, u32 enchant, u32 weapon_flags,
+u32 armor_flags, i16 vx, i16 vy}`.
+
+The first entry is the local player when `player_valid` is set, then one
+entry per exported object, in object order. Like the names block, it is
+attached only to objects that are already exported, so a closed MP gate sends
+only the local entry. Every field is client-received display state:
+
+- `enchant`: drawable +124, the enchant mask the renderer tests with
+  `sub_4356C0(d, bit)` to draw auras and status effects. The client writes it
+  only in opcode `0x5A` (GAME2.c:51124-51138, `u16 net code, u32 mask`).
+  Bit 0 invisible and bit 21 infravision are confirmed by renderer use
+  (GAME2.c:30355, 32368). The Python client names the other bits in the
+  OpenNox `ENCHANT_*` order (3 confused, 4 slowed, 5 held, 9 hasted,
+  17 protect_from_fire, 20 protect_from_electricity, 26 shield (Force Field),
+  27 reflective_shield, ...). Those names are UNVERIFIED live. Poison is not an
+  enchant: use `hp_flags 0x04` (v3) where the client has a bar.
+- `weapon_flags` / `armor_flags` (players only, `ext_flags 0x08 equip`):
+  client player table +4 / +0. Opcodes `0x50`/`0x51` OR a weapon bit in,
+  `0x4F`/`0x52` an armor bit (`sub_417AA0`, GAME1.c:21632); `0x54`/`0x53`
+  clear them (`sub_417B80`, GAME1.c:21700). These are the masks the client
+  uses to draw equipment on the player sprite. The mask holds every equipped
+  weapon-class item (for example a bow plus its quiver), not only the one in
+  hand. Bit meanings follow the thing.bin weapon/armor subclass flags.
+- `anim`: drawable +276 low byte for every object (the header already has the
+  local one). Semantics UNVERIFIED (3 jump, 27 melee swing seen).
+- `vx`/`vy` (`ext_flags 0x01 vel`): world px per 16 game frames (Q4
+  px/frame), computed by the hook from the client position of the same net id
+  in the previous publish, divided by the `game_frame` delta (skipped when
+  the delta is 0 or 64+ frames). Not a server velocity.
+- `ext_flags 0x02 owned`: the object is in this client's owned-unit table
+  (`byte_5D4594[1200916]`, own summons and pets, opcode `0xDB` sent only to
+  the owner). The client does not know the owner of other players' creatures
+  or their orders, so neither is exported.
+- `ext_flags 0x04 missile`: `class_flags & 1`. Network missile objects
+  (Fireball, Magic Missile, Force of Nature ball, arrows, bolts and similar)
+  are ordinary drawables, so they are in the object list with their
+  `type_id`, position and the hook velocity. They sort after players and
+  monsters, so raise `max_objects` if they get truncated. Beams and
+  instant effects (Death Ray, lightning, Fist of Vengeance marker) arrive
+  as effect packets, not drawables, so the hook does not see them (TODO).
+
+The Python client accepts v1 to v4. For v4 it adds `ext` to `player` and to
+each object (`enchants` names, `enchant_mask`, `weapon_flags`,
+`armor_flags`, `vel` in px/frame, `is_missile`, `owned_by_me`). Older
+decoders reject v4 by version; `hookio.py` loads the client from
+`NOX_HOOK_CLIENT` or the first checkout it finds, so point it at a v4 client
+before running a v4 build.
 
 ### Command packet (host to 3DS): 20 B
 
@@ -357,6 +411,11 @@ Verified:
 - Ability records: ids 1..5 with `cd_total` 300/300/150/30/600 frames.
   Unlearned abilities report `level 0, ready 0` (fixed in 72ed96f and
   re-verified). Before the fix they reported `ready=1`.
+
+- v4 ext block (Solo Warrior, airship spawn, Azahar): the local entry carried
+  `ext_flags vel|equip`, `weapon_flags 0x100`, `armor_flags 0x405`, enchant 0
+  and velocity 0 at rest; NPC and props had `vel` with 0 and no equip flags.
+  Enchant bits, missiles and velocity while moving are not yet checked live.
 
 Still unverified:
 - The `cd_remaining` countdown (no learned ability was available). SLOT/self-cast

@@ -24,7 +24,7 @@ extern "C" {
 /* Wire constants. Keep in sync with scripts/playtest_hook_client.py. */
 #define NOX_PT_MAGIC_STATE      0x5450584Eu /* bytes "NXPT" (little-endian u32) */
 #define NOX_PT_MAGIC_CMD        0x4350584Eu /* bytes "NXPC" */
-#define NOX_PT_VERSION          3u  /* state packet: v2 = v1 + names block; v3 = v2 + obj hp_pct/class_id/hp_flags */
+#define NOX_PT_VERSION          4u  /* state packet: v2 = v1 + names block; v3 = v2 + obj hp_pct/class_id/hp_flags; v4 = v3 + ext block */
 #define NOX_PT_CMD_VERSION      1u  /* command packet */
 #define NOX_PT_MAX_NAMES        (NOX_PT_MAX_OBJECTS + 1u) /* exported players + local */
 #define NOX_PT_NAME_BYTES       15u /* UTF-8, NUL-padded, truncated on a char boundary */
@@ -127,6 +127,26 @@ typedef struct __attribute__((packed)) nox_pt_name {
     char     name[NOX_PT_NAME_BYTES];   /* UTF-8 from playerInfo+4704 (UTF-16) */
 } nox_pt_name_t;
 
+/* v4 ext block, after the names block: u8 n_ext, u8 entry_size (=20), then
+ * n_ext entries: the local player first (if valid), then one per exported
+ * object in object order. Client-received display state only (see
+ * docs/PLAYTEST_HOOK.md section 3, "Ext block"). */
+typedef struct __attribute__((packed)) nox_pt_ext {
+    uint16_t net_id;
+    uint8_t  anim;          /* drawable +276 low byte (UNVERIFIED semantics) */
+    uint8_t  ext_flags;     /* NOX_PT_XF_* */
+    uint32_t enchant;       /* drawable +124 enchant mask, opcode 0x5A (GAME2.c:51124) */
+    uint32_t weapon_flags;  /* players: playerInfo+4, opcodes 0x50/0x51 set, 0x54 clear (sub_417AA0/sub_417B80) */
+    uint32_t armor_flags;   /* players: playerInfo+0, opcodes 0x4F/0x52 set, 0x53 clear */
+    int16_t  vx, vy;        /* world px per 16 game frames (Q4 px/frame), hook-side delta; valid if XF_VEL */
+} nox_pt_ext_t;
+
+#define NOX_PT_XF_VEL           0x01u /* vx/vy valid (seen in the previous publish) */
+#define NOX_PT_XF_OWNED         0x02u /* in this client's owned-unit table [1200916] (own summon/pet) */
+#define NOX_PT_XF_MISSILE       0x04u /* class_flags & 1 (missile/projectile object) */
+#define NOX_PT_XF_EQUIP         0x08u /* player: playerInfo entry found, weapon/armor flags valid */
+
+_Static_assert(sizeof(nox_pt_ext_t)       == 20, "nox_pt_ext_t wire size");
 _Static_assert(sizeof(nox_pt_cmd_t)       == 20, "nox_pt_cmd_t wire size");
 _Static_assert(sizeof(nox_pt_name_t)      == 18, "nox_pt_name_t wire size");
 

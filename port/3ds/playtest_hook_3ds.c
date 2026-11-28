@@ -92,6 +92,8 @@ extern void nox_ctrl_inject_key_scancode(int sdl_scancode, int down);
 #define PI_FLAGS              3680u     /* u8, bit0 observer (GAME2.c:29138) */
 #define PI_HP_PCT             2282u     /* u8 0..100, client opcode 0xC4 sub 12 (GAME2.c:52755) */
 #define PI_POISON_BIT         (1u << 10) /* u32 +3680 bit10: alt bar colour (GAME3.c:16243) */
+#define PI_ARMOR_FLAGS        0u        /* u32 armor mask: opcodes 0x4F/0x52 set, 0x53 clear (sub_417AA0/sub_417B80) */
+#define PI_WEAPON_FLAGS       4u        /* u32 weapon mask: opcodes 0x50/0x51 set, 0x54 clear */
 #define GAMEFLAG_QUEST        4096       /* sub_40A5C0(0x1000): Quest; gates 0xC4/12 + tag bar */
 
 /* Client owned-unit health table (sub_495020): 32 x 16 B at [1200916]:
@@ -186,7 +188,14 @@ static bool       g_in_session;       /* is_mp && map_loaded, last frame */
 
 /* Static send buffer: header + max objects. No per-frame allocation. */
 static uint8_t    g_txbuf[sizeof(nox_pt_state_hdr_t) + NOX_PT_MAX_OBJECTS * sizeof(nox_pt_obj_t)
-                          + 2u + NOX_PT_MAX_NAMES * sizeof(nox_pt_name_t)];
+                          + 2u + NOX_PT_MAX_NAMES * sizeof(nox_pt_name_t)
+                          + 2u + (NOX_PT_MAX_OBJECTS + 1u) * sizeof(nox_pt_ext_t)];
+
+/* v4 velocity: positions from the previous publish (local + objects). */
+typedef struct { uint32_t netcode; int32_t x, y; } pt_prev_t;
+static pt_prev_t  g_prev[NOX_PT_MAX_OBJECTS + 1u];
+static uint32_t   g_n_prev;
+static uint32_t   g_prev_frame;
 
 typedef struct { uint32_t key; uint32_t ptr; } pt_cand_t;
 static pt_cand_t  g_cand[NOX_PT_MAX_OBJECTS];
@@ -677,6 +686,71 @@ static void obj_health_class(uint32_t netcode, uint32_t class_flags, nox_pt_obj_
     }
 }
 
+/* Owned-unit table membership (own summons/pets), same table as above. */
+static bool obj_owned_by_me(uint32_t netcode)
+{
+    for (uint32_t i = 0; i < UNIT_HP_SLOTS; ++i) {
+        uint32_t e = OFF_UNIT_HP_TABLE + UNIT_HP_STRIDE * i;
+        if (rd_u32(e + 12) && rd_u32(e) == netcode)
+            return true;
+    }
+    return false;
+}
+
+static int16_t clamp_s16(int32_t v)
+{
+    if (v < -32768) return -32768;
+    if (v > 32767) return 32767;
+    return (int16_t)v;
+}
+
+/* v4 ext entry for drawable d, from client-received display state only:
+ *  - enchant: drawable +124, written only by opcode 0x5A (GAME2.c:51124),
+ *    the mask the renderer tests with sub_4356C0 to draw auras/effects.
+ *  - weapon/armor flags: client player table +4/+0, set by opcodes 0x50/0x51
+ *    and 0x4F/0x52 (sub_417AA0, GAME1.c:21632), cleared by 0x54/0x53
+ *    (sub_417B80); the renderer uses them to draw equipment on the sprite.
+ *  - velocity: hook-side delta of the client position since the last publish. */
+static void fill_ext(uint32_t d, nox_pt_ext_t *e, uint32_t now_frame, pt_prev_t *cur, uint32_t *n_cur)
+{
+    memset(e, 0, sizeof(*e));
+    uint32_t nc = dr_u32(d, DR_NETCODE);
+    uint32_t cls = dr_u32(d, DR_CLASS);
+    int32_t x = dr_s32(d, DR_X), y = dr_s32(d, DR_Y);
+    e->net_id = (uint16_t)nc;
+    e->anim = (uint8_t)dr_u32(d, DR_ANIM);
+    e->enchant = dr_u32(d, DR_ENCHANT);
+    if (cls & 1u)
+        e->ext_flags |= NOX_PT_XF_MISSILE;
+    if (cls & 4u) {
+        uint32_t pi = playerinfo_off_for(nc);
+        if (pi) {
+            e->weapon_flags = rd_u32(pi + PI_WEAPON_FLAGS);
+            e->armor_flags = rd_u32(pi + PI_ARMOR_FLAGS);
+            e->ext_flags |= NOX_PT_XF_EQUIP;
+        }
+    } else if (obj_owned_by_me(nc)) {
+        e->ext_flags |= NOX_PT_XF_OWNED;
+    }
+    uint32_t df = now_frame - g_prev_frame;
+    if (g_n_prev && df > 0 && df < 64) {
+        for (uint32_t i = 0; i < g_n_prev; ++i) {
+            if (g_prev[i].netcode == nc) {
+                e->vx = clamp_s16((x - g_prev[i].x) * 16 / (int32_t)df);
+                e->vy = clamp_s16((y - g_prev[i].y) * 16 / (int32_t)df);
+                e->ext_flags |= NOX_PT_XF_VEL;
+                break;
+            }
+        }
+    }
+    if (*n_cur < NOX_PT_MAX_OBJECTS + 1u) {
+        cur[*n_cur].netcode = nc;
+        cur[*n_cur].x = x;
+        cur[*n_cur].y = y;
+        ++*n_cur;
+    }
+}
+
 static void publish_state(uint16_t flags_in, uint32_t netcode, uint32_t self_d, const pt_view_t *v,
                           bool export_objects, bool clip)
 {
@@ -786,6 +860,35 @@ static void publish_state(uint16_t flags_in, uint32_t netcode, uint32_t self_d, 
     }
     nb[0] = n_names;
     nb[1] = (uint8_t)sizeof(nox_pt_name_t);
+
+    /* v4 ext block: local player (if valid), then each exported object. */
+    uint8_t *xb = ne;
+    uint8_t n_ext = 0;
+    ne = xb + 2;
+    if (flags & NOX_PT_F_MAP_LOADED) {
+        static pt_prev_t cur[NOX_PT_MAX_OBJECTS + 1u];
+        uint32_t n_cur = 0;
+        nox_pt_ext_t ex;
+        if (self_d) {
+            fill_ext(self_d, &ex, h.game_frame, cur, &n_cur);
+            memcpy(ne, &ex, sizeof(ex));
+            ne += sizeof(ex);
+            ++n_ext;
+        }
+        for (uint32_t i = 0; i < n_obj; ++i) {
+            fill_ext(g_cand[i].ptr, &ex, h.game_frame, cur, &n_cur);
+            memcpy(ne, &ex, sizeof(ex));
+            ne += sizeof(ex);
+            ++n_ext;
+        }
+        memcpy(g_prev, cur, n_cur * sizeof(cur[0]));
+        g_n_prev = n_cur;
+        g_prev_frame = h.game_frame;
+    } else {
+        g_n_prev = 0;
+    }
+    xb[0] = n_ext;
+    xb[1] = (uint8_t)sizeof(nox_pt_ext_t);
 
     struct sockaddr_in to;
     memset(&to, 0, sizeof(to));

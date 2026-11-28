@@ -24,7 +24,7 @@ import time
 
 MAGIC_STATE = 0x5450584E  # b"NXPT"
 MAGIC_CMD = 0x4350584E    # b"NXPC"
-VERSION = 3          # state packet (v2 = v1 + names block; v3 = v2 + obj class_id/hp_flags)
+VERSION = 4          # state packet (v2 = v1 + names block; v3 = v2 + obj class_id/hp_flags; v4 = v3 + ext block)
 CMD_VERSION = 1      # command packet
 MAX_OBJECTS = 32
 NUM_ABILITIES = 5
@@ -37,6 +37,7 @@ OBJ_FMT = "<HHIiiBBBB"
 CMD_FMT = "<IBBHIii"
 NAME_FMT = "<HB15s"
 NAME_BYTES = 15
+EXT_FMT = "<HBBIIIhh"
 
 # Must equal the C _Static_asserts in playtest_hook_3ds.h.
 ABILITY_SIZE = 8
@@ -44,12 +45,14 @@ HDR_SIZE = 96
 OBJ_SIZE = 20
 CMD_SIZE = 20
 NAME_SIZE = 18
+EXT_SIZE = 20
 
 assert struct.calcsize(ABILITY_FMT) == ABILITY_SIZE
 assert struct.calcsize(HDR_FMT) == HDR_SIZE
 assert struct.calcsize(OBJ_FMT) == OBJ_SIZE
 assert struct.calcsize(CMD_FMT) == CMD_SIZE
 assert struct.calcsize(NAME_FMT) == NAME_SIZE
+assert struct.calcsize(EXT_FMT) == EXT_SIZE
 
 FLAGS = {
     0x0001: "menu_shell",
@@ -77,6 +80,21 @@ OPS = {
 CLASSES = {0: "warrior", 1: "wizard", 2: "conjurer"}
 # v3 object hp_flags: where hp_pct came from (both are bars the client draws).
 HP_FLAGS = {0x01: "quest_tag", 0x02: "unit_bar", 0x04: "poisoned"}
+# v4 ext_flags.
+EXT_FLAGS = {0x01: "vel", 0x02: "owned", 0x04: "missile", 0x08: "equip"}
+# v4 enchant mask bits (drawable +124, opcode 0x5A). Bit 0 invisible and 21
+# infravision are used by the renderer (GAME2.c:30355, 32368); the other names
+# follow the OpenNox ENCHANT_* enum order (UNVERIFIED live per bit).
+ENCHANTS = {
+    0: "invisible", 1: "moonglow", 2: "blinded", 3: "confused", 4: "slowed",
+    5: "held", 6: "detecting", 7: "ethereal", 8: "run", 9: "hasted",
+    10: "villain", 11: "afraid", 12: "burning", 13: "vampirism", 14: "anchored",
+    15: "light", 16: "death", 17: "protect_from_fire", 18: "protect_from_poison",
+    19: "protect_from_magic", 20: "protect_from_electricity", 21: "infravision",
+    22: "shock", 23: "invulnerable", 24: "telekinesis", 25: "freeze",
+    26: "shield", 27: "reflective_shield", 28: "charming", 29: "antimagic",
+    30: "crown", 31: "sneak",
+}
 ABILITY_NAMES = {1: "berserker_charge", 2: "war_cry", 3: "harpoon",
                  4: "tread_lightly", 5: "eye_of_the_wolf"}
 
@@ -113,10 +131,11 @@ def decode_state(data):
      cam_x, cam_y) = f[:21]
     if magic != MAGIC_STATE:
         raise ValueError("bad magic 0x%08X" % magic)
-    if version not in (1, 2, 3) or header_size != HDR_SIZE or obj_size != OBJ_SIZE:
+    if version not in (1, 2, 3, 4) or header_size != HDR_SIZE or obj_size != OBJ_SIZE:
         raise ValueError("version/size mismatch v=%d hdr=%d obj=%d" % (version, header_size, obj_size))
     base_len = HDR_SIZE + n_obj * OBJ_SIZE
     names = {}
+    exts = []
     if version == 1:
         if len(data) != base_len:
             raise ValueError("length %d != %d" % (len(data), base_len))
@@ -124,11 +143,34 @@ def decode_state(data):
         if len(data) < base_len + 2:
             raise ValueError("v%d packet missing names block" % version)
         n_names, entry_size = data[base_len], data[base_len + 1]
-        if entry_size != NAME_SIZE or len(data) != base_len + 2 + n_names * NAME_SIZE:
+        names_end = base_len + 2 + n_names * NAME_SIZE
+        if entry_size != NAME_SIZE or len(data) < names_end:
             raise ValueError("bad names block n=%d size=%d len=%d" % (n_names, entry_size, len(data)))
         for i in range(n_names):
             nid, nlen, raw = struct.unpack_from(NAME_FMT, data, base_len + 2 + i * NAME_SIZE)
             names[nid] = raw[:min(nlen, NAME_BYTES)].decode("utf-8", "replace")
+        if version < 4:
+            if len(data) != names_end:
+                raise ValueError("length %d != %d" % (len(data), names_end))
+        else:
+            if len(data) < names_end + 2:
+                raise ValueError("v4 packet missing ext block")
+            n_ext, ext_size = data[names_end], data[names_end + 1]
+            if ext_size < EXT_SIZE or len(data) != names_end + 2 + n_ext * ext_size:
+                raise ValueError("bad ext block n=%d size=%d len=%d" % (n_ext, ext_size, len(data)))
+            for i in range(n_ext):
+                (e_net, e_anim, e_xf, e_ench, e_wpn, e_arm, e_vx, e_vy) = struct.unpack_from(
+                    EXT_FMT, data, names_end + 2 + i * ext_size)
+                exts.append({
+                    "net_id": e_net, "anim": e_anim,
+                    "ext_flags": [n for b, n in EXT_FLAGS.items() if e_xf & b],
+                    "enchant_mask": e_ench,
+                    "enchants": [n for b, n in ENCHANTS.items() if e_ench & (1 << b)],
+                    "weapon_flags": e_wpn if e_xf & 0x08 else None,
+                    "armor_flags": e_arm if e_xf & 0x08 else None,
+                    "is_missile": bool(e_xf & 0x04), "owned_by_me": bool(e_xf & 0x02),
+                    "vel": (e_vx / 16.0, e_vy / 16.0) if e_xf & 0x01 else None,
+                })
     abilities = []
     ab = f[21:]
     for i in range(NUM_ABILITIES):
@@ -157,6 +199,15 @@ def decode_state(data):
             "name": names.get(o_net) if o_cls & 4 else None,
         })
     valid = bool(flags & 0x0020)
+    # v4: attach ext entries (local player first if valid, then objects in order).
+    self_ext = None
+    if exts:
+        k = 0
+        if valid and exts[0]["net_id"] == (net_id & 0xFFFF):
+            self_ext, k = exts[0], 1
+        for o, e in zip(objects, exts[k:]):
+            if e["net_id"] == o["net_id"]:
+                o["ext"] = e
 
     def opt(v, bad):
         return v if valid and v != bad else None
@@ -176,6 +227,7 @@ def decode_state(data):
             "x": x if valid else None, "y": y if valid else None,
             "facing": opt(facing, 0xFF), "anim": opt(anim, 0xFF),
             "abilities": abilities,
+            "ext": self_ext,
         },
         "camera": {"x": cam_x, "y": cam_y},
         "objects": objects,
@@ -185,7 +237,7 @@ def decode_state(data):
 
 def encode_state(seq=1, game_frame=0, hook_tick=0, flags=0, pclass=0xFF, net_id=0,
                  hp=0, hp_max=0, mp=0, mp_max=0, x=0, y=0, facing=0, anim=0,
-                 cam_x=0, cam_y=0, abilities=(), objects=(), names=(), version=VERSION):
+                 cam_x=0, cam_y=0, abilities=(), objects=(), names=(), exts=(), version=VERSION):
     """Encoder mirroring publish_state() (used by --selftest and fakes)."""
     ab = list(abilities) + [(0, 0, 0, 0, 0, 0)] * (NUM_ABILITIES - len(abilities))
     ab_flat = []
@@ -213,7 +265,11 @@ def encode_state(seq=1, game_frame=0, hook_tick=0, flags=0, pclass=0xFF, net_id=
             except UnicodeDecodeError:
                 raw = raw[:-1]
         entries.append(struct.pack(NAME_FMT, nid, len(raw), raw))
-    return hdr + body + bytes([len(entries), NAME_SIZE]) + b"".join(entries)
+    out = hdr + body + bytes([len(entries), NAME_SIZE]) + b"".join(entries)
+    if version < 4:
+        return out
+    # exts: (net_id, anim, ext_flags, enchant, weapon_flags, armor_flags, vx_q4, vy_q4)
+    return out + bytes([len(exts), EXT_SIZE]) + b"".join(struct.pack(EXT_FMT, *e) for e in exts)
 
 
 def encode_cmd(op, a=0, b=0, ttl_ms=0, seq=0):
@@ -313,9 +369,13 @@ def selftest():
     pkt = encode_state(seq=7, game_frame=123456, hook_tick=99, flags=0x0226, pclass=0,
                        net_id=42, hp=150, hp_max=150, mp=0, mp_max=0, x=2048, y=-1,
                        facing=6, anim=1, cam_x=1900, cam_y=-120, abilities=abilities,
-                       objects=objects, names=[(42, "Jack 3"), (17, "Jäck-Wizard-Long-Name")])
-    assert len(pkt) == HDR_SIZE + 3 * OBJ_SIZE + 2 + 2 * NAME_SIZE, len(pkt)
-    assert pkt[6:8] == struct.pack("<H", HDR_SIZE) and pkt[4] == 3
+                       objects=objects, names=[(42, "Jack 3"), (17, "Jäck-Wizard-Long-Name")],
+                       exts=[(42, 1, 0x09, (1 << 26) | (1 << 9), 0x2, 0x41, 32, -8),
+                             (17, 3, 0x08, 1 << 27, 0x80, 0, 0, 0),
+                             (900, 0, 0x03, 0, 0, 0, -16, 0),
+                             (18, 7, 0x00, 0, 0, 0, 0, 0)])
+    assert len(pkt) == HDR_SIZE + 3 * OBJ_SIZE + 2 + 2 * NAME_SIZE + 2 + 4 * EXT_SIZE, len(pkt)
+    assert pkt[6:8] == struct.pack("<H", HDR_SIZE) and pkt[4] == 4
     st = decode_state(pkt)
     assert st["seq"] == 7 and st["game_frame"] == 123456 and st["hook_tick"] == 99
     assert st["mode"] == "in_world" and "cmds_active" in st["flag_names"]
@@ -340,6 +400,20 @@ def selftest():
                                                                ["quest_tag", "poisoned"])
     o2 = HDR_SIZE + 2 * OBJ_SIZE
     assert (pkt[o2 + 17], pkt[o2 + 18], pkt[o2 + 19]) == (37, 2, 0x05)
+    # v4 ext block: local player first, then objects in order.
+    pe = p["ext"]
+    assert pe["enchants"] == ["hasted", "shield"] and pe["vel"] == (2.0, -0.5)
+    assert (pe["weapon_flags"], pe["armor_flags"], pe["anim"]) == (0x2, 0x41, 1)
+    assert o[0]["ext"]["enchants"] == ["reflective_shield"] and o[0]["ext"]["vel"] is None
+    assert o[1]["ext"]["owned_by_me"] and o[1]["ext"]["vel"] == (-1.0, 0.0)
+    assert o[1]["ext"]["weapon_flags"] is None and o[2]["ext"]["ext_flags"] == []
+    x0 = HDR_SIZE + 3 * OBJ_SIZE + 2 + 2 * NAME_SIZE
+    assert pkt[x0:x0 + 2] == bytes([4, EXT_SIZE])
+    assert struct.unpack_from("<I", pkt, x0 + 2 + 4)[0] == (1 << 26) | (1 << 9)  # enchant offset
+    # v3 packets (no ext block) still decode.
+    v3 = decode_state(encode_state(flags=0x0026, objects=objects[:1], names=[(17, "x")],
+                                   version=3))
+    assert v3["version"] == 3 and "ext" not in v3["objects"][0] and v3["player"]["ext"] is None
     # v2 packets: reserved bytes (0) must not decode as Warrior.
     v2 = decode_state(encode_state(flags=0x0026, objects=objects[:1], names=[(17, "x")],
                                    version=2))
