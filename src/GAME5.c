@@ -10297,7 +10297,8 @@ LABEL_10:
         {
           if ( !v29 )
             goto LABEL_48;
-          if ( v9 == *(_BYTE *)(v29 + 113) )
+          /* FIX: compare piggybacked reliable ACK as unsigned to avoid -fsigned-char mismatch for seq 128..255 */
+          if ( v9 == *(unsigned __int8 *)(v29 + 113) )
             goto LABEL_42;
           v19 = v31;
           sub_5551F0(v8, v31, 1);
@@ -12783,10 +12784,10 @@ int __cdecl sub_555360(unsigned int a1, unsigned __int8 a2, int a3)
       {
         if ( a2 < 0x20u || a2 > 0xE0u )
         {
-          if ( *(_BYTE *)(*(_DWORD *)v5 + 21) < (char)a2 )
+          if ( (char)*(_BYTE *)(*(_DWORD *)v5 + 21) < (char)a2 )
             goto LABEL_17;
         }
-        else if ( *(_BYTE *)(*(_DWORD *)v5 + 21) < a2 )
+        else if ( *(unsigned __int8 *)(*(_DWORD *)v5 + 21) < a2 )
         {
           goto LABEL_17;
         }
@@ -12804,7 +12805,7 @@ LABEL_17:
         continue;
       }
     }
-    else if ( *(_BYTE *)(*(_DWORD *)v5 + 21) == a2 )
+    else if ( *(unsigned __int8 *)(*(_DWORD *)v5 + 21) == a2 )
     {
       goto LABEL_17;
     }

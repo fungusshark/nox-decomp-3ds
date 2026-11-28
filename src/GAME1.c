@@ -51633,51 +51633,29 @@ int sub_43CCA0()
 //----- (0043CEB0) --------------------------------------------------------
 int sub_43CEB0()
 {
-  unsigned __int64 v0; // rax
-  unsigned int v1; // esi
-  unsigned int v2; // edi
-  unsigned int v3; // ebx
-  unsigned __int64 v4; // rax
-  unsigned int v5; // ecx
-  int v6; // kr00_4
-  unsigned int v7; // kr08_4
-  unsigned int v9; // [esp+0h] [ebp-8h]
-
-  LODWORD(v0) = *(_DWORD *)&byte_5D4594[815748];
-  if ( *(int *)&byte_5D4594[815748] >= 60 )
-    LODWORD(v0) = 60;
-  v1 = 0;
-  v2 = 0;
-  v3 = 0;
-  if ( (_DWORD)v0 && (int)v0 > 10 )
+  int count = *(_DWORD *)&byte_5D4594[815748];
+  if ( count >= 60 )
+    count = 60;
+  if ( count > 10 )
   {
-    v0 = (int)v0;
-    v5 = 0;
-    v9 = v0;
-    do
+    unsigned __int64 sum = 0;
+    for ( int i = 0; i < count; ++i )
     {
-      do
-      {
-        v6 = *(_DWORD *)&byte_5D4594[8 * v5 + 815220] + v2;
-        v3 = (__PAIR64__(*(_DWORD *)&byte_5D4594[8 * v5 + 815224], *(_DWORD *)&byte_5D4594[8 * v5 + 815220])
-            + __PAIR64__(v3, v2)) >> 32;
-        v2 += *(_DWORD *)&byte_5D4594[8 * v5 + 815220];
-        v7 = v5 + 1;
-        v1 = (__PAIR64__(v1, v5++) + 1) >> 32;
-      }
-      while ( v1 < HIDWORD(v4) );
-      LODWORD(v4) = v9;
+      unsigned __int64 lo = (unsigned __int64)*(unsigned int *)&byte_5D4594[8 * i + 815220];
+      unsigned __int64 hi = (unsigned __int64)*(unsigned int *)&byte_5D4594[8 * i + 815224];
+      sum += lo | (hi << 32);
     }
-    while ( v1 <= HIDWORD(v4) && v7 < v9 );
-    v0 = __PAIR64__(v3, v6) / v4;
-    *(_QWORD *)&byte_587000[91880] = v0;
+    unsigned __int64 avg = sum / (unsigned __int64)(unsigned int)count;
+    *(_DWORD *)&byte_587000[91880] = (unsigned int)avg;
+    *(_DWORD *)&byte_587000[91884] = (unsigned int)(avg >> 32);
+    return (int)avg;
   }
   else
   {
     *(_DWORD *)&byte_587000[91884] = 0;
     *(_DWORD *)&byte_587000[91880] = 33;
+    return count;
   }
-  return v0;
 }
 
 //----- (0043CF40) --------------------------------------------------------

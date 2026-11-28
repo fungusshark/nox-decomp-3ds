@@ -53873,7 +53873,7 @@ int __cdecl sub_494A60(unsigned __int8 *a1, int a2, _DWORD *a3)
     v5 = a1 + 5;
     v6 = *(unsigned __int16 *)(a1 + 3);
     v24 = sub_57B9A0((int)&byte_5D4594[1198020], v3, v6, *(unsigned int *)&byte_5D4594[2598000]);
-    if ( v24 != -1 )
+    if ( v24 != 0xFFu )
     {
       sub_57BA10((int)&byte_5D4594[8 * v24 + 1198020], v3, v6, -1);
       v23[0] = -91;
@@ -53983,7 +53983,7 @@ unsigned __int8 *__cdecl sub_494C30(unsigned __int8 *a1, int a2, int *a3)
     v9 = *v7;
     v10 = v7 + 1;
     v24 = sub_57B9A0((int)&byte_5D4594[1198020], v6, v9, *(unsigned int *)&byte_5D4594[2598000]);
-    if ( v24 != -1 )
+    if ( v24 != 0xFFu )
     {
       sub_57BA10((int)&byte_5D4594[8 * v24 + 1198020], v6, v9, *(_DWORD *)&byte_5D4594[2598000] + 60);
       v26[1] = v24;
