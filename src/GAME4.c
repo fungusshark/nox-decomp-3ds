@@ -32610,12 +32610,29 @@ LABEL_55:
           v4 += 3;
           goto LABEL_273;
         case 0xA5u:
-          *(_WORD *)(v8 + 8 * v4[1] + 16) = *((_WORD *)v4 + 1);
-          *(_WORD *)(v8 + 8 * v4[1] + 18) = *((_WORD *)v4 + 2);
-          v14 = v4[1];
-          v7 = *(_DWORD *)(v4 + 6);
+#ifdef __3DS__
+          /* Per-player 0xA4/0xA5 alias table has 254 valid 1-based slots (1..254) at
+           * v8 + 24 .. v8 + 2055 right below v8 + 2056 (unit_obj). Guard slot bounds and
+           * use alignment-safe helpers while always consuming the 10-byte message. */
+          if ( v91 - v4 >= 10 && v4[1] > 0 && v4[1] < 255u )
+          {
+            v14 = v4[1];
+            nox_write_u16((void *)(v8 + 8 * v14 + 16), nox_read_u16(v4 + 2));
+            nox_write_u16((void *)(v8 + 8 * v14 + 18), nox_read_u16(v4 + 4));
+            nox_write_u32((void *)(v8 + 8 * v14 + 20), nox_read_u32(v4 + 6));
+          }
           v4 += 10;
-          *(_DWORD *)(v8 + 8 * v14 + 20) = v7;
+#else
+          if ( v91 - v4 >= 10 && v4[1] > 0 && v4[1] < 255u )
+          {
+            *(_WORD *)(v8 + 8 * v4[1] + 16) = *((_WORD *)v4 + 1);
+            *(_WORD *)(v8 + 8 * v4[1] + 18) = *((_WORD *)v4 + 2);
+            v14 = v4[1];
+            v7 = *(_DWORD *)(v4 + 6);
+            *(_DWORD *)(v8 + 8 * v14 + 20) = v7;
+          }
+          v4 += 10;
+#endif
           goto LABEL_273;
         case 0xA8u:
           if ( v4[3] & 2 )
