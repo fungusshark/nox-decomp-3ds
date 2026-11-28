@@ -399,6 +399,26 @@ static int sockets_socket(int domain, int type, int protocol)
     if (type == SOCK_DGRAM) {
         int reuse = 1;
         (void)setsockopt(rfd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
+
+        /* Request larger UDP socket buffers (best-effort; soc:u may clamp/ignore)
+         * so multi-player state bursts don't silently overflow the RX queue
+         * between 30 Hz Core 0 drains. Keep conservative enough to stay well
+         * within the 1 MB socInit() context pool across multiple open sockets. */
+        int rcvbuf = 64 * 1024;
+        if (setsockopt(rfd, SOL_SOCKET, SO_RCVBUF, &rcvbuf, sizeof(rcvbuf)) < 0) {
+            rcvbuf = 32 * 1024;
+            (void)setsockopt(rfd, SOL_SOCKET, SO_RCVBUF, &rcvbuf, sizeof(rcvbuf));
+        }
+        int sndbuf = 32 * 1024;
+        (void)setsockopt(rfd, SOL_SOCKET, SO_SNDBUF, &sndbuf, sizeof(sndbuf));
+
+        int eff_rcv = 0, eff_snd = 0;
+        socklen_t opt_len = (socklen_t)sizeof(eff_rcv);
+        (void)getsockopt(rfd, SOL_SOCKET, SO_RCVBUF, &eff_rcv, &opt_len);
+        opt_len = (socklen_t)sizeof(eff_snd);
+        (void)getsockopt(rfd, SOL_SOCKET, SO_SNDBUF, &eff_snd, &opt_len);
+        nox_3ds_net_log("[net3ds:soc] UDP rfd=%d buffers SO_RCVBUF=%d SO_SNDBUF=%d",
+                        rfd, eff_rcv, eff_snd);
     }
 
     soc_slot_t *s = &g_soc_slots[slot_idx];
@@ -660,28 +680,35 @@ static int sockets_ioctlsocket(int vfd, long cmd, unsigned long *argp)
 
         if (stype == SOCK_DGRAM) {
             /* Drain transient ICMP unreachable errors (e.g. from LAN sweep probes) and
-             * prefetch one datagram directly so we never depend on libctru's broken <poll.h>. */
+             * prefetch one datagram directly into s->rx_buf (zero intermediate copy)
+             * so we never depend on libctru's broken <poll.h>.
+             * rfd is strictly O_NONBLOCK, so holding soc_lock across the non-blocking
+             * recvfrom() avoids a 2 KB stack copy and extra lock round trips. */
             soc_lock();
             s = lookup_slot(vfd);
-            if (s && s->rx_valid) {
+            if (!s) {
+                soc_unlock();
+                last_socket_error = NOX_WSAENOTSOCK;
+                errno = EBADF;
+                *argp = 0ul;
+                return -1;
+            }
+            if (s->rx_valid) {
                 uint16_t n = s->rx_len;
                 soc_unlock();
                 *argp = (unsigned long)(n > 0u ? n : 1u);
                 last_socket_error = 0;
                 return 0;
             }
-            soc_unlock();
 
-            uint8_t tmp_buf[2048];
-            struct sockaddr_in tmp_from;
             ssize_t got = -1;
             int got_err = EWOULDBLOCK;
             int rx_flags = SOC_SAFE_RECV_FLAGS(0, nb);
             for (int tries = 0; tries < 16; ++tries) {
-                socklen_t fl = (socklen_t)sizeof(tmp_from);
-                memset(&tmp_from, 0, sizeof(tmp_from));
-                ssize_t r = recvfrom(rfd, tmp_buf, sizeof(tmp_buf), rx_flags,
-                                     (struct sockaddr *)&tmp_from, &fl);
+                socklen_t fl = (socklen_t)sizeof(s->rx_from);
+                memset(&s->rx_from, 0, sizeof(s->rx_from));
+                ssize_t r = recvfrom(rfd, s->rx_buf, sizeof(s->rx_buf), rx_flags,
+                                     (struct sockaddr *)&s->rx_from, &fl);
                 if (r >= 0) {
                     got = r;
                     break;
@@ -695,21 +722,15 @@ static int sockets_ioctlsocket(int vfd, long cmd, unsigned long *argp)
                 break;
             }
             if (got >= 0) {
-                soc_lock();
-                s = lookup_slot(vfd);
-                if (s) {
-                    size_t store_n = ((size_t)got <= sizeof(s->rx_buf)) ? (size_t)got : sizeof(s->rx_buf);
-                    if (store_n > 0u)
-                        memcpy(s->rx_buf, tmp_buf, store_n);
-                    s->rx_len = (uint16_t)store_n;
-                    s->rx_from = tmp_from;
-                    s->rx_valid = true;
-                }
+                size_t store_n = ((size_t)got <= sizeof(s->rx_buf)) ? (size_t)got : sizeof(s->rx_buf);
+                s->rx_len = (uint16_t)store_n;
+                s->rx_valid = true;
                 soc_unlock();
-                *argp = (unsigned long)(got > 0 ? got : 1);
+                *argp = (unsigned long)(store_n > 0u ? store_n : 1u);
                 last_socket_error = 0;
                 return 0;
             }
+            soc_unlock();
             if (got_err != EWOULDBLOCK && got_err != EAGAIN && got_err != 0) {
                 static uint32_t s_last_rxerr_ms = 0;
                 uint32_t now_ms = nox_3ds_get_ticks_ms();
