@@ -9551,9 +9551,47 @@ BOOL __cdecl sub_45A1D0(int a1)
   return *(_DWORD *)&byte_5D4594[1046592] != 0;
 }
 
+#ifdef __3DS__
+/* L1-friendly (2 KB) direct-mapped read-through caches for sub_45A6F0/sub_45A720
+ * netcode lookups. Strictly evicted on drawable unlink/free (sub_45A4E0/sub_45A4B0)
+ * and cleared on pool teardown (sub_45A200); netcode 0 is never cached. */
+static _DWORD *s_drw_cache_norm[256];
+static _DWORD *s_drw_cache_ext[256];
+
+static inline unsigned int nox_drw_cache_idx(int netcode)
+{
+  unsigned int u = (unsigned int)netcode;
+  return (u ^ (u >> 8)) & 0xFFu;
+}
+
+static inline void nox_drw_cache_clear(void)
+{
+  memset(s_drw_cache_norm, 0, sizeof(s_drw_cache_norm));
+  memset(s_drw_cache_ext, 0, sizeof(s_drw_cache_ext));
+}
+
+static inline void nox_drw_cache_evict(_DWORD *drw)
+{
+  if ( !drw )
+    return;
+  int nc = (int)drw[32];
+  if ( nc )
+  {
+    unsigned int idx = nox_drw_cache_idx(nc);
+    if ( s_drw_cache_norm[idx] == drw )
+      s_drw_cache_norm[idx] = 0;
+    if ( s_drw_cache_ext[idx] == drw )
+      s_drw_cache_ext[idx] = 0;
+  }
+}
+#endif
+
 //----- (0045A200) --------------------------------------------------------
 int sub_45A200()
 {
+#ifdef __3DS__
+  nox_drw_cache_clear();
+#endif
   sub_414100(*(LPVOID *)&byte_5D4594[1046592]);
   *(_DWORD *)&byte_5D4594[1046592] = 0;
   *(_DWORD *)&byte_5D4594[1046568] = 0;
@@ -9677,6 +9715,9 @@ void __cdecl sub_45A480(int a1)
 //----- (0045A4B0) --------------------------------------------------------
 int __cdecl sub_45A4B0(_QWORD *a1)
 {
+#ifdef __3DS__
+  nox_drw_cache_evict((_DWORD *)a1);
+#endif
   sub_495B00((int)a1);
   sub_414330(*(unsigned int **)&byte_5D4594[1046592], a1);
   return --*(_DWORD *)&byte_5D4594[1046588];
@@ -9690,6 +9731,9 @@ int __cdecl sub_45A4E0(int a1)
   int v3; // eax
   int v4; // eax
 
+#ifdef __3DS__
+  nox_drw_cache_evict((_DWORD *)a1);
+#endif
   v1 = *(_DWORD *)(a1 + 372);
   if ( v1 )
     *(_DWORD *)(v1 + 368) = *(_DWORD *)(a1 + 368);
@@ -9804,8 +9848,25 @@ _DWORD *__cdecl sub_45A6F0(int a1)
   _DWORD *result; // eax
 
   result = *(_DWORD **)&byte_5D4594[1046572];
-  if ( !*(_DWORD *)&byte_5D4594[1046572] )
+  if ( !result )
     return 0;
+#ifdef __3DS__
+  if ( a1 )
+  {
+    unsigned int idx = nox_drw_cache_idx(a1);
+    _DWORD *cached = s_drw_cache_norm[idx];
+    if ( cached && !(cached[28] & 0x20400000) && (int)cached[32] == a1 )
+      return cached;
+    while ( result[28] & 0x20400000 || (int)result[32] != a1 )
+    {
+      result = (_DWORD *)result[92];
+      if ( !result )
+        return 0;
+    }
+    s_drw_cache_norm[idx] = result;
+    return result;
+  }
+#endif
   while ( result[28] & 0x20400000 || result[32] != a1 )
   {
     result = (_DWORD *)result[92];
@@ -9821,8 +9882,25 @@ _DWORD *__cdecl sub_45A720(int a1)
   _DWORD *result; // eax
 
   result = *(_DWORD **)&byte_5D4594[1046572];
-  if ( !*(_DWORD *)&byte_5D4594[1046572] )
+  if ( !result )
     return 0;
+#ifdef __3DS__
+  if ( a1 )
+  {
+    unsigned int idx = nox_drw_cache_idx(a1);
+    _DWORD *cached = s_drw_cache_ext[idx];
+    if ( cached && (cached[28] & 0x20400000) && (int)cached[32] == a1 )
+      return cached;
+    while ( !(result[28] & 0x20400000) || (int)result[32] != a1 )
+    {
+      result = (_DWORD *)result[92];
+      if ( !result )
+        return 0;
+    }
+    s_drw_cache_ext[idx] = result;
+    return result;
+  }
+#endif
   while ( !(result[28] & 0x20400000) || result[32] != a1 )
   {
     result = (_DWORD *)result[92];
