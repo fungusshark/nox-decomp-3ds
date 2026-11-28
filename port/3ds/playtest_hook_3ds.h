@@ -24,7 +24,7 @@ extern "C" {
 /* Wire constants. Keep in sync with scripts/playtest_hook_client.py. */
 #define NOX_PT_MAGIC_STATE      0x5450584Eu /* bytes "NXPT" (little-endian u32) */
 #define NOX_PT_MAGIC_CMD        0x4350584Eu /* bytes "NXPC" */
-#define NOX_PT_VERSION          4u  /* state packet: v2 = v1 + names block; v3 = v2 + obj hp_pct/class_id/hp_flags; v4 = v3 + ext block */
+#define NOX_PT_VERSION          5u  /* state packet: v2 = v1 + names block; v3 = v2 + obj hp_pct/class_id/hp_flags; v4 = v3 + ext block; v5 = v4 + spell set / missile block */
 #define NOX_PT_CMD_VERSION      1u  /* command packet */
 #define NOX_PT_MAX_NAMES        (NOX_PT_MAX_OBJECTS + 1u) /* exported players + local */
 #define NOX_PT_NAME_BYTES       15u /* UTF-8, NUL-padded, truncated on a char boundary */
@@ -57,7 +57,8 @@ enum {
     NOX_PT_OP_HEAL      = 6,  /* quick health potion (X) */
     NOX_PT_OP_MANA      = 7,  /* quick mana potion (C) */
     NOX_PT_OP_JUMP      = 8,  /* MMB tap */
-    NOX_PT_OP_STOP      = 9   /* drop all overrides, release held inputs */
+    NOX_PT_OP_STOP      = 9,  /* drop all overrides, release held inputs */
+    NOX_PT_OP_SPELLSET  = 10  /* a = spell set 0..4: W/E (ZL/ZR) taps, shorter way round the wrap */
 };
 
 typedef struct __attribute__((packed)) nox_pt_ability {
@@ -147,6 +148,21 @@ typedef struct __attribute__((packed)) nox_pt_ext {
 #define NOX_PT_XF_EQUIP         0x08u /* player: playerInfo entry found, weapon/armor flags valid */
 
 _Static_assert(sizeof(nox_pt_ext_t)       == 20, "nox_pt_ext_t wire size");
+
+/* v5 block, after the ext block: u8 spell_set (0..4, 0xFF unknown), u8 v5_flags
+ * (0, reserved), u8 n_mis, u8 entry_size (=12), then n_mis entries, one per
+ * exported missile object (class_flags & 1) in object order. See
+ * docs/PLAYTEST_HOOK.md section 3, "v5 block". */
+#define NOX_PT_MAX_MIS          16u
+typedef struct __attribute__((packed)) nox_pt_mis {
+    uint16_t net_id;
+    uint8_t  mis_flags;     /* PT_MISF_* (playtest_missile.h): incoming, near, tracked, approaching */
+    uint8_t  reserved;      /* 0 */
+    uint32_t subclass;      /* drawable +116, thing.bin SUBCLASS (missiles: bit0 MISSILE_COUNTERSPELL, bit1 MAGIC) */
+    uint16_t miss_px;       /* closest approach to the local player, px; 0xFFFF unknown / moving away */
+    uint16_t tca_f;         /* game frames to the closest approach; 0xFFFF unknown / moving away */
+} nox_pt_mis_t;
+_Static_assert(sizeof(nox_pt_mis_t)       == 12, "nox_pt_mis_t wire size");
 _Static_assert(sizeof(nox_pt_cmd_t)       == 20, "nox_pt_cmd_t wire size");
 _Static_assert(sizeof(nox_pt_name_t)      == 18, "nox_pt_name_t wire size");
 

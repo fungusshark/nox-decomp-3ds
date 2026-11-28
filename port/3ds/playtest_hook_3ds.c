@@ -21,6 +21,7 @@
 #include "playtest_hook_3ds.h"
 #include "playtest_gate.h"
 #include "playtest_aim.h"
+#include "playtest_missile.h"
 
 #include <3ds.h>
 #include <SDL2/SDL.h>
@@ -41,6 +42,7 @@
 
 /* ---- Engine (client-side) symbols ------------------------------------- */
 extern unsigned char byte_5D4594[];
+extern unsigned char byte_587000[];   /* static data; [133480] = spell-bar struct* (GAME1.c:4592) */
 extern int   sub_43C700(void);          /* map loaded */
 extern int   sub_40A5C0(int a1);        /* game flags test; 1 = hosting server */
 extern char *sub_40A4C0(void);          /* host's server name (byte_5D4594[1324]) */
@@ -86,6 +88,8 @@ extern void nox_ctrl_inject_key_scancode(int sdl_scancode, int down);
 #define OFF_CAM_Y             811088u
 #define OFF_ABILITY_BASE      1047764u  /* record a (1..5) at base + 24*a, sub_461090 */
 #define OFF_ABILITY_DELAY     599160u   /* sub_4252D0(id) = [52*id + 599160] */
+#define OFF587_SPELLBAR       133480u   /* byte_587000: spell-bar struct* (= &byte_5D4594[1049220]) */
+#define SPELLBAR_CUR_SET      200u      /* u8 active spell set 0..4: sub_45E180 (GAME2.c), set by sub_45E110 */
 
 /* playerInfo fields */
 #define PI_CLASS              2251u     /* u8, GAME2.c:2214 */
@@ -108,6 +112,7 @@ extern void nox_ctrl_inject_key_scancode(int sdl_scancode, int down);
 #define DR_Y                  16u
 #define DR_TYPE               108u
 #define DR_CLASS              112u
+#define DR_SUBCLASS           116u      /* thing.bin SUBCLASS, copied by sub_44D0C0 (GAME2.c:310) */
 #define DR_ENCHANT            124u      /* enchant bitmask, sub_4356C0(d, bit) */
 #define DR_NETCODE            128u
 #define DR_ANIM               276u
@@ -189,7 +194,11 @@ static bool       g_in_session;       /* is_mp && map_loaded, last frame */
 /* Static send buffer: header + max objects. No per-frame allocation. */
 static uint8_t    g_txbuf[sizeof(nox_pt_state_hdr_t) + NOX_PT_MAX_OBJECTS * sizeof(nox_pt_obj_t)
                           + 2u + NOX_PT_MAX_NAMES * sizeof(nox_pt_name_t)
-                          + 2u + (NOX_PT_MAX_OBJECTS + 1u) * sizeof(nox_pt_ext_t)];
+                          + 2u + (NOX_PT_MAX_OBJECTS + 1u) * sizeof(nox_pt_ext_t)
+                          + 4u + NOX_PT_MAX_MIS * sizeof(nox_pt_mis_t)];
+
+/* v5 missile tracker: visible missiles sampled on every pump (playtest_missile.h). */
+static pt_mtrk_t  g_mtrk[PT_MTRK_SLOTS];
 
 /* v4 velocity: positions from the previous publish (local + objects). */
 typedef struct { uint32_t netcode; int32_t x, y; } pt_prev_t;
@@ -483,44 +492,63 @@ static bool npc_dialog_open(void)
 
 /* Spatial query state for the sub_49AB00 callback (no allocation). */
 typedef struct {
-    uint32_t self_d, max, count, worst, visits;
+    uint32_t self_d, max, count, worst, visits, frame;
     int32_t  px, py, wx0, wy0, wx1, wy1;
-    bool     valid, clip, infravision, truncated;
+    bool     valid, clip, infravision, truncated, track_only;
 } pt_collect_t;
 static pt_collect_t g_col;
+
+/* Same filters as the export: camera rect, invisibility, draw visibility. */
+static bool obj_passes_filters(const pt_collect_t *c, uint32_t d, int32_t x, int32_t y)
+{
+    if (c->clip && (x < c->wx0 || x > c->wx1 || y < c->wy0 || y > c->wy1))
+        return false;
+    /* Invisible objects: the renderer hides them (GAME2.c:30355) unless
+     * allied; we drop them unless the local player has infravision. Allies
+     * are dropped too (conservative; ally test needs sub_418C80). */
+    if (!c->infravision && (dr_u32(d, DR_ENCHANT) & ENCH_INVISIBLE_BIT))
+        return false;
+    /* Same draw-visibility test the renderer applies (GAME2.c:30306, 30849):
+     * view polygon / line of sight from the last frame. */
+    if (c->clip && !sub_4984B0((int)d))
+        return false;
+    return true;
+}
 
 static void collect_cb(int di, int unused)
 {
     (void)unused;
     pt_collect_t *c = &g_col;
     uint32_t d = (uint32_t)di;
-    if (++c->visits > PT_MAX_VISITS) {
-        c->truncated = true; /* budget spent: keep honest, stop working */
-        return;
-    }
     if (d == c->self_d)
         return;
     uint32_t cls = dr_u32(d, DR_CLASS);
+    /* Visit budget: past PT_MAX_VISITS only missiles are still considered
+     * (class test is cheap), up to twice the budget, so a crowded bucket
+     * cannot hide an incoming missile. */
+    if (++c->visits > PT_MAX_VISITS) {
+        if (!c->track_only)
+            c->truncated = true;
+        if (c->visits > 2u * PT_MAX_VISITS || !(cls & 1u))
+            return;
+    }
     if (cls & DR_CLASS_NONNET)
         return;
+    if (c->track_only && !(cls & 1u))
+        return;
     int32_t x = dr_s32(d, DR_X), y = dr_s32(d, DR_Y);
-    if (c->clip && (x < c->wx0 || x > c->wx1 || y < c->wy0 || y > c->wy1))
+    if (!obj_passes_filters(c, d, x, y))
         return;
-    /* Invisible objects: the renderer hides them (GAME2.c:30355) unless
-     * allied; we drop them unless the local player has infravision. Allies
-     * are dropped too (conservative; ally test needs sub_418C80). */
-    if (!c->infravision && (dr_u32(d, DR_ENCHANT) & ENCH_INVISIBLE_BIT))
-        return;
-    /* Same draw-visibility test the renderer applies (GAME2.c:30306, 30849):
-     * view polygon / line of sight from the last frame. */
-    if (c->clip && !sub_4984B0((int)d))
+    if (cls & 1u)
+        pt_mtrk_note(g_mtrk, PT_MTRK_SLOTS, dr_u32(d, DR_NETCODE), x, y, c->frame, g_tick);
+    if (c->track_only)
         return;
 
-    uint32_t tier = (cls & 4u) ? 0u : (cls & 2u) ? 1u : (cls & 1u) ? 2u : 3u;
-    int32_t dx = c->valid ? x - c->px : 0, dy = c->valid ? y - c->py : 0;
-    int64_t dd = (int64_t)dx * dx + (int64_t)dy * dy;
-    uint32_t d2 = dd > 0xFFFFFF ? 0xFFFFFFu : (uint32_t)dd;
-    uint32_t key = (tier << 24) | d2;
+    /* near missiles, players, monsters, other missiles, others; nearest
+     * first. No local player: no distances, so no missile counts as near. */
+    int32_t dx = x - c->px, dy = y - c->py;
+    int64_t dd = c->valid ? (int64_t)dx * dx + (int64_t)dy * dy : (int64_t)0xFFFFFF;
+    uint32_t key = pt_obj_sort_key(cls, dd);
 
     if (c->count < c->max) {
         g_cand[c->count].key = key;
@@ -545,16 +573,18 @@ static void collect_cb(int di, int unused)
  * (sub_475560 via sub_49AB00, GAME2.c:30826). Only buckets overlapping the
  * query rect are visited, so cost scales with nearby objects, not map size. */
 static uint32_t collect_objects(uint32_t self_d, const pt_view_t *v, uint32_t max, bool clip,
-                                bool *truncated)
+                                bool track_only, bool *truncated)
 {
     *truncated = false;
-    if (max == 0 || !rd_u32(OFF_DRAW_GRID) || rd_s32(OFF_DRAW_GRID_N) <= 0)
+    if ((max == 0 && !track_only) || !rd_u32(OFF_DRAW_GRID) || rd_s32(OFF_DRAW_GRID_N) <= 0)
         return 0;
 
     pt_collect_t *c = &g_col;
     memset(c, 0, sizeof(*c));
     c->self_d = self_d;
-    c->max = max;
+    c->max = track_only ? 0 : max;
+    c->track_only = track_only;
+    c->frame = rd_u32(OFF_CLIENT_FRAME);
     c->valid = v->valid;
     c->px = v->x;
     c->py = v->y;
@@ -573,10 +603,12 @@ static uint32_t collect_objects(uint32_t self_d, const pt_view_t *v, uint32_t ma
         q[0] -= vw; q[1] -= vh; q[2] += vw; q[3] += vh;
     }
     sub_49AB00(q, collect_cb, 0);
+    if (track_only)
+        return 0;
 
     uint32_t count = c->count;
     *truncated = c->truncated;
-    /* insertion sort: nearest players first */
+    /* insertion sort by key (pt_obj_sort_key) */
     for (uint32_t i = 1; i < count; ++i) {
         pt_cand_t cc = g_cand[i];
         uint32_t j = i;
@@ -733,7 +765,13 @@ static void fill_ext(uint32_t d, nox_pt_ext_t *e, uint32_t now_frame, pt_prev_t 
         e->ext_flags |= NOX_PT_XF_OWNED;
     }
     uint32_t df = now_frame - g_prev_frame;
-    if (g_n_prev && df > 0 && df < 64) {
+    const pt_mtrk_t *tr = (cls & 1u) ? pt_mtrk_find(g_mtrk, PT_MTRK_SLOTS, nc) : NULL;
+    if (tr && tr->vel) {
+        /* v5: per-pump missile tracker (valid from the first export) */
+        e->vx = clamp_s16(tr->vx16);
+        e->vy = clamp_s16(tr->vy16);
+        e->ext_flags |= NOX_PT_XF_VEL;
+    } else if (g_n_prev && df > 0 && df < 64) {
         for (uint32_t i = 0; i < g_n_prev; ++i) {
             if (g_prev[i].netcode == nc) {
                 e->vx = clamp_s16((x - g_prev[i].x) * 16 / (int32_t)df);
@@ -749,6 +787,17 @@ static void fill_ext(uint32_t d, nox_pt_ext_t *e, uint32_t now_frame, pt_prev_t 
         cur[*n_cur].y = y;
         ++*n_cur;
     }
+}
+
+/* Active spell set 0..4 (sub_45E180: spell-bar struct +200, client GUI
+ * state), or 0xFF when unknown. */
+static uint8_t read_spell_set(void)
+{
+    uint32_t bar = nox_read_u32(&byte_587000[OFF587_SPELLBAR]);
+    if (!bar)
+        return 0xFF;
+    uint8_t s = dr_u8(bar, SPELLBAR_CUR_SET);
+    return s < PT_SPELL_SETS ? s : 0xFF;
 }
 
 static void publish_state(uint16_t flags_in, uint32_t netcode, uint32_t self_d, const pt_view_t *v,
@@ -817,7 +866,7 @@ static void publish_state(uint16_t flags_in, uint32_t netcode, uint32_t self_d, 
         }
 
         bool trunc = false;
-        n_obj = export_objects ? collect_objects(self_d, v, g_cfg.max_objects, clip, &trunc) : 0;
+        n_obj = export_objects ? collect_objects(self_d, v, g_cfg.max_objects, clip, false, &trunc) : 0;
         if (trunc)
             flags |= NOX_PT_F_OBJ_TRUNCATED;
         uint8_t *o = g_txbuf + sizeof(h);
@@ -890,6 +939,38 @@ static void publish_state(uint16_t flags_in, uint32_t netcode, uint32_t self_d, 
     xb[0] = n_ext;
     xb[1] = (uint8_t)sizeof(nox_pt_ext_t);
 
+    /* v5 block: active spell set, then one entry per exported missile. */
+    uint8_t *vb = ne;
+    uint8_t n_mis = 0;
+    ne = vb + 4;
+    for (uint32_t i = 0; i < n_obj && n_mis < NOX_PT_MAX_MIS; ++i) {
+        uint32_t d = g_cand[i].ptr;
+        if (!(dr_u32(d, DR_CLASS) & 1u))
+            continue;
+        nox_pt_mis_t m;
+        memset(&m, 0, sizeof(m));
+        uint32_t nc = dr_u32(d, DR_NETCODE);
+        m.net_id = (uint16_t)nc;
+        m.subclass = dr_u32(d, DR_SUBCLASS);
+        const pt_mtrk_t *tr = pt_mtrk_find(g_mtrk, PT_MTRK_SLOTS, nc);
+        bool vel = tr && tr->vel;
+        uint16_t miss = 0xFFFF, tca = 0xFFFF; /* locals: no pointers into the packed struct (ARM11) */
+        if (self_d)
+            m.mis_flags = pt_mis_approach(dr_s32(d, DR_X) - v->x, dr_s32(d, DR_Y) - v->y,
+                                          vel ? tr->vx16 : 0, vel ? tr->vy16 : 0, vel, &miss, &tca);
+        m.miss_px = miss;
+        m.tca_f = tca;
+        if (vel)
+            m.mis_flags |= PT_MISF_TRACKED;
+        memcpy(ne, &m, sizeof(m));
+        ne += sizeof(m);
+        ++n_mis;
+    }
+    vb[0] = read_spell_set();
+    vb[1] = 0;
+    vb[2] = n_mis;
+    vb[3] = (uint8_t)sizeof(nox_pt_mis_t);
+
     struct sockaddr_in to;
     memset(&to, 0, sizeof(to));
     to.sin_family = AF_INET;
@@ -955,6 +1036,15 @@ static void taps_step(void)
     }
 }
 
+static bool spellset_tap_pending(void)
+{
+    for (int i = 0; i < PT_MAX_TAPS; ++i)
+        if (g_taps[i].used && g_taps[i].kind == TAP_KEY &&
+            (g_taps[i].code == SDL_SCANCODE_W || g_taps[i].code == SDL_SCANCODE_E))
+            return true;
+    return false;
+}
+
 static void drop_overrides(void)
 {
     g_move_on = false;
@@ -1016,6 +1106,19 @@ static void apply_cmd(const nox_pt_cmd_t *c, uint32_t now_ms)
     case NOX_PT_OP_STOP:
         drop_overrides();
         break;
+    case NOX_PT_OP_SPELLSET: {
+        /* W / E taps, exactly what ZL / ZR send (gamepad.c IN_L2 / IN_R2;
+         * nox.cfg W = PreviousSpellSet, E = NextSpellSet). Ignored while an
+         * earlier set change is still being tapped, since the current set is
+         * read when the command arrives. */
+        if (spellset_tap_pending())
+            break;
+        bool next;
+        int n = pt_spellset_steps(read_spell_set(), c->a, &next);
+        for (int k = 0; k < n; ++k)
+            tap_add(TAP_KEY, next ? SDL_SCANCODE_E : SDL_SCANCODE_W, (uint8_t)(3 * k), 1);
+        break;
+    }
     default:
         break;
     }
@@ -1160,10 +1263,19 @@ void nox_pt_frame(void)
     }
     g_was_cmds_active = cmds_active;
 
-    if ((g_tick % g_cfg.every) == 0)
+    bool export_objects = !is_mp || bots_ok;
+    bool clip = is_mp || g_cfg.clip_viewport;
+    if (!map_loaded)
+        pt_mtrk_reset(g_mtrk, PT_MTRK_SLOTS);
+    if ((g_tick % g_cfg.every) == 0) {
         /* MP without opt-in: header + local player only. In MP the viewport
          * and visibility clip is forced on regardless of cfg. */
-        publish_state(flags, netcode, self_d, &v, !is_mp || bots_ok, is_mp || g_cfg.clip_viewport);
+        publish_state(flags, netcode, self_d, &v, export_objects, clip);
+    } else if (map_loaded && export_objects && g_cfg.max_objects) {
+        /* v5: sample visible missiles between publishes for their velocity. */
+        bool unused;
+        collect_objects(self_d, &v, 0, clip, true, &unused);
+    }
 }
 
 void nox_pt_shutdown(void)

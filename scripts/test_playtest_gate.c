@@ -1,10 +1,11 @@
-/* Host unit test for port/3ds/playtest_gate.h + playtest_aim.h (issue #36).
+/* Host unit test for port/3ds/playtest_gate.h + playtest_aim.h + playtest_missile.h (issue #36).
  *   cc -std=c99 -Wall -Wextra -Iport/3ds scripts/test_playtest_gate.c -o /tmp/t && /tmp/t
  * Also run by: python3 -I scripts/playtest_hook_client.py --selftest */
 #include <stdio.h>
 #include <stdlib.h>
 #include "playtest_gate.h"
 #include "playtest_aim.h"
+#include "playtest_missile.h"
 
 static int fails;
 #define CHECK(c) do { if (!(c)) { printf("FAIL %s:%d %s\n", __FILE__, __LINE__, #c); ++fails; } } while (0)
@@ -118,6 +119,77 @@ int main(void)
         CHECK(x == 320 && y == 240);
         pt_aim_world_to_screen(0, 99999, 1000, 2000, 120, 120, 519, 359, &x, &y);
         CHECK(x == 120 && y == 359);                    /* clamped to viewport */
+    }
+
+    /* v5 missile tracker: velocity from the second sighting, independent of publishes. */
+    {
+        pt_mtrk_t t[4];
+        pt_mtrk_reset(t, 4);
+        pt_mtrk_note(t, 4, 77, 1000, 500, 100, 1);
+        const pt_mtrk_t *m = pt_mtrk_find(t, 4, 77);
+        CHECK(m && !m->vel);
+        pt_mtrk_note(t, 4, 77, 1000, 500, 100, 2);      /* same frame: ignored */
+        CHECK(!m->vel && m->tick == 1);
+        pt_mtrk_note(t, 4, 77, 912, 500, 102, 3);       /* -44 px/frame (bolt) */
+        CHECK(m->vel && m->vx16 == -44 * 16 && m->vy16 == 0);
+        pt_mtrk_note(t, 4, 77, 100, 100, 103, 4);       /* jump > 80 px/frame: reused net code */
+        CHECK(!m->vel && m->x == 100);
+        pt_mtrk_note(t, 4, 77, 104, 102, 105, 5);
+        CHECK(m->vel && m->vx16 == 32 && m->vy16 == 16);
+        /* full table: reuse stale, else the oldest slot */
+        pt_mtrk_note(t, 4, 1, 0, 0, 105, 5);
+        pt_mtrk_note(t, 4, 2, 0, 0, 105, 6);
+        pt_mtrk_note(t, 4, 3, 0, 0, 105, 7);
+        pt_mtrk_note(t, 4, 4, 0, 0, 105, 8);            /* evicts 77 (tick 5) */
+        CHECK(!pt_mtrk_find(t, 4, 77) && pt_mtrk_find(t, 4, 4));
+        pt_mtrk_note(t, 4, 5, 0, 0, 200, 60);           /* all stale: first slot reused */
+        CHECK(pt_mtrk_find(t, 4, 5) && pt_mtrk_find(t, 4, 5)->netcode == 5);
+        CHECK(!pt_mtrk_find(t, 4, 0));
+    }
+
+    /* closest approach / incoming */
+    {
+        uint16_t miss, tca;
+        /* 200 px east, flying west at 10 px/frame straight at us */
+        uint8_t f = pt_mis_approach(200, 0, -160, 0, true, &miss, &tca);
+        CHECK(f == (PT_MISF_NEAR | PT_MISF_APPROACHING | PT_MISF_INCOMING) && miss == 0 && tca == 20);
+        /* passes 100 px north of us: approaching, not incoming */
+        f = pt_mis_approach(200, -100, -160, 0, true, &miss, &tca);
+        CHECK(f == (PT_MISF_NEAR | PT_MISF_APPROACHING) && miss == 100 && tca == 20);
+        /* flying away */
+        f = pt_mis_approach(200, 0, 160, 0, true, &miss, &tca);
+        CHECK(f == PT_MISF_NEAR && miss == 0xFFFF && tca == 0xFFFF);
+        /* too slow: closest approach after 90 frames */
+        f = pt_mis_approach(300, 0, -16, 0, true, &miss, &tca);
+        CHECK(f == (PT_MISF_NEAR | PT_MISF_APPROACHING) && tca == 300);
+        /* no velocity, far */
+        f = pt_mis_approach(400, 0, 0, 0, false, &miss, &tca);
+        CHECK(f == 0 && miss == 0xFFFF);
+    }
+
+    /* export priority: near missile < player < monster < far missile < prop */
+    {
+        uint32_t near_m = pt_obj_sort_key(0x180001u, 250 * 250);
+        uint32_t pl = pt_obj_sort_key(0x280004u, 10);
+        uint32_t mon = pt_obj_sort_key(0x2u, 10);
+        uint32_t far_m = pt_obj_sort_key(0x180001u, 330 * 330);
+        uint32_t prop = pt_obj_sort_key(0x180000u, 0);
+        CHECK(near_m < pl && pl < mon && mon < far_m && far_m < prop);
+        CHECK(pt_obj_sort_key(4u, 5) < pt_obj_sort_key(4u, 6));
+        CHECK(pt_obj_sort_key(0x180001u, 0x7FFFFFFFLL) >> 24 == 3u);
+    }
+
+    /* spell-set stepping (ZL/ZR, 5 sets that wrap) */
+    {
+        bool next;
+        CHECK(pt_spellset_steps(0, 0, &next) == 0);
+        CHECK(pt_spellset_steps(0, 1, &next) == 1 && next);
+        CHECK(pt_spellset_steps(0, 4, &next) == 1 && !next);
+        CHECK(pt_spellset_steps(4, 0, &next) == 1 && next);
+        CHECK(pt_spellset_steps(1, 3, &next) == 2 && next);
+        CHECK(pt_spellset_steps(3, 1, &next) == 2 && !next);
+        CHECK(pt_spellset_steps(0xFF, 1, &next) == 0);
+        CHECK(pt_spellset_steps(1, 5, &next) == 0);
     }
 
     if (fails) {

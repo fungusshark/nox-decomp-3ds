@@ -60,7 +60,7 @@ via `nox_3ds_net_log` (`[pt] ...`), stays inert, and retries silently every 10 s
 logged once and otherwise ignored. In Solo, the hook pays the same 1 MB soc:u
 buffer the Multiplayer path uses. `socExit` still happens only at shutdown.
 
-## 3. Wire schema (state v4 / command v1, little-endian, packed)
+## 3. Wire schema (state v5 / command v1, little-endian, packed)
 
 The C `_Static_assert`s and the Python `*_SIZE` constants must agree. Run
 `python3 -I scripts/playtest_hook_client.py --selftest` after any change.
@@ -70,7 +70,7 @@ The C `_Static_assert`s and the Python `*_SIZE` constants must agree. Run
 | Off | Type | Field | Source |
 |---|---|---|---|
 | 0 | u32 | magic `"NXPT"` | |
-| 4 | u16 | version = 3 (1/2 from older builds) | |
+| 4 | u16 | version = 5 (1 to 4 from older builds) | |
 | 6 | u16 | header_size = 96 | |
 | 8 | u32 | seq | |
 | 12 | u32 | game_frame | `byte_5D4594[2598000]` |
@@ -170,9 +170,14 @@ on, an object must also be inside the camera rect **and** pass `sub_4984B0()`.
 That is the client's own draw-visibility test (view polygon / line of sight,
 read-only), and the renderer calls it before drawing each drawable
 (GAME2.c:30306). It uses the polygon from the last rendered frame. Clipping is
-**forced on in MP**; `clip_viewport=0` only works in Solo. The list is sorted players, then monsters, then missiles, then others,
-nearest first, and capped at `max_objects`. `obj_truncated` is set when more
-candidates passed the filters than `max_objects`, or the visit budget ran out.
+**forced on in MP**; `clip_viewport=0` only works in Solo. The list is sorted
+(v5) **missiles within 320 px of the local player** first, then players, then
+monsters, then other missiles, then others, nearest first inside each group,
+and capped at `max_objects` (`pt_obj_sort_key`, `port/3ds/playtest_missile.h`).
+Builds before v5 sorted all missiles after monsters. `obj_truncated` is set when
+more candidates passed the filters than `max_objects`, or the visit budget ran
+out. Past the budget, missiles are still considered (the class test is cheap)
+up to twice the budget, so a crowded bucket cannot hide an incoming missile.
 
 ### Names block (state v2 and v3)
 
@@ -231,7 +236,9 @@ only the local entry. Every field is client-received display state:
 - `vx`/`vy` (`ext_flags 0x01 vel`): world px per 16 game frames (Q4
   px/frame), computed by the hook from the client position of the same net id
   in the previous publish, divided by the `game_frame` delta (skipped when
-  the delta is 0 or 64+ frames). Not a server velocity.
+  the delta is 0 or 64+ frames). Not a server velocity. From v5, missiles
+  use the per-pump tracker instead (v5 block, `tracked`), so they usually have
+  a velocity in their first exported packet.
 - `ext_flags 0x02 owned`: the object is in this client's owned-unit table
   (`byte_5D4594[1200916]`, own summons and pets, opcode `0xDB` sent only to
   the owner). The client does not know the owner of other players' creatures
@@ -239,17 +246,72 @@ only the local entry. Every field is client-received display state:
 - `ext_flags 0x04 missile`: `class_flags & 1`. Network missile objects
   (Fireball, Magic Missile, Force of Nature ball, arrows, bolts and similar)
   are ordinary drawables, so they are in the object list with their
-  `type_id`, position and the hook velocity. They sort after players and
-  monsters, so raise `max_objects` if they get truncated. Beams and
+  `type_id`, position and the hook velocity. From v5, near missiles sort
+  first and their velocity comes from the per-pump tracker (see the v5
+  block). Beams and
   instant effects (Death Ray, lightning, Fist of Vengeance marker) arrive
   as effect packets, not drawables, so the hook does not see them (TODO).
 
-The Python client accepts v1 to v4. For v4 it adds `ext` to `player` and to
+The Python client accepts v1 to v5. For v4 it adds `ext` to `player` and to
 each object (`enchants` names, `enchant_mask`, `weapon_flags`,
 `armor_flags`, `vel` in px/frame, `is_missile`, `owned_by_me`). Older
-decoders reject v4 by version; `hookio.py` loads the client from
-`NOX_HOOK_CLIENT` or the first checkout it finds, so point it at a v4 client
-before running a v4 build.
+decoders reject newer versions by version; `hookio.py` loads the client from
+`NOX_HOOK_CLIENT` or the first checkout it finds, so point it at a v5 client
+before running a v5 build.
+
+### v5 block (state v5): spell set and missiles
+
+When `version` is 5 or more, the ext block is followed by:
+
+`u8 spell_set, u8 v5_flags (=0), u8 n_mis, u8 entry_size (=12)`, then `n_mis` x
+`{u16 net_id, u8 mis_flags, u8 reserved (=0), u32 subclass, u16 miss_px, u16 tca_f}`.
+
+A v5 packet ends after this block (a later version may append more after it).
+The v4 layout before it is unchanged, so a v4 decoder that skips the version
+check and stops at the ext block still reads a v5 packet.
+
+- `spell_set` (0..4, 0xFF = unknown): the active spell set, the "Spell Set #N"
+  on the bottom screen minus 1. It is client GUI state: the spell-bar struct
+  `*(byte_587000[133480])` (= `&byte_5D4594[1049220]`, GAME1.c:4592), byte
+  +200, read by `sub_45E180` and written by `sub_45E110` (Next/Previous set
+  `sub_4604F0`/`sub_460540`, the direct SelectSpellSetN control 44). Warriors
+  have the same bar (abilities), so the value is there for every class.
+- One entry per **exported** missile object (`class_flags & 1`), in object
+  order, at most 16. A closed MP gate exports no objects, so no entries.
+  - `subclass`: drawable +116, the thing.bin SUBCLASS mask the client copies
+    from its own thing table (`sub_44D0C0`, GAME2.c:310). For pure missiles,
+    bit 0 is MISSILE_COUNTERSPELL and bit 1 is MAGIC (the subclass Inversion
+    reflects; the server tests `+12 & 2` in `sub_52BE40`, GAME4.c:45711).
+    Examples: Magic (955), MagicMissile (704) and Pixie (672) are 0x3;
+    Fireball (693-697) and DeathBall (706) are 0x1. Arrows and bolts
+    (MISSILE+WEAPON) use the weapon subclass table. The Python client names
+    bits 0/1 `counterspell`/`magic`.
+  - `mis_flags`: `0x01 incoming` (approaching, and the straight-line closest
+    approach is within 64 px and 90 game frames), `0x02 near` (within 320 px),
+    `0x04 tracked` (the velocity below and the ext `vel` come from the tracker),
+    `0x08 approaching` (the distance is shrinking).
+  - `miss_px`, `tca_f`: closest approach distance (px) and the game frames
+    until it, from the tracker velocity with the local player assumed still.
+    0xFFFF when there is no velocity or the missile is moving away. Homing
+    missiles curve, so treat these as a hint.
+- **Tracker.** Every event pump (not only every `every`-th, which publishes),
+  the hook samples the missiles that pass the export filters (camera rect,
+  `sub_4984B0`, invisibility) into a 32-slot table, and derives the velocity
+  from the last two samples in different game frames. This is why a missile
+  has a velocity in its first exported packet. The drawable's own previous
+  position (+32/+36) is not used, because the client smoothing pass
+  (GAME2.c:9860) rewrites it and resets it on moves over 10 px.
+- **Owner: not exported.** The client drawable has no owner field. The server
+  object keeps owner and target in its missile data (`+748`, used by
+  `sub_52BE40`), which the hook must never read. A bot can still infer its own
+  missiles (they appear next to it right after a cast).
+
+Why v5 (issue #36, missiles "rare"): live v4 recordings showed missiles in the
+stream, but bots publish with `every=2` (about 4 game frames apart) and v4
+velocity needed the same net id in the previous *publish*. Crossbow bolts
+(about 44 px/frame) were exported a median of once, and 25 % of all missile
+samples (every first sighting) had no velocity. Without velocity the bots
+cannot tell an incoming missile, so Inversion and Counterspell never fired.
 
 ### Command packet (host to 3DS): 20 B
 
@@ -267,6 +329,7 @@ before running a v4 build.
 | 7 | MANA | | key C tap (QuickMana) |
 | 8 | JUMP | | MMB tap |
 | 9 | STOP | | drop latches, release held inputs |
+| 10 | SPELLSET | a = spell set 0..4 | W (previous) / E (next) key taps, the keys ZL / ZR send, the shorter way round the 5-set wrap; at most 2 taps 3 pumps apart. Needs v5 `spell_set` known; ignored while an earlier SPELLSET is still tapping |
 
 MOVE and AIM latch for `ttl_ms` (0 = 250 ms, max 2000 ms) after the last
 packet. If the host process dies, input stops within the TTL, and the human pad

@@ -11,6 +11,7 @@ Stdlib only. Wire layout must match port/3ds/playtest_hook_3ds.h exactly.
   python3 scripts/playtest_hook_client.py send --to 127.0.0.1:47801 aim --x 1200 --y 800
   python3 scripts/playtest_hook_client.py send --to 127.0.0.1:47801 slot 1
   python3 scripts/playtest_hook_client.py send --to 127.0.0.1:47801 attack
+  python3 scripts/playtest_hook_client.py send --to 127.0.0.1:47801 spellset 2   # set 0..4
 
   python3 -I scripts/playtest_hook_client.py --selftest
 """
@@ -24,7 +25,8 @@ import time
 
 MAGIC_STATE = 0x5450584E  # b"NXPT"
 MAGIC_CMD = 0x4350584E    # b"NXPC"
-VERSION = 4          # state packet (v2 = v1 + names block; v3 = v2 + obj class_id/hp_flags; v4 = v3 + ext block)
+VERSION = 5          # state packet (v2 = v1 + names block; v3 = v2 + obj class_id/hp_flags; v4 = v3 + ext block;
+                     # v5 = v4 + spell set / missile block)
 CMD_VERSION = 1      # command packet
 MAX_OBJECTS = 32
 NUM_ABILITIES = 5
@@ -38,6 +40,9 @@ CMD_FMT = "<IBBHIii"
 NAME_FMT = "<HB15s"
 NAME_BYTES = 15
 EXT_FMT = "<HBBIIIhh"
+MIS_FMT = "<HBBIHH"
+MAX_MIS = 16
+RECV_BUF = 4096     # max v5 packet is about 2.2 KB
 
 # Must equal the C _Static_asserts in playtest_hook_3ds.h.
 ABILITY_SIZE = 8
@@ -46,6 +51,7 @@ OBJ_SIZE = 20
 CMD_SIZE = 20
 NAME_SIZE = 18
 EXT_SIZE = 20
+MIS_SIZE = 12
 
 assert struct.calcsize(ABILITY_FMT) == ABILITY_SIZE
 assert struct.calcsize(HDR_FMT) == HDR_SIZE
@@ -53,6 +59,7 @@ assert struct.calcsize(OBJ_FMT) == OBJ_SIZE
 assert struct.calcsize(CMD_FMT) == CMD_SIZE
 assert struct.calcsize(NAME_FMT) == NAME_SIZE
 assert struct.calcsize(EXT_FMT) == EXT_SIZE
+assert struct.calcsize(MIS_FMT) == MIS_SIZE
 
 FLAGS = {
     0x0001: "menu_shell",
@@ -73,6 +80,7 @@ FLAGS = {
 OPS = {
     "nop": 0, "move": 1, "aim": 2, "aimdir": 3, "attack": 4,
     "slot": 5, "heal": 6, "mana": 7, "jump": 8, "stop": 9,
+    "spellset": 10,   # a = spell set 0..4 (W/E taps like ZL/ZR)
 }
 
 # playerInfo+2251. Warrior = 0 verified in Azahar; 1/2 from the decomp (class 2
@@ -95,6 +103,12 @@ ENCHANTS = {
     26: "shield", 27: "reflective_shield", 28: "charming", 29: "antimagic",
     30: "crown", 31: "sneak",
 }
+# v5 missile flags (port/3ds/playtest_missile.h PT_MISF_*).
+MIS_FLAGS = {0x01: "incoming", 0x02: "near", 0x04: "tracked", 0x08: "approaching"}
+# v5 missile subclass bits (drawable +116 = thing.bin SUBCLASS; the server's
+# Counterspell / Inversion use bit 0 / bit 1, GAME4.c:45711). Arrows and bolts
+# are MISSILE+WEAPON things whose subclass uses the weapon table instead.
+MIS_SUBCLASS = {0x1: "counterspell", 0x2: "magic"}
 ABILITY_NAMES = {1: "berserker_charge", 2: "war_cry", 3: "harpoon",
                  4: "tread_lightly", 5: "eye_of_the_wolf"}
 
@@ -131,11 +145,13 @@ def decode_state(data):
      cam_x, cam_y) = f[:21]
     if magic != MAGIC_STATE:
         raise ValueError("bad magic 0x%08X" % magic)
-    if version not in (1, 2, 3, 4) or header_size != HDR_SIZE or obj_size != OBJ_SIZE:
+    if version not in (1, 2, 3, 4, 5) or header_size != HDR_SIZE or obj_size != OBJ_SIZE:
         raise ValueError("version/size mismatch v=%d hdr=%d obj=%d" % (version, header_size, obj_size))
     base_len = HDR_SIZE + n_obj * OBJ_SIZE
     names = {}
     exts = []
+    mis = {}
+    spell_set = None
     if version == 1:
         if len(data) != base_len:
             raise ValueError("length %d != %d" % (len(data), base_len))
@@ -156,8 +172,30 @@ def decode_state(data):
             if len(data) < names_end + 2:
                 raise ValueError("v4 packet missing ext block")
             n_ext, ext_size = data[names_end], data[names_end + 1]
-            if ext_size < EXT_SIZE or len(data) != names_end + 2 + n_ext * ext_size:
+            ext_end = names_end + 2 + n_ext * ext_size
+            if ext_size < EXT_SIZE or len(data) < ext_end or (version == 4 and len(data) != ext_end):
                 raise ValueError("bad ext block n=%d size=%d len=%d" % (n_ext, ext_size, len(data)))
+            if version >= 5:
+                if len(data) < ext_end + 4:
+                    raise ValueError("v5 packet missing v5 block")
+                ss, _v5f, n_mis, mis_size = data[ext_end:ext_end + 4]
+                mis_end = ext_end + 4 + n_mis * mis_size
+                # v6+ may append after the v5 block; v5 itself must end here.
+                if mis_size < MIS_SIZE or len(data) < mis_end or (version == 5 and len(data) != mis_end):
+                    raise ValueError("bad v5 block n=%d size=%d len=%d" % (n_mis, mis_size, len(data)))
+                spell_set = None if ss == 0xFF else ss
+                for i in range(n_mis):
+                    m_net, m_f, _r, m_sub, m_miss, m_tca = struct.unpack_from(
+                        MIS_FMT, data, ext_end + 4 + i * mis_size)
+                    mis[m_net] = {
+                        "flags": [n for b, n in MIS_FLAGS.items() if m_f & b],
+                        "incoming": bool(m_f & 0x01), "near": bool(m_f & 0x02),
+                        "tracked": bool(m_f & 0x04), "approaching": bool(m_f & 0x08),
+                        "subclass": m_sub,
+                        "subclass_names": [n for b, n in MIS_SUBCLASS.items() if m_sub & b],
+                        "miss_px": None if m_miss == 0xFFFF else m_miss,
+                        "tca_f": None if m_tca == 0xFFFF else m_tca,
+                    }
             for i in range(n_ext):
                 (e_net, e_anim, e_xf, e_ench, e_wpn, e_arm, e_vx, e_vy) = struct.unpack_from(
                     EXT_FMT, data, names_end + 2 + i * ext_size)
@@ -208,6 +246,10 @@ def decode_state(data):
         for o, e in zip(objects, exts[k:]):
             if e["net_id"] == o["net_id"]:
                 o["ext"] = e
+    # v5: missile info by net id (exported missiles only).
+    for o in objects:
+        if o["class_flags"] & 1 and o["net_id"] in mis:
+            o["missile"] = mis[o["net_id"]]
 
     def opt(v, bad):
         return v if valid and v != bad else None
@@ -228,16 +270,19 @@ def decode_state(data):
             "facing": opt(facing, 0xFF), "anim": opt(anim, 0xFF),
             "abilities": abilities,
             "ext": self_ext,
+            "spell_set": spell_set,   # v5: active spell set 0..4 (None: unknown / older build)
         },
         "camera": {"x": cam_x, "y": cam_y},
         "objects": objects,
         "version": version,
+        "spell_set": spell_set,
     }
 
 
 def encode_state(seq=1, game_frame=0, hook_tick=0, flags=0, pclass=0xFF, net_id=0,
                  hp=0, hp_max=0, mp=0, mp_max=0, x=0, y=0, facing=0, anim=0,
-                 cam_x=0, cam_y=0, abilities=(), objects=(), names=(), exts=(), version=VERSION):
+                 cam_x=0, cam_y=0, abilities=(), objects=(), names=(), exts=(), version=VERSION,
+                 spell_set=0xFF, missiles=()):
     """Encoder mirroring publish_state() (used by --selftest and fakes)."""
     ab = list(abilities) + [(0, 0, 0, 0, 0, 0)] * (NUM_ABILITIES - len(abilities))
     ab_flat = []
@@ -269,7 +314,13 @@ def encode_state(seq=1, game_frame=0, hook_tick=0, flags=0, pclass=0xFF, net_id=
     if version < 4:
         return out
     # exts: (net_id, anim, ext_flags, enchant, weapon_flags, armor_flags, vx_q4, vy_q4)
-    return out + bytes([len(exts), EXT_SIZE]) + b"".join(struct.pack(EXT_FMT, *e) for e in exts)
+    out += bytes([len(exts), EXT_SIZE]) + b"".join(struct.pack(EXT_FMT, *e) for e in exts)
+    if version < 5:
+        return out
+    # missiles: (net_id, mis_flags, subclass, miss_px, tca_f)
+    mis = list(missiles)[:MAX_MIS]
+    return out + bytes([spell_set, 0, len(mis), MIS_SIZE]) + b"".join(
+        struct.pack(MIS_FMT, m[0], m[1], 0, m[2], m[3], m[4]) for m in mis)
 
 
 def encode_cmd(op, a=0, b=0, ttl_ms=0, seq=0):
@@ -299,7 +350,7 @@ class HookClient:
 
     def recv_state(self, timeout=None):
         self.sock.settimeout(timeout)
-        data, addr = self.sock.recvfrom(2048)
+        data, addr = self.sock.recvfrom(RECV_BUF)
         if self.target is None:
             self.target = (addr[0], self.cmd_port)
         return decode_state(data)
@@ -337,6 +388,10 @@ def build_cmd(args):
             raise SystemExit("slot needs a number 1..5")
         a = int(v[0])
         b = 1 if args.self_cast else 0
+    elif op == "spellset":
+        if not v or not 0 <= int(v[0]) <= 4:
+            raise SystemExit("spellset needs a set 0..4")
+        a = int(v[0])
     return encode_cmd(op, a, b, args.ttl, 0)
 
 
@@ -373,7 +428,7 @@ def selftest():
                        exts=[(42, 1, 0x09, (1 << 26) | (1 << 9), 0x2, 0x41, 32, -8),
                              (17, 3, 0x08, 1 << 27, 0x80, 0, 0, 0),
                              (900, 0, 0x03, 0, 0, 0, -16, 0),
-                             (18, 7, 0x00, 0, 0, 0, 0, 0)])
+                             (18, 7, 0x00, 0, 0, 0, 0, 0)], version=4)
     assert len(pkt) == HDR_SIZE + 3 * OBJ_SIZE + 2 + 2 * NAME_SIZE + 2 + 4 * EXT_SIZE, len(pkt)
     assert pkt[6:8] == struct.pack("<H", HDR_SIZE) and pkt[4] == 4
     st = decode_state(pkt)
@@ -410,6 +465,46 @@ def selftest():
     x0 = HDR_SIZE + 3 * OBJ_SIZE + 2 + 2 * NAME_SIZE
     assert pkt[x0:x0 + 2] == bytes([4, EXT_SIZE])
     assert struct.unpack_from("<I", pkt, x0 + 2 + 4)[0] == (1 << 26) | (1 << 9)  # enchant offset
+    assert st["spell_set"] is None and p["spell_set"] is None and "missile" not in o[0]
+    # v4 packet with trailing bytes is rejected (v4 ends at the ext block).
+    try:
+        decode_state(pkt + b"\0\0\0\0")
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("v4 trailing bytes accepted")
+    # v5: spell set + missile block (missile objects only, by net id).
+    mobjs = objects + [(700, 704, 0x180001, 2148, -1, 0, 0xFF, 0xFF, 0),
+                       (701, 531, 0x5200001, 1900, 0, 0, 0xFF, 0xFF, 0)]
+    mexts = [(42, 1, 0x09, 0, 0x2, 0x41, 0, 0), (17, 3, 0x08, 0, 0x80, 0, 0, 0),
+             (900, 0, 0x03, 0, 0, 0, 0, 0), (18, 7, 0, 0, 0, 0, 0, 0),
+             (700, 0, 0x05, 0, 0, 0, -160, 0), (701, 0, 0x04, 0, 0, 0, 0, 0)]
+    p5 = encode_state(seq=8, flags=0x0226, net_id=42, x=2048, y=-1, objects=mobjs,
+                      names=[(42, "Jack 3")], exts=mexts, spell_set=3,
+                      missiles=[(700, 0x0F, 0x3, 0, 10), (701, 0x02, 0x10, 0xFFFF, 0xFFFF)])
+    assert p5[4] == 5 and len(p5) == (HDR_SIZE + 5 * OBJ_SIZE + 2 + NAME_SIZE + 2 + 6 * EXT_SIZE
+                                      + 4 + 2 * MIS_SIZE), len(p5)
+    s5 = decode_state(p5)
+    assert s5["version"] == 5 and s5["spell_set"] == 3 and s5["player"]["spell_set"] == 3
+    m0 = s5["objects"][3]["missile"]
+    assert m0["incoming"] and m0["tracked"] and m0["near"] and m0["approaching"]
+    assert m0["subclass_names"] == ["counterspell", "magic"] and m0["miss_px"] == 0 and m0["tca_f"] == 10
+    assert s5["objects"][3]["ext"]["vel"] == (-10.0, 0.0)
+    m1 = s5["objects"][4]["missile"]
+    assert m1["flags"] == ["near"] and m1["miss_px"] is None and m1["tca_f"] is None
+    assert "missile" not in s5["objects"][0]
+    x5 = len(p5) - 4 - 2 * MIS_SIZE
+    assert p5[x5:x5 + 4] == bytes([3, 0, 2, MIS_SIZE])
+    assert struct.unpack_from("<I", p5, x5 + 4 + 4)[0] == 0x3        # subclass offset
+    assert decode_state(encode_state(flags=0x0006, version=5))["spell_set"] is None   # 0xFF = unknown
+    for bad in (p5[:-1], p5 + b"\0"):
+        try:
+            decode_state(bad)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("bad v5 packet accepted")
+    assert decode_cmd(encode_cmd("spellset", 4)) == {"op": 10, "ttl_ms": 0, "seq": 0, "a": 4, "b": 0}
     # v3 packets (no ext block) still decode.
     v3 = decode_state(encode_state(flags=0x0026, objects=objects[:1], names=[(17, "x")],
                                    version=3))
@@ -491,7 +586,7 @@ def main(argv=None):
         s.bind((args.bind, args.port))
         n = 0
         while True:
-            data, addr = s.recvfrom(2048)
+            data, addr = s.recvfrom(RECV_BUF)
             try:
                 st = decode_state(data)
             except ValueError as e:
