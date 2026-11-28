@@ -13263,6 +13263,14 @@ void sub_40EA70()
   while ( v0 < 128 );
 }
 
+#ifdef __3DS__
+/* Keep outgoing UDP payloads below the ~1472-byte 802.11/Ethernet MTU to avoid
+ * IP fragmentation drops over 3DS 2.4 GHz Wi-Fi (original PC cap: 0x7F0 = 2032). */
+#define NOX_NET_MAX_PACKET_PAYLOAD 1400u
+#else
+#define NOX_NET_MAX_PACKET_PAYLOAD 0x7F0u
+#endif
+
 //----- (0040EAC0) --------------------------------------------------------
 BOOL __cdecl sub_40EAC0(int a1, int a2, int a3)
 {
@@ -13273,13 +13281,13 @@ BOOL __cdecl sub_40EAC0(int a1, int a2, int a3)
   {
     v3 = a1;
     v4 = sub_420BD0(*(_DWORD *)&byte_5D4594[4 * a1 + 210164]);
-    if ( (unsigned int)(v4 + a3 + sub_420BD0(*(_DWORD *)&byte_5D4594[4 * a1 + 210292])) > 0x7F0 )
+    if ( (unsigned int)(v4 + a3 + sub_420BD0(*(_DWORD *)&byte_5D4594[4 * a1 + 210292])) > NOX_NET_MAX_PACKET_PAYLOAD )
       return 0;
   }
   else
   {
     v3 = a1;
-    if ( (unsigned int)(a3 + sub_420BD0(*(_DWORD *)&byte_5D4594[4 * (a1 + 32 * a2) + 210036])) > 0x7F0 )
+    if ( (unsigned int)(a3 + sub_420BD0(*(_DWORD *)&byte_5D4594[4 * (a1 + 32 * a2) + 210036])) > NOX_NET_MAX_PACKET_PAYLOAD )
       return 0;
   }
   return sub_420BC0(*(FILE **)&byte_5D4594[4 * (v3 + 32 * a2) + 210036]) < 512;
@@ -13294,7 +13302,7 @@ BOOL __cdecl sub_40EB60(int a1, int a2, int a3)
 
   v3 = (int *)&byte_5D4594[4 * (a1 + 32 * a2) + 210036];
   v4 = sub_420BD0(*v3);
-  if ( (unsigned int)(a3 + v4 + sub_4DFB20()) <= 0x7F0 )
+  if ( (unsigned int)(a3 + v4 + sub_4DFB20()) <= NOX_NET_MAX_PACKET_PAYLOAD )
     result = sub_420BC0((FILE *)*v3) < 512;
   else
     result = 0;
@@ -13484,7 +13492,7 @@ BOOL __cdecl sub_40EEF0(int a1, int a2)
 {
   BOOL result; // eax
 
-  if ( (unsigned int)(a2 + sub_420BD0(*(_DWORD *)&byte_5D4594[4 * a1 + 210292])) <= 0x7F0 )
+  if ( (unsigned int)(a2 + sub_420BD0(*(_DWORD *)&byte_5D4594[4 * a1 + 210292])) <= NOX_NET_MAX_PACKET_PAYLOAD )
     result = sub_420BC0(*(FILE **)&byte_5D4594[4 * a1 + 210292]) < 512;
   else
     result = 0;
