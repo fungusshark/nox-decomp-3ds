@@ -49,8 +49,10 @@ extern "C" {
 #define NOX_3DS_BOT_BG_RGB555   ((uint16_t)((2u << 10) | (2u << 5) | 2u))
 
 /* C-Stick aiming geometry (in 640x384 Top Screen logical pixels; 1.6x physical) */
-#define NOX_3DS_AIM_CLOSE_RADIUS 24.0f /* ~15px physical tight radius around hero */
-#define NOX_3DS_FREE_AIM_SPEED   12.0f /* max px/frame when L ranged aim held */
+#define NOX_3DS_AIM_CLOSE_RADIUS    24.0f /* ~15px physical tight radius around hero */
+#define NOX_3DS_FREE_AIM_SPEED      18.0f /* max px/frame when L ranged aim held */
+#define NOX_3DS_AIM_FRICTION_MIN    0.42f /* min speed scale when reticle crosses hostile */
+#define NOX_3DS_AIM_FRICTION_RADIUS 34.0f /* world-px hostile friction bubble around reticle */
 
 /* =========================================================================
  * 2. Hardware Lifecycle, Paths & Diagnostics (platform_3ds.c)
@@ -218,6 +220,7 @@ int   nox_3ds_blit_scaled_16(const void *src_pixels, int sw_surf, int sh_surf, i
 #define NOX_3DS_SWBUF_BOTTOM    1  /* secondary 640x480 surface -> Bottom Screen (UI) */
 int  nox_3ds_swbuf_select(int target);   /* fast pointer swap, returns previous target */
 void nox_3ds_swbuf_begin_bottom(uint16_t clear_rgb555);
+void nox_3ds_swbuf_resolve_bottom_occlusion(void);
 void nox_3ds_swbuf_end_bottom(void);
 void nox_3ds_swbuf_invalidate_bottom(void);
 bool nox_3ds_swbuf_reuse_bottom(void);
@@ -298,11 +301,13 @@ void nox_3ds_ui_queue_scrollbar(int screen, int x, int y, int w, int h,
 #define NOX_3DS_KEY_TOUCH   (1u << 20)
 
 typedef struct {
-    float deadzone;     /* normalized C-Stick deadzone (0.0..0.9, default 0.14) */
-    float curve_exp;    /* non-linear exponent tuned for New 3DS nub (default 1.75) */
-    float sensitivity;  /* scalar multiplier (default 1.0) */
-    float close_radius; /* fixed close-aim radius around character (default 18.0 px) */
-    float free_speed;   /* max px/frame in L-held ranged free-aim (default 9.0 px/frame) */
+    float deadzone;        /* normalized C-Stick deadzone (0.0..0.9, default 0.14) */
+    float curve_exp;       /* non-linear exponent tuned for New 3DS nub (default 1.45) */
+    float sensitivity;     /* scalar multiplier (default 1.0) */
+    float close_radius;    /* fixed close-aim radius around character (default 24.0 px) */
+    float free_speed;      /* max px/frame in L-held ranged free-aim (default 18.0 px/frame) */
+    float friction_min;    /* min speed multiplier over hostile target (default 0.42; 1.0=off) */
+    float friction_radius; /* world-px hostile slowdown radius (default 34.0) */
 } nox_3ds_cstick_cfg_t;
 
 typedef struct {
@@ -338,6 +343,7 @@ bool nox_3ds_input_is_bottom_touch_frame(void);
 bool nox_3ds_input_is_bottom_touch_active(void);
 bool nox_3ds_input_is_ranged_aim_held(void);
 bool nox_3ds_input_is_cstick_or_r_active(void);
+bool nox_3ds_input_get_aim_lock(int *out_orient, int *out_x, int *out_y);
 bool nox_3ds_input_is_touch_move_active(void);
 bool nox_3ds_input_is_cpad_move_active(void);
 void nox_3ds_input_notify_bottom_ui_hit(bool hit_ui);

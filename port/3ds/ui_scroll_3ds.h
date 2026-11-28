@@ -54,6 +54,8 @@ void nox_3ds_ui_takeover_form_dialog(void *root_wnd);
 void nox_3ds_ui_takeover_servopts(void *root_wnd);
 void nox_3ds_ui_reflow_servopts_subpanel(void *panel_wnd);
 void nox_3ds_ui_anchor_servopts_dropdown(void *root_wnd, int dd_id, int btn_id);
+void nox_3ds_ui_takeover_advserv(void *root_wnd);
+void nox_3ds_ui_reflow_advserv_subpanel(void *sub_wnd);
 
 /* Register or update an overflowing static/description text region keyed by
  * widget pointer or fixed 32-bit key (e.g. Spellbook right pane 0x5350424Bu).

@@ -650,6 +650,17 @@ void nox_3ds_swbuf_begin_bottom(uint16_t clear_rgb555)
     sub_437290();
 }
 
+void nox_3ds_swbuf_resolve_bottom_occlusion(void)
+{
+    if (!g_3ds_bot_pass_open || !g_backbuffer_bot || !g_3ds_bot_swrows)
+        return;
+    int w = *(_DWORD *)&byte_5D4594[3801784];
+    int h = *(_DWORD *)&byte_5D4594[3801788];
+    if (w > g_backbuffer_bot->w) w = g_backbuffer_bot->w;
+    if (h > g_backbuffer_bot->h) h = g_backbuffer_bot->h;
+    nox_3ds_font_resolve_occlusion(NOX_3DS_SWBUF_BOTTOM, g_3ds_bot_swrows, w, h);
+}
+
 void nox_3ds_swbuf_end_bottom(void)
 {
     if (!g_3ds_bot_pass_open)

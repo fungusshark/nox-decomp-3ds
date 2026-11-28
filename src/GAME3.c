@@ -715,6 +715,9 @@ static int nox_3ds_listbox_item_gap(_DWORD *wnd)
     return 1;
   if ( nox_3ds_font_slot_from_ptr(wnd[59]) == 1 )
     return 1;
+  int wid = (int)wnd[0];
+  if ( wid == 1110 || wid == 1112 || wid == 1510 || wid == 10170 )
+    return 10; /* 12px line height + 10px gap = 22px per row for roomy checkbox tapping */
   /* Single-line listboxes (0x4000, e.g. Server List, Map/Rule/Player lists):
    * 12 logical px line height + 4 gap = 16 logical px = exact 8.0 physical px/row
    * (5px cap + 3 physical px breathing room).
@@ -20405,6 +20408,9 @@ int __cdecl sub_4BDC10(int *a1)
   sub_46A8C0(*(int *)&byte_5D4594[1316708]);
   sub_46B300(*(int *)&byte_5D4594[1316708], sub_4BDDA0);
   sub_46B500(*(int *)&byte_5D4594[1316708]);
+#ifdef __3DS__
+  nox_3ds_ui_takeover_advserv(*(_DWORD **)&byte_5D4594[1316708]);
+#endif
   return sub_4BDC70(a1);
 }
 
@@ -20449,6 +20455,9 @@ int sub_4BDD10()
       goto LABEL_6;
     case 1:
       *(_DWORD *)&byte_5D4594[1316712] = sub_453850(*(int *)&byte_5D4594[1316708]);
+#ifdef __3DS__
+      nox_3ds_ui_reflow_advserv_subpanel(*(_DWORD **)&byte_5D4594[1316712]);
+#endif
       return sub_46B500(*(int *)&byte_5D4594[1316712]);
     case 2:
       v1 = sub_4530C0(*(int *)&byte_5D4594[1316708], 0x1000000);
@@ -20459,8 +20468,14 @@ LABEL_6:
       *(_DWORD *)&byte_5D4594[1316712] = v1;
       break;
     default:
+#ifdef __3DS__
+      nox_3ds_ui_reflow_advserv_subpanel(*(_DWORD **)&byte_5D4594[1316712]);
+#endif
       return sub_46B500(*(int *)&byte_5D4594[1316712]);
   }
+#ifdef __3DS__
+  nox_3ds_ui_reflow_advserv_subpanel(*(_DWORD **)&byte_5D4594[1316712]);
+#endif
   return sub_46B500(*(int *)&byte_5D4594[1316712]);
 }
 

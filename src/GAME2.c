@@ -4895,6 +4895,10 @@ int __cdecl sub_453350(int a1, int a2)
   int xLeft; // [esp+4h] [ebp-8h]
   int yTop; // [esp+8h] [ebp-4h]
 
+#ifdef __3DS__
+  if ( nox_3ds_font_is_enabled() )
+    sub_453750();
+#endif
   sub_46AA60((_DWORD *)a1, &xLeft, &yTop);
   if ( (signed char)*(_BYTE *)(a1 + 4) >= 0 )
   {
@@ -5366,6 +5370,10 @@ int __cdecl sub_453B80(int a1, int a2)
   int xLeft; // [esp+4h] [ebp-8h]
   int yTop; // [esp+8h] [ebp-4h]
 
+#ifdef __3DS__
+  if ( nox_3ds_font_is_enabled() )
+    sub_454120();
+#endif
   sub_46AA60((_DWORD *)a1, &xLeft, &yTop);
   if ( (signed char)*(_BYTE *)(a1 + 4) >= 0 )
   {

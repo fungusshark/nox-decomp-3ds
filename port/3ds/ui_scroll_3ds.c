@@ -256,6 +256,12 @@ static void apply_listbox_scroll_px(uint32_t *lb, int scroll_px)
         return;
     int total_h = (int)(int32_t)v5[10];
     int view_h  = (int)((const int16_t *)v5)[26];
+    int wid     = (int)(int32_t)lb[0];
+    if (nox_3ds_font_is_enabled() && (wid == 1110 || wid == 1112 || wid == 1510)) {
+        /* Snap Spells/Class/Weapons/Armor lists to 22px row boundaries so
+         * fixed row checkboxes (1120..1133, 1520..1533) always align cleanly. */
+        scroll_px = ((scroll_px + 11) / 22) * 22;
+    }
     int clamped = clamp_scroll(scroll_px, total_h, view_h);
     ((int16_t *)v5)[27] = (int16_t)clamped;
 
@@ -2281,4 +2287,147 @@ void nox_3ds_ui_takeover_servopts(void *root_wnd)
 
     nox_3ds_ui_anchor_servopts_dropdown(w, 10120, 10119);
     nox_3ds_ui_anchor_servopts_dropdown(w, 10317, 10316);
+}
+
+void nox_3ds_ui_takeover_advserv(void *root_wnd)
+{
+    uint32_t *w = (uint32_t *)root_wnd;
+    if (!w || !nox_3ds_font_is_enabled())
+        return;
+
+    const int new_x = 8;
+    const int new_y = 4;
+    const int new_w = 624;
+    const int new_h = 472;
+
+    convert_to_stone_takeover_bg(w);
+    sub_46AB20(w, new_w, new_h);
+    sub_46A9B0(w, new_x, new_y);
+    sub_46A8C0((int)(uintptr_t)w);
+
+    /* Right sidebar (x = 468..610): Rule Files (10167), Spells (10164),
+     * Weapons (10165), Armor (10166), and Done (10148). */
+    const int tab_ids[4] = { 10167, 10164, 10165, 10166 };
+    for (int i = 0; i < 4; ++i) {
+        uint32_t *t = sub_46B0C0(w, tab_ids[i]);
+        if (!t) continue;
+        t[1] |= 0x20u;
+        sub_46A9B0(t, 468, 36 + i * 44);
+        sub_46AB20(t, 142, 30);
+    }
+
+    uint32_t *done_btn = sub_46B0C0(w, 10148);
+    if (done_btn) {
+        done_btn[1] |= 0x20u;
+        place_button_preserving_texture(done_btn, 468, 424, 142, 30, 120);
+    }
+}
+
+void nox_3ds_ui_reflow_advserv_subpanel(void *sub_wnd)
+{
+    uint32_t *s = (uint32_t *)sub_wnd;
+    if (!s || !nox_3ds_font_is_enabled())
+        return;
+
+    /* Host cleanly in the left/main 444x444 area of advserv (1316708) */
+    s[1] &= ~(0x80u | 0x1000u);
+    s[14] = (uint32_t)sub_4344A0(22, 18, 15);
+    s[16] = 0x80000000u;
+    sub_46A9B0(s, 14, 14);
+    sub_46AB20(s, 444, 444);
+
+    uint32_t *lb_spells = sub_46B0C0(s, 1110);
+    uint32_t *lb_class  = sub_46B0C0(s, 1112);
+    uint32_t *lb_gear   = sub_46B0C0(s, 1510);
+    uint32_t *lb_rules  = sub_46B0C0(s, 10170);
+
+    if (lb_spells && lb_class) {
+        /* Spells + Class tab (sub_453850): 14 roomy 22px rows + locked column sync */
+        lb_spells[1] |= 0x4000u;
+        lb_class[1]  |= 0x4000u;
+        sub_46A9B0(lb_spells, 36, 20);
+        sub_46AB20(lb_spells, 256, 324);
+        sub_46A9B0(lb_class, 294, 20);
+        sub_46AB20(lb_class, 114, 324);
+        reset_listbox_metrics(lb_spells);
+        reset_listbox_metrics(lb_class);
+        nox_3ds_ui_scroll_register_listbox_group(lb_spells, lb_class, NULL, NULL, NULL);
+
+        uint32_t *up = sub_46B0C0(s, 1113);
+        uint32_t *dn = sub_46B0C0(s, 1114);
+        if (up) sub_46A9B0(up, 414, 33);
+        if (dn) sub_46A9B0(dn, 414, 328);
+
+        for (int k = 0; k < 14; ++k) {
+            uint32_t *cb = sub_46B0C0(s, 1120 + k);
+            if (!cb) continue;
+            sub_46A9B0(cb, 8, 33 + k * 22);
+            sub_46AB20(cb, 24, 22);
+        }
+
+        uint32_t *en_all  = sub_46B0C0(s, 1115);
+        uint32_t *dis_all = sub_46B0C0(s, 1116);
+        if (en_all)  place_button_preserving_texture(en_all,  36,  372, 176, 30, 140);
+        if (dis_all) place_button_preserving_texture(dis_all, 232, 372, 176, 30, 140);
+    } else if (lb_gear) {
+        /* Weapons / Armor tab (sub_4530C0): 14 roomy 22px rows */
+        lb_gear[1] |= 0x4000u;
+        sub_46A9B0(lb_gear, 36, 20);
+        sub_46AB20(lb_gear, 372, 324);
+        reset_listbox_metrics(lb_gear);
+
+        uint32_t *up = sub_46B0C0(s, 1513);
+        uint32_t *dn = sub_46B0C0(s, 1514);
+        if (up) sub_46A9B0(up, 414, 33);
+        if (dn) sub_46A9B0(dn, 414, 328);
+
+        for (int k = 0; k < 14; ++k) {
+            uint32_t *cb = sub_46B0C0(s, 1520 + k);
+            if (!cb) continue;
+            sub_46A9B0(cb, 8, 33 + k * 22);
+            sub_46AB20(cb, 24, 22);
+        }
+
+        uint32_t *en_all  = sub_46B0C0(s, 1515);
+        uint32_t *dis_all = sub_46B0C0(s, 1516);
+        if (en_all)  place_button_preserving_texture(en_all,  36,  372, 176, 30, 140);
+        if (dis_all) place_button_preserving_texture(dis_all, 232, 372, 176, 30, 140);
+    } else if (lb_rules) {
+        /* Rule Files tab (sub_4CEBA0) */
+        lb_rules[1] |= 0x4000u;
+        sub_46A9B0(lb_rules, 14, 14);
+        sub_46AB20(lb_rules, 394, 268);
+        reset_listbox_metrics(lb_rules);
+
+        uint32_t *up  = sub_46B0C0(s, 10177);
+        uint32_t *dn  = sub_46B0C0(s, 10178);
+        uint32_t *sld = sub_46B0C0(s, 10179);
+        if (up)  sub_46A9B0(up,  412, 14);
+        if (sld) { sub_46A9B0(sld, 412, 32); sub_46AB20(sld, 16, 232); }
+        if (dn)  sub_46A9B0(dn,  412, 266);
+
+        uint32_t *eb = sub_46B0C0(s, 10176);
+        if (eb) {
+            int ow = (int)(int32_t)eb[2];
+            float esx = (ow > 0) ? (414.0f / (float)ow) : 1.0f;
+            if (esx < 1.0f) esx = 1.0f;
+            scale_editbox_field_width(eb, 414, esx);
+            sub_46A9B0(eb, 14, 294);
+            sub_46AB20(eb, 414, 28);
+        }
+
+        uint32_t *btns[5];
+        int bcnt = 0;
+        for (int bid = 10171; bid <= 10175; ++bid) {
+            uint32_t *b = sub_46B0C0(s, bid);
+            if (b) btns[bcnt++] = b;
+        }
+        for (int i = 0; i < bcnt; ++i) {
+            int row = i / 3;
+            int col = i % 3;
+            int bx = 14 + col * 140;
+            int by = 336 + row * 40;
+            place_button_preserving_texture(btns[i], bx, by, 132, 30, 120);
+        }
+    }
 }

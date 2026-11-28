@@ -209,6 +209,7 @@ static uint8_t        s_stock_w[FONT_SLOTS][FONT_GLYPH_COUNT];
 
 static queued_glyph_t s_queues[FONT_SCREENS][FONT_MAX_GLYPHS];
 static int            s_counts[FONT_SCREENS] = { 0, 0 };
+static int            s_resolved_upto[FONT_SCREENS] = { 0, 0 };
 
 #define UI_MAX_SCROLLBARS 24
 typedef struct {
@@ -514,6 +515,7 @@ void nox_3ds_font_clear_screen(int screen)
 {
     if (screen >= 0 && screen < FONT_SCREENS) {
         s_counts[screen] = 0;
+        s_resolved_upto[screen] = 0;
         s_sb_counts[screen] = 0;
     }
 }
@@ -522,6 +524,8 @@ void nox_3ds_font_clear_all(void)
 {
     s_counts[0] = 0;
     s_counts[1] = 0;
+    s_resolved_upto[0] = 0;
+    s_resolved_upto[1] = 0;
     s_sb_counts[0] = 0;
     s_sb_counts[1] = 0;
 }
@@ -796,9 +800,13 @@ void nox_3ds_font_resolve_occlusion(int screen, uint16_t **sw_rows, int sw_w, in
     if (screen < 0 || screen >= FONT_SCREENS || !sw_rows)
         return;
     int cnt = s_counts[screen];
+    int start = s_resolved_upto[screen];
+    if (start < 0) start = 0;
+    if (start >= cnt)
+        return;
     queued_glyph_t *arr = s_queues[screen];
 
-    for (int i = 0; i < cnt; ++i) {
+    for (int i = start; i < cnt; ++i) {
         queued_glyph_t *q = &arr[i];
         bool ok = false;
         if (q->probe0_x >= 0 && q->probe0_x < sw_w && q->probe0_y >= 0 && q->probe0_y < sw_h) {
@@ -812,13 +820,14 @@ void nox_3ds_font_resolve_occlusion(int screen, uint16_t **sw_rows, int sw_w, in
         q->visible = ok ? 1u : 0u;
     }
 
-    for (int i = 0; i < cnt; ++i) {
+    for (int i = start; i < cnt; ++i) {
         queued_glyph_t *q = &arr[i];
         if (q->probe0_x >= 0 && q->probe0_x < sw_w && q->probe0_y >= 0 && q->probe0_y < sw_h)
             sw_rows[q->probe0_y][q->probe0_x] &= 0x7FFFu;
         if (q->probe1_x >= 0 && q->probe1_x < sw_w && q->probe1_y >= 0 && q->probe1_y < sw_h)
             sw_rows[q->probe1_y][q->probe1_x] &= 0x7FFFu;
     }
+    s_resolved_upto[screen] = cnt;
 }
 
 static void draw_subrect_clipped(int ax_base, int ay_base, int gw, int gh,

@@ -53040,6 +53040,9 @@ LABEL_24:
         v28[3] = *(_DWORD *)&byte_5D4594[3807120];
         v28[8] = *(_DWORD *)&byte_5D4594[3805496];
         v28[9] = *(_DWORD *)&byte_5D4594[3807120];
+        /* Resolve UI text occlusion BEFORE menu particles draw so additive embers
+         * never clear bit-15 sentinels and cull native text characters behind them. */
+        nox_3ds_swbuf_resolve_bottom_occlusion();
         sub_431720(v28);
         {
           int want_bot_cursor = do_present && nox_3ds_input_is_bottom_touch_active();
@@ -53105,6 +53108,7 @@ LABEL_24:
         nox_3ds_set_top_render_active(true);
         sub_437180();
         v25 = (int *)sub_437250();
+        nox_3ds_swbuf_resolve_bottom_occlusion();
         sub_431720(v25);
 
         if ( do_present )
@@ -53307,11 +53311,15 @@ LABEL_24:
         v28[3] = *(_DWORD *)&byte_5D4594[3807120];
         v28[8] = *(_DWORD *)&byte_5D4594[3805496];
         v28[9] = *(_DWORD *)&byte_5D4594[3807120];
+        /* Resolve UI text occlusion BEFORE menu particles draw so additive embers
+         * never clear bit-15 sentinels and cull native text characters behind them. */
+        nox_3ds_swbuf_resolve_bottom_occlusion();
         sub_431720(v28);
       }
       else
       {
         v25 = (int *)sub_437250();
+        nox_3ds_swbuf_resolve_bottom_occlusion();
         sub_431720(v25);
       }
       if ( !(*(_DWORD *)&byte_5D4594[2650636] & 0x40000) || byte_5D4594[2650637] & 1 || *(_DWORD *)&byte_5D4594[815132] )
