@@ -18119,6 +18119,59 @@ char *__cdecl sub_413F90(const char *a1)
   return result;
 }
 
+#ifdef __3DS__
+/* Hierarchical 3-level __builtin_ctz free-slot bitset for non-FIFO static slab pools
+ * (up to 32 * 32 * 32 = 32,768 slots). Always allocates the lowest free physical slot
+ * index in O(1) (3 CLZ instructions, zero pointer chases), keeping drawableClass,
+ * ScreenParticles, Hit, VisitNodes, MsgListClass, etc. densely packed at the start of
+ * each slab. objectMemClass (sub_414400 FIFO) keeps use_bitset = 0 so network extent
+ * ID reuse delay is 100% unchanged. */
+#define NOX_SLAB_BITSET_MAX_SLOTS 32768
+
+typedef struct {
+  unsigned int raw[38];        /* 0x00..0x97: vanilla nox_alloc_class layout */
+  unsigned int use_bitset;
+  unsigned int stride;
+  unsigned int shift_k;
+  uint32_t     odd_inv;
+  unsigned int num_words;
+  unsigned int num_groups;
+  uint32_t     last_word_mask;
+  uint32_t     l0;
+  uint32_t     l1[32];
+  uint32_t    *l2;
+} nox_alloc_class_3ds_t;
+
+static inline uint32_t nox_slab_modinv_u32(uint32_t odd)
+{
+  uint32_t inv = 1u;
+  inv *= 2u - odd * inv;
+  inv *= 2u - odd * inv;
+  inv *= 2u - odd * inv;
+  inv *= 2u - odd * inv;
+  inv *= 2u - odd * inv;
+  return inv;
+}
+
+static void nox_slab_bitset_reset_all(nox_alloc_class_3ds_t *ac)
+{
+  unsigned int nw = ac->num_words;
+  unsigned int ng = ac->num_groups;
+  if ( nw > 1u )
+    memset(ac->l2, 0xFF, (nw - 1u) * sizeof(uint32_t));
+  ac->l2[nw - 1u] = ac->last_word_mask;
+
+  for ( unsigned int g = 0; g + 1u < ng; ++g )
+    ac->l1[g] = 0xFFFFFFFFu;
+  unsigned int rem_w = nw & 31u;
+  ac->l1[ng - 1u] = rem_w ? ((1u << rem_w) - 1u) : 0xFFFFFFFFu;
+  for ( unsigned int g = ng; g < 32u; ++g )
+    ac->l1[g] = 0u;
+
+  ac->l0 = (ng >= 32u) ? 0xFFFFFFFFu : ((1u << ng) - 1u);
+}
+#endif
+
 //----- (00413FE0) --------------------------------------------------------
 char *__cdecl sub_413FE0(const char *a1, int a2, int a3)
 {
@@ -18129,6 +18182,57 @@ char *__cdecl sub_413FE0(const char *a1, int a2, int a3)
   int v7; // edi
   char v9[80]; // [esp+10h] [ebp-50h]
 
+#ifdef __3DS__
+  if ( !a1 || a2 <= 0 || a3 <= 0 )
+    return 0;
+  v3 = (char *)calloc(1u, sizeof(nox_alloc_class_3ds_t));
+  if ( !v3 )
+    return 0;
+  strcpy(v3, a1);
+  nox_sprintf(v9, (const char *)&byte_587000[32556], a1);
+  v4 = calloc(a3, a2 + 16);
+  *((_DWORD *)v3 + 29) = (int)v4;
+  if ( !v4 )
+  {
+    free(v3);
+    return 0;
+  }
+  nox_alloc_class_3ds_t *ac = (nox_alloc_class_3ds_t *)v3;
+  if ( a3 <= NOX_SLAB_BITSET_MAX_SLOTS && strcmp(a1, "objectMemClass") != 0 )
+  {
+    unsigned int nw = ((unsigned int)a3 + 31u) >> 5;
+    uint32_t *l2 = (uint32_t *)malloc(nw * sizeof(uint32_t));
+    if ( l2 )
+    {
+      unsigned int stride = (unsigned int)(a2 + 16);
+      unsigned int k = (unsigned int)__builtin_ctz(stride);
+      unsigned int rem_b = (unsigned int)a3 & 31u;
+      ac->use_bitset = 1u;
+      ac->stride = stride;
+      ac->shift_k = k;
+      ac->odd_inv = nox_slab_modinv_u32(stride >> k);
+      ac->num_words = nw;
+      ac->num_groups = (nw + 31u) >> 5;
+      ac->last_word_mask = rem_b ? ((1u << rem_b) - 1u) : 0xFFFFFFFFu;
+      ac->l2 = l2;
+      nox_slab_bitset_reset_all(ac);
+    }
+  }
+  if ( !ac->use_bitset )
+  {
+    for ( i = 0; i < a3; ++i )
+    {
+      v6 = (_DWORD *)(*((_DWORD *)v3 + 29) + (a2 + 16) * i);
+      v7 = *((_DWORD *)v3 + 24);
+      *v6 = 0;
+      v6[2] = v7;
+      v6[1] = 0;
+      *((_DWORD *)v3 + 24) = (int)v6;
+      if ( !i )
+        *((_DWORD *)v3 + 25) = (int)v6;
+    }
+  }
+#else
   v3 = (char *)calloc(1u, 0x98u);
   if ( !v3 )
     return 0;
@@ -18155,6 +18259,7 @@ char *__cdecl sub_413FE0(const char *a1, int a2, int a3)
     if ( !i )
       *((_DWORD *)v3 + 25) = v6;
   }
+#endif
   *((_DWORD *)v3 + 22) = a2;
   *((_DWORD *)v3 + 23) = a3;
   *((_DWORD *)v3 + 36) = a3;
@@ -18184,6 +18289,11 @@ void __cdecl sub_414100(LPVOID lpMem)
   {
     if ( *((_DWORD *)lpMem + 30) )
       sub_414130(lpMem);
+#ifdef __3DS__
+    nox_alloc_class_3ds_t *ac = (nox_alloc_class_3ds_t *)lpMem;
+    if ( ac->l2 )
+      free(ac->l2);
+#endif
     free(*((LPVOID *)lpMem + 29));
     free(lpMem);
   }
@@ -18253,6 +18363,102 @@ int __cdecl sub_414190(_DWORD *a1)
   v1 = a1;
   if ( !a1 )
     return 0;
+#ifdef __3DS__
+  nox_alloc_class_3ds_t *ac = (nox_alloc_class_3ds_t *)a1;
+  if ( ac->use_bitset )
+  {
+    if ( ac->l0 )
+    {
+      unsigned int g = (unsigned int)__builtin_ctz(ac->l0);
+      unsigned int w = (g << 5) + (unsigned int)__builtin_ctz(ac->l1[g]);
+      uint32_t word = ac->l2[w];
+      unsigned int b = (unsigned int)__builtin_ctz(word);
+      unsigned int idx = (w << 5) + b;
+      word &= word - 1u;
+      ac->l2[w] = word;
+      if ( !word )
+      {
+        uint32_t gmask = ac->l1[g] & ~(1u << (w & 31u));
+        ac->l1[g] = gmask;
+        if ( !gmask )
+          ac->l0 &= ~(1u << g);
+      }
+      v20 = a1[29] + (int)(ac->stride * idx) + 16;
+    }
+    else
+    {
+      if ( !a1[26] )
+      {
+        if ( !a1[30] )
+          return 0;
+        v5 = malloc(a1[22] + 16);
+        v6 = a1[31] + 1;
+        a1[26] = (int)v5;
+        a1[31] = v6;
+        if ( !v5 )
+          return 0;
+        ++a1[36];
+        v5[2] = 0;
+        *(_DWORD *)(a1[26] + 12) = 0;
+        v7 = (_DWORD *)a1[26];
+        *v7 = 1;
+        v7[1] = 0;
+        a1[27] = a1[26];
+      }
+      v2 = a1[26];
+      v8 = *(_DWORD *)(v2 + 8);
+      v4 = (_DWORD *)(v2 + 8);
+      a1[26] = v8;
+      if ( !v8 )
+        a1[27] = 0;
+      v9 = a1[28];
+      *(_DWORD *)(v2 + 12) = 0;
+      *v4 = v9;
+      v10 = a1[28];
+      if ( v10 )
+        *(_DWORD *)(v10 + 12) = v2;
+      a1[28] = v2;
+      v20 = v2 + 16;
+    }
+    if ( v1[26] )
+    {
+      v11 = sub_416BB0();
+      if ( v11 != *((_QWORD *)v1 + 16) )
+      {
+        v12 = (_DWORD *)v1[26];
+        do
+        {
+          v13 = v12[2];
+          v14 = (_DWORD *)v12[2];
+          if ( v11 > *(_QWORD *)v12 )
+          {
+            v15 = v12[3];
+            if ( v15 )
+              *(_DWORD *)(v15 + 8) = v13;
+            else
+              v1[26] = v13;
+            v16 = v12[2];
+            if ( v16 )
+              *(_DWORD *)(v16 + 12) = v12[3];
+            else
+              v1[27] = v12[3];
+            --v1[31];
+            free(v12);
+          }
+          v12 = v14;
+        }
+        while ( v14 );
+        *((_QWORD *)v1 + 16) = v11;
+      }
+    }
+    v17 = v1[34];
+    v18 = v1[35] + 1;
+    v1[35] = v18;
+    if ( v18 > v17 )
+      v1[34] = v18;
+    return v20;
+  }
+#endif
   v2 = a1[24];
   if ( v2 )
   {
@@ -18360,6 +18566,38 @@ void __cdecl sub_414330(unsigned int *a1, _QWORD *a2)
   if ( a2 )
   {
     v2 = a2 - 2;
+#ifdef __3DS__
+    nox_alloc_class_3ds_t *ac = (nox_alloc_class_3ds_t *)a1;
+    if ( ac->use_bitset )
+    {
+      --a1[35];
+      if ( *(a2 - 2) )
+      {
+        sub_4143D0((int)a1, (int)a2);
+        if ( !a1[27] )
+          a1[27] = (unsigned int)v2;
+        v4 = a1[26];
+        *((_DWORD *)v2 + 3) = 0;
+        *((_DWORD *)v2 + 2) = v4;
+        a1[26] = (unsigned int)v2;
+        *v2 = sub_416BB0() + 10000;
+      }
+      else
+      {
+        uint32_t diff = (uint32_t)((uintptr_t)v2 - (uintptr_t)a1[29]);
+        unsigned int idx = (diff >> ac->shift_k) * ac->odd_inv;
+        if ( idx < a1[23] )
+        {
+          unsigned int w = idx >> 5;
+          unsigned int g = w >> 5;
+          ac->l2[w] |= (1u << (idx & 31u));
+          ac->l1[g] |= (1u << (w & 31u));
+          ac->l0    |= (1u << g);
+        }
+      }
+      return;
+    }
+#endif
     sub_4143D0((int)a1, (int)a2);
     --a1[35];
     if ( *(a2 - 2) )
@@ -18381,7 +18619,9 @@ void __cdecl sub_414330(unsigned int *a1, _QWORD *a2)
       *((_DWORD *)v2 + 2) = v3;
       a1[24] = (unsigned int)v2;
     }
+#ifndef __3DS__
     memset(a2, 0xACu, a1[22]);
+#endif
   }
 }
 
@@ -18445,7 +18685,9 @@ void __cdecl sub_414400(unsigned int *a1, _QWORD *a2)
         *(_DWORD *)(v3 + 8) = v2;
       a1[25] = (unsigned int)v2;
     }
+#ifndef __3DS__
     memset(a2, 0xACu, a1[22]);
+#endif
   }
 }
 
@@ -18469,6 +18711,18 @@ void __cdecl sub_4144D0(_DWORD *a1)
   {
     if ( a1[30] )
       sub_414130(a1);
+#ifdef __3DS__
+    nox_alloc_class_3ds_t *ac = (nox_alloc_class_3ds_t *)a1;
+    if ( ac->use_bitset )
+    {
+      nox_slab_bitset_reset_all(ac);
+      a1[28] = 0;
+      a1[26] = 0;
+      a1[27] = 0;
+      a1[35] = 0;
+      return;
+    }
+#endif
     *(_DWORD *)&byte_5D4594[252276] = a1[28];
     v1 = *(_DWORD *)&byte_5D4594[252276];
     if ( *(_DWORD *)&byte_5D4594[252276] )
@@ -18476,7 +18730,15 @@ void __cdecl sub_4144D0(_DWORD *a1)
       do
       {
         *(_DWORD *)&byte_5D4594[338300] = *(_DWORD *)(v1 + 8);
+#ifdef __3DS__
+        if ( a1[22] == 772 )
+        {
+          *(_DWORD *)(v1 + 16 + 40) = 0xACACACACu;
+          *(_DWORD *)(v1 + 16 + 16) = 0x20u;
+        }
+#else
         memset((void *)(v1 + 16), 0xACu, a1[22]);
+#endif
         v2 = a1[24];
         if ( !v2 )
           a1[25] = *(_DWORD *)&byte_5D4594[252276];
@@ -29299,6 +29561,16 @@ void __cdecl sub_420830(_DWORD *a1)
 //----- (00420890) --------------------------------------------------------
 _DWORD *__cdecl sub_420890(int a1, int a2)
 {
+#ifdef __3DS__
+  /* Lazily defer allocating the 16.5 KB MsgListClass slab until first push in sub_420940,
+   * saving ~1.03 MB of FCRAM across the 62 unused peer queues in Solo/Quest. */
+  _DWORD *v2 = (_DWORD *)calloc(1u, 0x1Cu);
+  if ( !v2 )
+    return 0;
+  v2[6] = a1;
+  *(_DWORD *)&byte_5D4594[534816] = a2;
+  return v2;
+#else
   _DWORD *v2; // esi
   _DWORD *result; // eax
   char *v4; // eax
@@ -29318,6 +29590,7 @@ _DWORD *__cdecl sub_420890(int a1, int a2)
   result = v2;
   *(_DWORD *)&byte_5D4594[534816] = a2;
   return result;
+#endif
 }
 
 //----- (004208F0) --------------------------------------------------------
@@ -29353,6 +29626,17 @@ int __cdecl sub_420940(int a1, int a2, int a3, int a4)
 
   //dprintf("len %d: %08X %08X", a3, ((_DWORD*)a2)[0], ((_DWORD*)a2)[1]);
 
+#ifdef __3DS__
+  if ( !*(_DWORD *)(a1 + 12) )
+  {
+    int cap = *(_DWORD *)(a1 + 24);
+    if ( cap <= 0 )
+      cap = 512;
+    *(_DWORD *)(a1 + 12) = (int)sub_413FE0((const char *)&byte_587000[60336], 16, cap);
+    if ( !*(_DWORD *)(a1 + 12) )
+      return 0;
+  }
+#endif
   v4 = sub_4142F0(*(_DWORD **)(a1 + 12));
   if ( !v4 )
     return 0;
@@ -41672,6 +41956,89 @@ LABEL_15:
 }
 // 42F660: using guessed type char var_10[16];
 
+#ifdef __3DS__
+typedef struct {
+  uint32_t hash;
+  int      idx;
+} nox_vidx_ht_entry_t;
+
+static nox_vidx_ht_entry_t *s_vidx_ht = 0;
+static unsigned int s_vidx_ht_cap = 0;
+static const char  *s_vidx_ht_base = 0;
+static int          s_vidx_ht_count = 0;
+
+static inline uint32_t nox_fnv1a_vidx(const char *s)
+{
+  uint32_t h = 2166136261u;
+  for ( const unsigned char *p = (const unsigned char *)s; *p; ++p )
+    h = (h ^ (uint32_t)*p) * 16777619u;
+  return h ? h : 1u;
+}
+
+static int nox_vidx_ht_find(const char *name)
+{
+  const char *base = *(const char **)&byte_5D4594[787156];
+  int count = *(int *)&byte_5D4594[787164];
+  if ( !base || count <= 0 )
+    return -1;
+
+  if ( base != s_vidx_ht_base || count != s_vidx_ht_count || !s_vidx_ht )
+  {
+    unsigned int need = 256u;
+    while ( need < (unsigned int)count * 2u )
+      need <<= 1;
+    if ( need != s_vidx_ht_cap || !s_vidx_ht )
+    {
+      nox_vidx_ht_entry_t *nt = (nox_vidx_ht_entry_t *)malloc(need * sizeof(nox_vidx_ht_entry_t));
+      if ( !nt )
+        return -2; /* fallback to linear scan */
+      if ( s_vidx_ht )
+        free(s_vidx_ht);
+      s_vidx_ht = nt;
+      s_vidx_ht_cap = need;
+    }
+    memset(s_vidx_ht, 0, s_vidx_ht_cap * sizeof(nox_vidx_ht_entry_t));
+    unsigned int mask = s_vidx_ht_cap - 1u;
+    for ( int idx = 0; idx < count; ++idx )
+    {
+      const char *rec_name = base + 104 * idx;
+      uint32_t h = nox_fnv1a_vidx(rec_name);
+      for ( unsigned int p = 0; p < s_vidx_ht_cap; ++p )
+      {
+        unsigned int slot = (h + p) & mask;
+        if ( !s_vidx_ht[slot].hash )
+        {
+          s_vidx_ht[slot].hash = h;
+          s_vidx_ht[slot].idx = idx;
+          break;
+        }
+        if ( s_vidx_ht[slot].hash == h && !strcmp(base + 104 * s_vidx_ht[slot].idx, rec_name) )
+          break; /* keep lowest index on duplicate names */
+      }
+    }
+    s_vidx_ht_base = base;
+    s_vidx_ht_count = count;
+  }
+
+  uint32_t h = nox_fnv1a_vidx(name);
+  unsigned int mask = s_vidx_ht_cap - 1u;
+  for ( unsigned int p = 0; p < s_vidx_ht_cap; ++p )
+  {
+    unsigned int slot = (h + p) & mask;
+    uint32_t sh = s_vidx_ht[slot].hash;
+    if ( !sh )
+      return -1;
+    if ( sh == h )
+    {
+      int ridx = s_vidx_ht[slot].idx;
+      if ( !strcmp(name, base + 104 * ridx) )
+        return ridx;
+    }
+  }
+  return -1;
+}
+#endif
+
 //----- (0042F970) --------------------------------------------------------
 char *__cdecl sub_42F970(const char *a1)
 {
@@ -41685,11 +42052,26 @@ char *__cdecl sub_42F970(const char *a1)
   v1 = 0;
   if ( *(int *)&byte_5D4594[787164] <= 0 )
     return 0;
+#ifdef __3DS__
+  v1 = nox_vidx_ht_find(a1);
+  if ( v1 == -1 )
+    return 0;
+  if ( v1 < 0 )
+  {
+    v1 = 0;
+    for ( i = *(const char **)&byte_5D4594[787156]; strcmp(a1, i); i += 104 )
+    {
+      if ( ++v1 >= *(int *)&byte_5D4594[787164] )
+        return 0;
+    }
+  }
+#else
   for ( i = *(const char **)&byte_5D4594[787156]; strcmp(a1, i); i += 104 )
   {
     if ( ++v1 >= *(int *)&byte_5D4594[787164] )
       return 0;
   }
+#endif
   v4 = *(_DWORD *)&byte_5D4594[787156] + 104 * v1;
   v5 = *(const char **)(v4 + 96);
   if ( v5 == (const char *)-1 )
@@ -41713,11 +42095,26 @@ char *__cdecl sub_42FA20(const char *a1)
   v1 = 0;
   if ( *(int *)&byte_5D4594[787164] <= 0 )
     return 0;
+#ifdef __3DS__
+  v1 = nox_vidx_ht_find(a1);
+  if ( v1 == -1 )
+    return 0;
+  if ( v1 < 0 )
+  {
+    v1 = 0;
+    for ( i = *(const char **)&byte_5D4594[787156]; strcmp(a1, i); i += 104 )
+    {
+      if ( ++v1 >= *(int *)&byte_5D4594[787164] )
+        return 0;
+    }
+  }
+#else
   for ( i = *(const char **)&byte_5D4594[787156]; strcmp(a1, i); i += 104 )
   {
     if ( ++v1 >= *(int *)&byte_5D4594[787164] )
       return 0;
   }
+#endif
   return (char *)(*(_DWORD *)&byte_5D4594[787156] + 104 * v1);
 }
 

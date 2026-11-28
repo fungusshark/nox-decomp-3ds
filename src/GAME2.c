@@ -9552,37 +9552,148 @@ BOOL __cdecl sub_45A1D0(int a1)
 }
 
 #ifdef __3DS__
-/* L1-friendly (2 KB) direct-mapped read-through caches for sub_45A6F0/sub_45A720
- * netcode lookups. Strictly evicted on drawable unlink/free (sub_45A4E0/sub_45A4B0)
- * and cleared on pool teardown (sub_45A200); netcode 0 is never cached. */
-static _DWORD *s_drw_cache_norm[256];
-static _DWORD *s_drw_cache_ext[256];
+/* Maintained 8,192-slot (64 KB) open-addressed net_code -> drawable* hash table
+ * for sub_45A6F0 (is_ext = 0) and sub_45A720 (is_ext = 1).
+ * Uses xorshift + Knuth multiplicative hash on top bits and Knuth Algorithm R
+ * backward-shift deletion so both hits (>256 Quest entities) and negative-lookup
+ * spawns (sub_48E970) resolve in O(1) with zero tombstones and zero list walks.
+ * Low 2 bits of 4-byte-aligned tagged_drw encode: bit 0 = is_ext, bit 1 = has_dup. */
+#define NOX_DRW_HT_BITS 13u
+#define NOX_DRW_HT_SIZE (1u << NOX_DRW_HT_BITS)
+#define NOX_DRW_HT_MASK (NOX_DRW_HT_SIZE - 1u)
 
-static inline unsigned int nox_drw_cache_idx(int netcode)
+typedef struct {
+  int key;
+  uintptr_t tagged_drw;
+} nox_drw_ht_entry_t;
+
+static nox_drw_ht_entry_t s_drw_ht[NOX_DRW_HT_SIZE];
+
+static inline unsigned int nox_drw_ht_hash(int netcode, unsigned int is_ext)
 {
-  unsigned int u = (unsigned int)netcode;
-  return (u ^ (u >> 8)) & 0xFFu;
+  uint32_t u = (uint32_t)netcode;
+  u ^= (u >> 16) ^ (is_ext ? 0x9E37u : 0u);
+  return (u * 2654435761u) >> (32u - NOX_DRW_HT_BITS);
 }
 
 static inline void nox_drw_cache_clear(void)
 {
-  memset(s_drw_cache_norm, 0, sizeof(s_drw_cache_norm));
-  memset(s_drw_cache_ext, 0, sizeof(s_drw_cache_ext));
+  memset(s_drw_ht, 0, sizeof(s_drw_ht));
 }
 
-static inline void nox_drw_cache_evict(_DWORD *drw)
+void nox_3ds_drw_register(_DWORD *drw)
 {
   if ( !drw )
     return;
   int nc = (int)drw[32];
-  if ( nc )
+  if ( !nc )
+    return;
+  unsigned int is_ext = (drw[28] & 0x20400000) ? 1u : 0u;
+  unsigned int idx = nox_drw_ht_hash(nc, is_ext);
+  for ( unsigned int probe = 0; probe < NOX_DRW_HT_SIZE; ++probe )
   {
-    unsigned int idx = nox_drw_cache_idx(nc);
-    if ( s_drw_cache_norm[idx] == drw )
-      s_drw_cache_norm[idx] = 0;
-    if ( s_drw_cache_ext[idx] == drw )
-      s_drw_cache_ext[idx] = 0;
+    unsigned int slot = (idx + probe) & NOX_DRW_HT_MASK;
+    uintptr_t td = s_drw_ht[slot].tagged_drw;
+    if ( !td )
+    {
+      s_drw_ht[slot].key = nc;
+      s_drw_ht[slot].tagged_drw = (uintptr_t)drw | (uintptr_t)is_ext;
+      return;
+    }
+    if ( s_drw_ht[slot].key == nc && (unsigned int)(td & 1u) == is_ext )
+    {
+      _DWORD *cur = (_DWORD *)(td & ~(uintptr_t)3u);
+      if ( cur != drw )
+        s_drw_ht[slot].tagged_drw = (uintptr_t)drw | (uintptr_t)is_ext | (uintptr_t)2u;
+      return;
+    }
   }
+}
+
+static void nox_drw_cache_evict_unlinked(_DWORD *drw)
+{
+  if ( !drw )
+    return;
+  int nc = (int)drw[32];
+  if ( !nc )
+    return;
+  unsigned int is_ext = (drw[28] & 0x20400000) ? 1u : 0u;
+  unsigned int idx = nox_drw_ht_hash(nc, is_ext);
+  for ( unsigned int probe = 0; probe < NOX_DRW_HT_SIZE; ++probe )
+  {
+    unsigned int slot = (idx + probe) & NOX_DRW_HT_MASK;
+    uintptr_t td = s_drw_ht[slot].tagged_drw;
+    if ( !td )
+      return;
+    if ( s_drw_ht[slot].key == nc && (unsigned int)(td & 1u) == is_ext )
+    {
+      _DWORD *cur = (_DWORD *)(td & ~(uintptr_t)3u);
+      if ( td & 2u )
+      {
+        /* Rare duplicate net_code in 1046572: drw is already unlinked, promote next match. */
+        _DWORD *first_match = 0;
+        unsigned int more_dups = 0;
+        for ( _DWORD *it = *(_DWORD **)&byte_5D4594[1046572]; it; it = (_DWORD *)it[92] )
+        {
+          unsigned int it_ext = (it[28] & 0x20400000) ? 1u : 0u;
+          if ( it_ext == is_ext && (int)it[32] == nc )
+          {
+            if ( !first_match )
+            {
+              first_match = it;
+            }
+            else
+            {
+              more_dups = 2u;
+              break;
+            }
+          }
+        }
+        if ( first_match )
+        {
+          s_drw_ht[slot].tagged_drw = (uintptr_t)first_match | (uintptr_t)is_ext | (uintptr_t)more_dups;
+          return;
+        }
+      }
+      else if ( cur != drw )
+      {
+        return;
+      }
+
+      /* Knuth Algorithm R backward-shift deletion (zero tombstones). */
+      unsigned int empty = slot;
+      unsigned int scan = (slot + 1u) & NOX_DRW_HT_MASK;
+      while ( s_drw_ht[scan].tagged_drw != 0 )
+      {
+        uintptr_t std = s_drw_ht[scan].tagged_drw;
+        unsigned int home = nox_drw_ht_hash(s_drw_ht[scan].key, (unsigned int)(std & 1u));
+        if ( ((scan - home) & NOX_DRW_HT_MASK) >= ((scan - empty) & NOX_DRW_HT_MASK) )
+        {
+          s_drw_ht[empty] = s_drw_ht[scan];
+          empty = scan;
+        }
+        scan = (scan + 1u) & NOX_DRW_HT_MASK;
+      }
+      s_drw_ht[empty].key = 0;
+      s_drw_ht[empty].tagged_drw = 0;
+      return;
+    }
+  }
+}
+
+static inline _DWORD *nox_drw_ht_lookup(int netcode, unsigned int is_ext)
+{
+  unsigned int idx = nox_drw_ht_hash(netcode, is_ext);
+  for ( unsigned int probe = 0; probe < NOX_DRW_HT_SIZE; ++probe )
+  {
+    unsigned int slot = (idx + probe) & NOX_DRW_HT_MASK;
+    uintptr_t td = s_drw_ht[slot].tagged_drw;
+    if ( !td )
+      return 0;
+    if ( s_drw_ht[slot].key == netcode && (unsigned int)(td & 1u) == is_ext )
+      return (_DWORD *)(td & ~(uintptr_t)3u);
+  }
+  return 0;
 }
 #endif
 
@@ -9715,9 +9826,6 @@ void __cdecl sub_45A480(int a1)
 //----- (0045A4B0) --------------------------------------------------------
 int __cdecl sub_45A4B0(_QWORD *a1)
 {
-#ifdef __3DS__
-  nox_drw_cache_evict((_DWORD *)a1);
-#endif
   sub_495B00((int)a1);
   sub_414330(*(unsigned int **)&byte_5D4594[1046592], a1);
   return --*(_DWORD *)&byte_5D4594[1046588];
@@ -9731,9 +9839,6 @@ int __cdecl sub_45A4E0(int a1)
   int v3; // eax
   int v4; // eax
 
-#ifdef __3DS__
-  nox_drw_cache_evict((_DWORD *)a1);
-#endif
   v1 = *(_DWORD *)(a1 + 372);
   if ( v1 )
     *(_DWORD *)(v1 + 368) = *(_DWORD *)(a1 + 368);
@@ -9742,6 +9847,9 @@ int __cdecl sub_45A4E0(int a1)
   v2 = *(_DWORD *)(a1 + 368);
   if ( v2 )
     *(_DWORD *)(v2 + 372) = *(_DWORD *)(a1 + 372);
+#ifdef __3DS__
+  nox_drw_cache_evict_unlinked((_DWORD *)a1);
+#endif
   sub_49A9B0(a1);
   sub_476F10(a1);
   if ( *(_DWORD *)(a1 + 120) & 0x10000 )
@@ -9852,20 +9960,7 @@ _DWORD *__cdecl sub_45A6F0(int a1)
     return 0;
 #ifdef __3DS__
   if ( a1 )
-  {
-    unsigned int idx = nox_drw_cache_idx(a1);
-    _DWORD *cached = s_drw_cache_norm[idx];
-    if ( cached && !(cached[28] & 0x20400000) && (int)cached[32] == a1 )
-      return cached;
-    while ( result[28] & 0x20400000 || (int)result[32] != a1 )
-    {
-      result = (_DWORD *)result[92];
-      if ( !result )
-        return 0;
-    }
-    s_drw_cache_norm[idx] = result;
-    return result;
-  }
+    return nox_drw_ht_lookup(a1, 0u);
 #endif
   while ( result[28] & 0x20400000 || result[32] != a1 )
   {
@@ -9886,20 +9981,7 @@ _DWORD *__cdecl sub_45A720(int a1)
     return 0;
 #ifdef __3DS__
   if ( a1 )
-  {
-    unsigned int idx = nox_drw_cache_idx(a1);
-    _DWORD *cached = s_drw_cache_ext[idx];
-    if ( cached && (cached[28] & 0x20400000) && (int)cached[32] == a1 )
-      return cached;
-    while ( !(result[28] & 0x20400000) || (int)result[32] != a1 )
-    {
-      result = (_DWORD *)result[92];
-      if ( !result )
-        return 0;
-    }
-    s_drw_cache_ext[idx] = result;
-    return result;
-  }
+    return nox_drw_ht_lookup(a1, 1u);
 #endif
   while ( !(result[28] & 0x20400000) || result[32] != a1 )
   {
@@ -49799,6 +49881,9 @@ _DWORD *__cdecl sub_48E970(int a1, unsigned int a2, int a3, int a4)
       return 0;
     }
     *(_DWORD *)(v8 + 128) = v5;
+#ifdef __3DS__
+    nox_3ds_drw_register((_DWORD *)v8);
+#endif
     if ( a1 == *(_DWORD *)&byte_5D4594[1200836]
       || a1 == *(_DWORD *)&byte_5D4594[1200840]
       || *(_DWORD *)(v8 + 112) & 0x10000000 )
