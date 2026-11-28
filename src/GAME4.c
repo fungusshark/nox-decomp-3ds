@@ -22705,6 +22705,11 @@ LABEL_20:
   return result;
 }
 
+#ifdef __3DS__
+extern int nox_3ds_lookup_script_id(int a1, int *out_found);
+extern void nox_3ds_invalidate_script_id_ht(void);
+#endif
+
 //----- (00511B60) --------------------------------------------------------
 int __cdecl sub_511B60(int a1)
 {
@@ -22721,9 +22726,19 @@ int __cdecl sub_511B60(int a1)
   }
   if ( a1 != -2 )
   {
+#ifdef __3DS__
+    if ( a1 != 0 )
+    {
+      int ht_done = 0;
+      int ht_res = nox_3ds_lookup_script_id(a1, &ht_done);
+      if ( ht_done )
+        return ht_res;
+    }
+#else
     result = sub_511C50(a1);
     if ( result )
       return result;
+#endif
     v2 = sub_4DA790();
     if ( v2 )
     {
@@ -22731,7 +22746,9 @@ int __cdecl sub_511B60(int a1)
       {
         if ( !(*(_BYTE *)(v2 + 16) & 0x20) && *(_DWORD *)(v2 + 44) == a1 )
         {
+#ifndef __3DS__
           sub_511D70(v2);
+#endif
           return v2;
         }
         v3 = *(_DWORD *)(v2 + 504);
@@ -22763,7 +22780,9 @@ LABEL_18:
           return result;
       }
     }
+#ifndef __3DS__
     sub_511D70(v3);
+#endif
     return v3;
   }
   result = *(_DWORD *)&byte_5D4594[3821968];
@@ -22925,6 +22944,10 @@ int sub_511E20()
   int result; // eax
   int v1; // esi
   int v2; // edi
+
+#ifdef __3DS__
+  nox_3ds_invalidate_script_id_ht();
+#endif
 
   result = *(_DWORD *)&byte_587000[237036];
   if ( !*(_DWORD *)&byte_587000[237036] )
