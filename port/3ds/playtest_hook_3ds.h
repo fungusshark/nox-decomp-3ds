@@ -24,7 +24,7 @@ extern "C" {
 /* Wire constants. Keep in sync with scripts/playtest_hook_client.py. */
 #define NOX_PT_MAGIC_STATE      0x5450584Eu /* bytes "NXPT" (little-endian u32) */
 #define NOX_PT_MAGIC_CMD        0x4350584Eu /* bytes "NXPC" */
-#define NOX_PT_VERSION          2u  /* state packet: v2 = v1 + trailing names block */
+#define NOX_PT_VERSION          3u  /* state packet: v2 = v1 + names block; v3 = v2 + obj hp_pct/class_id/hp_flags */
 #define NOX_PT_CMD_VERSION      1u  /* command packet */
 #define NOX_PT_MAX_NAMES        (NOX_PT_MAX_OBJECTS + 1u) /* exported players + local */
 #define NOX_PT_NAME_BYTES       15u /* UTF-8, NUL-padded, truncated on a char boundary */
@@ -96,9 +96,16 @@ typedef struct __attribute__((packed)) nox_pt_obj {
     uint32_t class_flags;   /* drawable +112 (4 player, 2 monster, 1 missile ...) */
     int32_t  x, y;          /* drawable +12/+16 world px */
     uint8_t  facing;        /* drawable +297 */
-    uint8_t  hp_pct;        /* 0xFF = unknown (TODO: ally HP% via sub_495150) */
-    uint16_t reserved;
+    uint8_t  hp_pct;        /* v3: 0..100 health bar the client draws, 0xFF = client has none */
+    uint8_t  class_id;      /* v3: players only, playerInfo+2251 (0 Warrior, 1 Wizard, 2 Conjurer), else 0xFF */
+    uint8_t  hp_flags;      /* v3: NOX_PT_HPF_* (v1/v2: reserved, always 0) */
 } nox_pt_obj_t;
+
+/* nox_pt_obj_t.hp_flags (v3). hp_pct comes only from values the client
+ * receives to draw a health bar; see docs/PLAYTEST_HOOK.md section 3. */
+#define NOX_PT_HPF_QUEST_TAG    0x01u /* player name-tag bar: playerInfo+2282 (opcode 0xC4/12, Quest only) */
+#define NOX_PT_HPF_UNIT_BAR     0x02u /* owned-unit bar: table byte_5D4594[1200916] (opcodes 0xDB/0xDD/0x41) */
+#define NOX_PT_HPF_POISONED     0x04u /* bar drawn in the poison colour */
 
 typedef struct __attribute__((packed)) nox_pt_cmd {
     uint32_t magic;         /* NOX_PT_MAGIC_CMD */

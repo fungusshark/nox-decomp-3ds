@@ -89,6 +89,16 @@ extern void nox_ctrl_inject_key_scancode(int sdl_scancode, int down);
 /* playerInfo fields */
 #define PI_CLASS              2251u     /* u8, GAME2.c:2214 */
 #define PI_FLAGS              3680u     /* u8, bit0 observer (GAME2.c:29138) */
+#define PI_HP_PCT             2282u     /* u8 0..100, client opcode 0xC4 sub 12 (GAME2.c:52755) */
+#define PI_POISON_BIT         (1u << 10) /* u32 +3680 bit10: alt bar colour (GAME3.c:16243) */
+#define GAMEFLAG_QUEST        4096       /* sub_40A5C0(0x1000): Quest; gates 0xC4/12 + tag bar */
+
+/* Client owned-unit health table (sub_495020): 32 x 16 B at [1200916]:
+ * +0 net code, +4 u8 poison colour, +6 u16 hp, +8 u16 hp_max, +12 active.
+ * Filled by opcodes 0xDB/0xDC (add/remove), 0xDD (hp, max), 0x41 (hp/2). */
+#define OFF_UNIT_HP_TABLE     1200916u
+#define UNIT_HP_SLOTS         32u
+#define UNIT_HP_STRIDE        16u
 
 /* drawable fields */
 #define DR_X                  12u
@@ -618,6 +628,54 @@ static bool append_name(uint8_t *dst, uint32_t netcode)
     return true;
 }
 
+/* Health bar and class for one exported object, from client-received data
+ * only (the same values the renderer draws):
+ *  - Players, Quest: playerInfo+2282, the percent sub_4B8EB0 draws beside
+ *    the name tag (GAME3.c:16243). The server sends it as 100*hp/max in
+ *    opcode 0xC4 sub 12 (sub_4D8670, GAME3.c:41455) only when flag 0x1000
+ *    (Quest) is set. Outside Quest the client never receives other players'
+ *    HP, so hp_pct stays 0xFF.
+ *  - Any object in the owned-unit table [1200916] (summons/pets the server
+ *    tracks for this client, sub_4D9250): cur/max as drawn by sub_4BC080
+ *    (GAME3.c:16855, 19103).
+ *  - class_id: playerInfo+2251 for player objects; the client gets it in the
+ *    opcode 0x2D player record (GAME2.c:50294, qmemcpy into +2185). */
+static void obj_health_class(uint32_t netcode, uint32_t class_flags, nox_pt_obj_t *ob)
+{
+    ob->hp_pct = 0xFF;
+    ob->class_id = 0xFF;
+    ob->hp_flags = 0;
+    if (class_flags & 4u) {
+        uint32_t pi = playerinfo_off_for(netcode);
+        if (pi) {
+            ob->class_id = byte_5D4594[pi + PI_CLASS];
+            if (sub_40A5C0(GAMEFLAG_QUEST)) {
+                uint8_t pct = byte_5D4594[pi + PI_HP_PCT];
+                ob->hp_pct = pct > 100 ? 100 : pct;
+                ob->hp_flags |= NOX_PT_HPF_QUEST_TAG;
+                if (rd_u32(pi + PI_FLAGS) & PI_POISON_BIT)
+                    ob->hp_flags |= NOX_PT_HPF_POISONED;
+                return;
+            }
+        }
+    }
+    for (uint32_t i = 0; i < UNIT_HP_SLOTS; ++i) {
+        uint32_t e = OFF_UNIT_HP_TABLE + UNIT_HP_STRIDE * i;
+        if (!rd_u32(e + 12) || rd_u32(e) != netcode)
+            continue;
+        uint32_t cur = nox_read_u16(&byte_5D4594[e + 6]);
+        uint32_t max = nox_read_u16(&byte_5D4594[e + 8]);
+        if (max) { /* sub_4BC080 draws nothing when max == 0 */
+            uint32_t pct = cur * 100u / max;
+            ob->hp_pct = (uint8_t)(pct > 100 ? 100 : pct);
+            ob->hp_flags |= NOX_PT_HPF_UNIT_BAR;
+            if (byte_5D4594[e + 4])
+                ob->hp_flags |= NOX_PT_HPF_POISONED;
+        }
+        return;
+    }
+}
+
 static void publish_state(uint16_t flags_in, uint32_t netcode, uint32_t self_d, const pt_view_t *v,
                           bool export_objects, bool clip)
 {
@@ -697,8 +755,7 @@ static void publish_state(uint16_t flags_in, uint32_t netcode, uint32_t self_d, 
             ob.x = dr_s32(d, DR_X);
             ob.y = dr_s32(d, DR_Y);
             ob.facing = dr_u8(d, DR_FACING);
-            ob.hp_pct = 0xFF; /* TODO(#36): ally HP% (0x41/0x42 -> sub_495150) */
-            ob.reserved = 0;
+            obj_health_class(dr_u32(d, DR_NETCODE), ob.class_flags, &ob);
             memcpy(o, &ob, sizeof(ob));
         }
     }

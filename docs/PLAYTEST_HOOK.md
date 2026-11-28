@@ -60,7 +60,7 @@ via `nox_3ds_net_log` (`[pt] ...`), stays inert, and retries silently every 10 s
 logged once and otherwise ignored. In Solo, the hook pays the same 1 MB soc:u
 buffer the Multiplayer path uses. `socExit` still happens only at shutdown.
 
-## 3. Wire schema (state v2 / command v1, little-endian, packed)
+## 3. Wire schema (state v3 / command v1, little-endian, packed)
 
 The C `_Static_assert`s and the Python `*_SIZE` constants must agree. Run
 `python3 -I scripts/playtest_hook_client.py --selftest` after any change.
@@ -70,7 +70,7 @@ The C `_Static_assert`s and the Python `*_SIZE` constants must agree. Run
 | Off | Type | Field | Source |
 |---|---|---|---|
 | 0 | u32 | magic `"NXPT"` | |
-| 4 | u16 | version = 1 | |
+| 4 | u16 | version = 3 (1/2 from older builds) | |
 | 6 | u16 | header_size = 96 | |
 | 8 | u32 | seq | |
 | 12 | u32 | game_frame | `byte_5D4594[2598000]` |
@@ -110,7 +110,45 @@ MP gate uses only `is_mp`), `0x20` player_valid (local drawable found; required 
 bots_ok, `0x200` cmds_active, `0x400` obj_truncated.
 
 Object (20 B): `u16 net_id (+128), u16 type_id (+108), u32 class_flags (+112),
-i32 x (+12), i32 y (+16), u8 facing (+297), u8 hp_pct (0xFF = unknown), u16 0`.
+i32 x (+12), i32 y (+16), u8 facing (+297), u8 hp_pct, u8 class_id, u8 hp_flags`.
+In v1/v2 the last two bytes were a reserved `u16 0`, and `hp_pct` was always 0xFF.
+
+**Object health and class (v3).** The hook exports only values the client
+receives in order to draw them. It never reads server state:
+
+- `hp_pct` (0..100, 0xFF = the client has no health value for this object):
+  - **Players in Quest** (`sub_40A5C0(0x1000)`): playerInfo+2282. This is the
+    percent `sub_4B8EB0` draws as the 48 px bar beside another player's name
+    tag (call at GAME3.c:16243, Quest only). The server sends
+    `100*hp/hp_max` (integer, floor) in opcode `0xC4` sub 12 (`sub_4D8670`,
+    GAME3.c:41455; client store GAME2.c:52755) on join and on HP change.
+    It is the server's exact HP **rounded down to 1%**, not exact HP.
+    `hp_flags 0x01 quest_tag`.
+  - **Players outside Quest** (deathmatch, CTF, and other modes): the server
+    never sends other players' HP, and the client draws no bar, so `hp_pct`
+    is 0xFF.
+  - **Owned units** (summons and pets the server tracks for this client):
+    the client table `byte_5D4594[1200916]` (32 x 16 B, `sub_495020`:
+    +0 net code, +4 poison colour, +6 hp, +8 hp_max, +12 active). Opcode `0xDB`
+    (`sub_4D9250`, sent only to the owner) adds an entry, `0xDC` removes it,
+    `0xDD` sets hp/max and `0x41` sets hp as `2*byte`. The renderer draws
+    `cur/max` with `sub_4BC080` (GAME3.c:16855, 19103). `hp_pct` is
+    `100*cur/max`, floor. `0x41` updates are 2 HP coarse.
+    `hp_flags 0x02 unit_bar`. Other monsters get 0xFF.
+  - `hp_flags 0x04 poisoned`: the bar uses the alternate colour (playerInfo
+    +3680 bit 10 for player tags, entry +4 for units; read from the renderer,
+    meaning UNVERIFIED).
+  - The HUD toggle (`sub_470A90`) only hides the tag bar. The hook exports the
+    value whether or not the HUD shows it, since the client has it either way.
+  - On a listen-server host, the host's playerInfo+2282 is only set if the
+    host's own client receives `0xC4/12` (UNVERIFIED).
+- `class_id` (players only, else 0xFF): playerInfo+2251 of the client player
+  table entry for the object's net code. The client gets it in the opcode
+  `0x2D` player record (GAME2.c:50294, `qmemcpy(+2185, pkt+3, 0x61)`, so it is
+  packet byte 69). The scoreboard also uses it (GAME1.c:34002). Values: 0 Warrior
+  (verified), 1 Wizard, 2 Conjurer. 1 and 2 are from the decomp (class 2 gates
+  the creature-book tab, GAME2.c:11437/11856) and the OpenNox enum. They are
+  not yet checked live.
 
 Objects come **only** from client-side drawables, which are the set the server
 chose to send. The hook does not walk the full list `byte_5D4594[1046572]`.
@@ -136,10 +174,10 @@ read-only), and the renderer calls it before drawing each drawable
 nearest first, and capped at `max_objects`. `obj_truncated` is set when more
 candidates passed the filters than `max_objects`, or the visit budget ran out.
 
-### Names block (state v2 only)
+### Names block (state v2 and v3)
 
-The 96 B header and 20 B objects keep the v1 layout. The header's `version`
-is 2, and the objects are followed by:
+The 96 B header and 20 B objects keep the v1 layout. When the header's
+`version` is 2 or more, the objects are followed by:
 
 `u8 n_names, u8 entry_size (=18)`, then `n_names` x `{u16 net_id, u8 len,
 char name[15]}`.
@@ -152,7 +190,10 @@ scoreboard and name tags use. The hook reads it with its own lookup, because
 boundary and NUL-padded. Surrogate pairs become `?`. The local player comes
 first (if known), then each exported player-class object. This means no other
 player's name is sent when object export is gated off. The Python client
-accepts v1 and v2, and adds `name` to `player` and to player objects. A
+accepts v1, v2 and v3, and adds `name` to `player` and to player objects. For v3
+it also adds `class_id`/`class` and `hp_src` (the names of the `hp_flags` bits) to objects. For
+v1/v2 these are `None`, because a reserved 0 must not read as Warrior. The
+v3 bump exists for this reason only: the byte layout is the same as v2. A
 decoder that only knows v1 can parse the base layout by ignoring `version` and
 any trailing bytes.
 
@@ -247,6 +288,10 @@ a bot is present.
   - `scripts/test_playtest_gate.c` unit-tests these cases on the host. It is
     run by `playtest_hook_client.py --selftest` when a C compiler is present.
   Nox server names are at most 15 chars, so the tag uses 9 of them.
+- Object `hp_pct`/`class_id` (v3) come only from client-received display data
+  (Quest name-tag bar percent, owned-unit bars, player-table class). They are
+  attached only to objects that are already exported, so a closed MP gate
+  sends none of them.
 - Without the tag, MP state-out sends the header and local player only
   (`n_obj = 0`). If the gate closes, all overrides drop
   and held keys are released.
@@ -301,7 +346,7 @@ Still unverified:
 - The `cd_remaining` countdown (no learned ability was available). SLOT/self-cast
   is not exercised yet.
 - Death (`hp_zero`, death `anim`) and `observer`: not reached.
-- Wizard/Conjurer class values. `class_flags` bit names other than 4 (player), 2 (monster/NPC) and
+- Wizard/Conjurer class values (decomp says 1/2, see section 3). `class_flags` bit names other than 4 (player), 2 (monster/NPC) and
   `0x100000` (static prop, observed).
 - Invisibility (bit 0) and infravision (bit 21).
 - Real-hardware frame cost. In the emulator, the FPS counter shows no
@@ -348,7 +393,8 @@ swamp item case could not be reproduced on the same map.
 - `[bot] ` player-name prefix: not done. The name lives in playerInfo+4704
   (wchar, GAME2.c:19544) and is chosen before join (character creation and
   the `.plr` load). The injection point in the join packet is still to be located.
-- Ally HP% for objects (`0x41/0x42` to `sub_495150`/`sub_49A650`); `hp_pct` is always 0xFF for now.
+- Verify v3 object `hp_pct` live: Quest co-op tag bar (`quest_tag`) and a
+  Conjurer summon (`unit_bar`); confirm Wizard = 1 and Conjurer = 2 for `class_id`.
 - Invisibility bit 0 / infravision bit 21 are read from renderer code; confirm them in a dump. Allow invisible allies once a client-only team test exists.
 - Session-name capture from the selected server-list row: confirm it in a live LAN join, and confirm that the row's +120 name matches the `0xB0` name.
 - Gear and inventory fields (playerInfo +4 / +2328).

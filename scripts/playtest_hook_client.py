@@ -24,7 +24,7 @@ import time
 
 MAGIC_STATE = 0x5450584E  # b"NXPT"
 MAGIC_CMD = 0x4350584E    # b"NXPC"
-VERSION = 2          # state packet (v2 = v1 base layout + trailing names block)
+VERSION = 3          # state packet (v2 = v1 + names block; v3 = v2 + obj class_id/hp_flags)
 CMD_VERSION = 1      # command packet
 MAX_OBJECTS = 32
 NUM_ABILITIES = 5
@@ -33,7 +33,7 @@ NUM_ABILITIES = 5
 ABILITY_FMT = "<BBBBHH"
 HDR_FMT_PREFIX = "<IHHIIIHBBIHHHHiiBBHii"
 HDR_FMT = HDR_FMT_PREFIX + ABILITY_FMT[1:] * NUM_ABILITIES
-OBJ_FMT = "<HHIiiBBH"
+OBJ_FMT = "<HHIiiBBBB"
 CMD_FMT = "<IBBHIii"
 NAME_FMT = "<HB15s"
 NAME_BYTES = 15
@@ -72,8 +72,11 @@ OPS = {
     "slot": 5, "heal": 6, "mana": 7, "jump": 8, "stop": 9,
 }
 
-# playerInfo+2251; mapping is the OpenNox convention (UNVERIFIED).
+# playerInfo+2251. Warrior = 0 verified in Azahar; 1/2 from the decomp (class 2
+# gates the creature book, GAME2.c:11437) and the OpenNox enum (UNVERIFIED live).
 CLASSES = {0: "warrior", 1: "wizard", 2: "conjurer"}
+# v3 object hp_flags: where hp_pct came from (both are bars the client draws).
+HP_FLAGS = {0x01: "quest_tag", 0x02: "unit_bar", 0x04: "poisoned"}
 ABILITY_NAMES = {1: "berserker_charge", 2: "war_cry", 3: "harpoon",
                  4: "tread_lightly", 5: "eye_of_the_wolf"}
 
@@ -110,7 +113,7 @@ def decode_state(data):
      cam_x, cam_y) = f[:21]
     if magic != MAGIC_STATE:
         raise ValueError("bad magic 0x%08X" % magic)
-    if version not in (1, 2) or header_size != HDR_SIZE or obj_size != OBJ_SIZE:
+    if version not in (1, 2, 3) or header_size != HDR_SIZE or obj_size != OBJ_SIZE:
         raise ValueError("version/size mismatch v=%d hdr=%d obj=%d" % (version, header_size, obj_size))
     base_len = HDR_SIZE + n_obj * OBJ_SIZE
     names = {}
@@ -119,7 +122,7 @@ def decode_state(data):
             raise ValueError("length %d != %d" % (len(data), base_len))
     else:
         if len(data) < base_len + 2:
-            raise ValueError("v2 packet missing names block")
+            raise ValueError("v%d packet missing names block" % version)
         n_names, entry_size = data[base_len], data[base_len + 1]
         if entry_size != NAME_SIZE or len(data) != base_len + 2 + n_names * NAME_SIZE:
             raise ValueError("bad names block n=%d size=%d len=%d" % (n_names, entry_size, len(data)))
@@ -138,13 +141,19 @@ def decode_state(data):
         })
     objects = []
     for i in range(n_obj):
-        o_net, o_type, o_cls, o_x, o_y, o_face, o_hp, _res = struct.unpack_from(
+        o_net, o_type, o_cls, o_x, o_y, o_face, o_hp, o_class, o_hpf = struct.unpack_from(
             OBJ_FMT, data, HDR_SIZE + i * OBJ_SIZE)
+        if version < 3:  # v1/v2: these bytes were reserved (0), not class 0
+            o_class, o_hpf = 0xFF, None
         objects.append({
             "net_id": o_net, "type_id": o_type, "class_flags": o_cls,
             "is_player": bool(o_cls & 4), "is_monster": bool(o_cls & 2),
             "x": o_x, "y": o_y, "facing": o_face,
             "hp_pct": None if o_hp == 0xFF else o_hp,
+            "hp_src": None if o_hpf is None else
+                      [n for b, n in HP_FLAGS.items() if o_hpf & b],
+            "class_id": None if o_class == 0xFF else o_class,
+            "class": CLASSES.get(o_class),
             "name": names.get(o_net) if o_cls & 4 else None,
         })
     valid = bool(flags & 0x0020)
@@ -186,7 +195,11 @@ def encode_state(seq=1, game_frame=0, hook_tick=0, flags=0, pclass=0xFF, net_id=
     hdr = struct.pack(HDR_FMT, MAGIC_STATE, version, HDR_SIZE, seq, game_frame, hook_tick,
                       flags, pclass, len(objs), net_id, hp, hp_max, mp, mp_max, x, y,
                       facing, anim, OBJ_SIZE, cam_x, cam_y, *ab_flat)
-    body = b"".join(struct.pack(OBJ_FMT, o[0], o[1], o[2], o[3], o[4], o[5], o[6], 0)
+    def obj_tail(o):  # (class_id, hp_flags); v1/v2 wrote 0, 0
+        if version < 3:
+            return (0, 0)
+        return (o[7] if len(o) > 7 else 0xFF, o[8] if len(o) > 8 else 0)
+    body = b"".join(struct.pack(OBJ_FMT, o[0], o[1], o[2], o[3], o[4], o[5], o[6], *obj_tail(o))
                     for o in objs)
     if version == 1:
         return hdr + body
@@ -294,13 +307,15 @@ def gate_selftest():
 def selftest():
     abilities = [(1, 1, 0, 1, 0, 300), (2, 0, 1, 2, 120, 300), (3, 0, 0, 1, 75, 150),
                  (4, 1, 0, 3, 0, 30), (5, 0, 0, 0, 0, 600)]
-    objects = [(17, 1234, 4, 100, -20, 3, 0xFF), (900, 77, 0x2000000, 5000, 6000, 0, 50)]
+    objects = [(17, 1234, 4, 100, -20, 3, 0xFF, 1, 0),
+               (900, 77, 0x2000000, 5000, 6000, 0, 50, 0xFF, 0x02),
+               (18, 1234, 4, 0, 0, 7, 37, 2, 0x05)]
     pkt = encode_state(seq=7, game_frame=123456, hook_tick=99, flags=0x0226, pclass=0,
                        net_id=42, hp=150, hp_max=150, mp=0, mp_max=0, x=2048, y=-1,
                        facing=6, anim=1, cam_x=1900, cam_y=-120, abilities=abilities,
                        objects=objects, names=[(42, "Jack 3"), (17, "Jäck-Wizard-Long-Name")])
-    assert len(pkt) == HDR_SIZE + 2 * OBJ_SIZE + 2 + 2 * NAME_SIZE, len(pkt)
-    assert pkt[6:8] == struct.pack("<H", HDR_SIZE) and pkt[4] == 2
+    assert len(pkt) == HDR_SIZE + 3 * OBJ_SIZE + 2 + 2 * NAME_SIZE, len(pkt)
+    assert pkt[6:8] == struct.pack("<H", HDR_SIZE) and pkt[4] == 3
     st = decode_state(pkt)
     assert st["seq"] == 7 and st["game_frame"] == 123456 and st["hook_tick"] == 99
     assert st["mode"] == "in_world" and "cmds_active" in st["flag_names"]
@@ -318,6 +333,18 @@ def selftest():
     assert (o[0]["net_id"], o[0]["type_id"], o[0]["is_player"], o[0]["x"], o[0]["y"],
             o[0]["hp_pct"]) == (17, 1234, True, 100, -20, None)
     assert (o[1]["class_flags"], o[1]["hp_pct"]) == (0x2000000, 50)
+    # v3 object tail: class_id at +18, hp_flags at +19 (hp_pct stays at +17).
+    assert (o[0]["class"], o[0]["class_id"], o[0]["hp_src"]) == ("wizard", 1, [])
+    assert (o[1]["class_id"], o[1]["hp_src"]) == (None, ["unit_bar"])
+    assert (o[2]["class"], o[2]["hp_pct"], o[2]["hp_src"]) == ("conjurer", 37,
+                                                               ["quest_tag", "poisoned"])
+    o2 = HDR_SIZE + 2 * OBJ_SIZE
+    assert (pkt[o2 + 17], pkt[o2 + 18], pkt[o2 + 19]) == (37, 2, 0x05)
+    # v2 packets: reserved bytes (0) must not decode as Warrior.
+    v2 = decode_state(encode_state(flags=0x0026, objects=objects[:1], names=[(17, "x")],
+                                   version=2))
+    assert v2["version"] == 2 and v2["objects"][0]["class_id"] is None
+    assert v2["objects"][0]["hp_src"] is None and v2["objects"][0]["name"] == "x"
     assert p["name"] == "Jack 3" and o[1]["name"] is None
     assert o[0]["name"] == "Jäck-Wizard-Lo"  # 15-byte UTF-8 cut ("ä" is 2 bytes)
     assert len(o[0]["name"].encode("utf-8")) <= NAME_BYTES
