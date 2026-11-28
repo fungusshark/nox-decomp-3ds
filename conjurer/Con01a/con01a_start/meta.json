@@ -1,0 +1,18 @@
+{
+ "name": "con01a_start",
+ "class": "conjurer",
+ "map": "Con01a",
+ "quest_stage": "Chapter 1 start (Village of Ix route), after Airship Captain dialog",
+ "how_reached": "New Solo game Conjurer -> name -> Accept -> Captain Goodbye -> Start -> Save/Load -> slot 3 -> Save",
+ "slot_dir": "SAVE0003",
+ "files": [
+  "SAVE0003/Con01a/Con01a.map",
+  "SAVE0003/Player.plr"
+ ],
+ "game_version": "v0.3 release (dist/v0.3/nox-v0.3.3dsx)",
+ "commit": "e99d724",
+ "emulator": "Azahar 2127.0.1 (isolated sdmc)",
+ "timestamp": "2026-11-27T16:59:11-0800",
+ "screenshot": "screenshot.png",
+ "restore": "copy SAVE0003/ into sdmc:/3ds/nox/save/SAVE0003/ then pause menu (Start) -> Save / Load -> pick the slot row -> Load"
+}

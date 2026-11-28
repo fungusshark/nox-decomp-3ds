@@ -1,0 +1,18 @@
+{
+ "name": "war01a_start",
+ "class": "warrior",
+ "map": "War01a",
+ "quest_stage": "Chapter 1 start, after Airship Captain dialog",
+ "how_reached": "New Solo game Warrior -> Accept -> Captain dialog Goodbye -> Start -> Save/Load -> slot 1 -> Save",
+ "slot_dir": "SAVE0001",
+ "files": [
+  "SAVE0001/Player.plr",
+  "SAVE0001/War01a/War01a.map"
+ ],
+ "game_version": "v0.3 release (dist/v0.3/nox-v0.3.3dsx)",
+ "commit": "e99d724",
+ "emulator": "Azahar 2127.0.1 (isolated sdmc)",
+ "timestamp": "2026-11-27T16:47:38-0800",
+ "screenshot": "screenshot.png",
+ "restore": "copy SAVE0001/ into sdmc:/3ds/nox/save/SAVE0001/ then pause menu (Start) -> Save / Load -> pick the slot row -> Load"
+}
