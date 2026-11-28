@@ -66,7 +66,14 @@ struct _REGKEY
 
 extern const char *progname;
 DWORD last_error;
+#if !defined(__3DS__) && (defined(__GNUC__) || defined(__clang__))
+__thread DWORD last_socket_error;
+#else
+/* On 3DS, last_socket_error remains a non-TLS symbol for ABI compatibility with
+ * net_loopback_3ds.c; net_3ds.c isolates any Core 2 worker thread via TLS/thread check
+ * so background socket work never clobbers Core 0's WSAGetLastError(). */
 DWORD last_socket_error;
+#endif
 void *handles[1024];
 
 // ---- NET logging helpers ----

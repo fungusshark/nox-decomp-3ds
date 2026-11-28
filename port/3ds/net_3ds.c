@@ -4,7 +4,7 @@
  * Owns all Winsock / POSIX compat* entry points remapped from src/windows.h
  * and routes cleanly between:
  *   - net_loopback_3ds.c (vFD 1024..1039): Solo Campaign & Solo Quest (zero socInit)
- *   - net_sockets_3ds.c  (vFD 2048..2079): Multiplayer menus / Direct IPv4 via soc:u
+ *   - net_sockets_3ds.c  (generation-tagged vFD >= 2048): Multiplayer via soc:u
  */
 #include "platform_3ds.h"
 #include "../../src/windows.h"
@@ -32,6 +32,7 @@
 #undef send
 #undef recv
 
+#include <3ds.h>
 #include <errno.h>
 #include <stdio.h>
 #include <string.h>
@@ -40,11 +41,32 @@
 
 extern DWORD last_socket_error;
 
-static nox_3ds_net_mode_t g_net_mode = NOX_3DS_NET_MODE_LOOPBACK;
+/* Isolate any libctru worker thread (threadGetCurrent() != NULL) from Core 0's
+ * last_socket_error so Core 2 DNS/socket activity never clobbers Core 0's
+ * WSAGetLastError() (e.g. WSAEWOULDBLOCK / WSAEADDRINUSE checks). */
+static __thread unsigned int s_worker_socket_error = 0u;
+
+static int g_net_mode = (int)NOX_3DS_NET_MODE_LOOPBACK;
+
+void nox_3ds_net_set_last_error(unsigned int wsa_err)
+{
+    if (threadGetCurrent() == NULL) {
+        last_socket_error = (DWORD)wsa_err;
+    } else {
+        s_worker_socket_error = wsa_err;
+    }
+}
+
+int nox_3ds_net_last_error(void)
+{
+    if (threadGetCurrent() == NULL)
+        return (int)last_socket_error;
+    return (int)s_worker_socket_error;
+}
 
 static const nox_3ds_net_ops_t *backend_for_mode(void)
 {
-    if (g_net_mode == NOX_3DS_NET_MODE_WIFI)
+    if ((nox_3ds_net_mode_t)__atomic_load_n(&g_net_mode, __ATOMIC_ACQUIRE) == NOX_3DS_NET_MODE_WIFI)
         return &g_nox_3ds_sockets_ops;
     return &g_nox_3ds_loopback_ops;
 }
@@ -56,7 +78,7 @@ static const nox_3ds_net_ops_t *backend_for_fd(int fd)
         return &g_nox_3ds_loopback_ops;
     }
     if (fd >= NOX_3DS_SOCKETS_FD_BASE &&
-        fd <  NOX_3DS_SOCKETS_FD_BASE + NOX_3DS_SOCKETS_FD_MAX) {
+        fd <  NOX_3DS_SOCKETS_VFD_END) {
         return &g_nox_3ds_sockets_ops;
     }
     return NULL;
@@ -64,7 +86,7 @@ static const nox_3ds_net_ops_t *backend_for_fd(int fd)
 
 void nox_3ds_net_init(void)
 {
-    g_net_mode = NOX_3DS_NET_MODE_LOOPBACK;
+    __atomic_store_n(&g_net_mode, (int)NOX_3DS_NET_MODE_LOOPBACK, __ATOMIC_RELEASE);
     g_nox_3ds_loopback_ops.init();
     nox_3ds_lobby_init();
     /* NOTE: g_nox_3ds_sockets_ops.init() and httpcInit() are intentionally NOT
@@ -77,14 +99,15 @@ void nox_3ds_net_shutdown(void)
     nox_3ds_lobby_shutdown();
     g_nox_3ds_sockets_ops.shutdown();
     g_nox_3ds_loopback_ops.shutdown();
-    g_net_mode = NOX_3DS_NET_MODE_LOOPBACK;
+    __atomic_store_n(&g_net_mode, (int)NOX_3DS_NET_MODE_LOOPBACK, __ATOMIC_RELEASE);
 }
 
 void nox_3ds_net_set_mode(nox_3ds_net_mode_t mode)
 {
-    if (g_net_mode == mode)
+    nox_3ds_net_mode_t cur = (nox_3ds_net_mode_t)__atomic_load_n(&g_net_mode, __ATOMIC_ACQUIRE);
+    if (cur == mode)
         return;
-    g_net_mode = mode;
+    __atomic_store_n(&g_net_mode, (int)mode, __ATOMIC_RELEASE);
     nox_3ds_lobby_on_mode_change(mode);
     printf("[net3ds] Transport mode -> %s\n",
            (mode == NOX_3DS_NET_MODE_WIFI) ? "WIFI (soc:u)" : "LOOPBACK (offline)");
@@ -92,7 +115,7 @@ void nox_3ds_net_set_mode(nox_3ds_net_mode_t mode)
 
 nox_3ds_net_mode_t nox_3ds_net_get_mode(void)
 {
-    return g_net_mode;
+    return (nox_3ds_net_mode_t)__atomic_load_n(&g_net_mode, __ATOMIC_ACQUIRE);
 }
 
 int nox_3ds_net_socket(int domain, int type, int protocol)
@@ -104,7 +127,7 @@ int nox_3ds_net_closesocket(int fd)
 {
     const nox_3ds_net_ops_t *ops = backend_for_fd(fd);
     if (!ops) {
-        last_socket_error = NOX_WSAENOTSOCK;
+        nox_3ds_net_set_last_error(NOX_WSAENOTSOCK);
         errno = EBADF;
         return -1;
     }
@@ -115,7 +138,7 @@ int nox_3ds_net_bind(int fd, const void *addr, unsigned int addrlen)
 {
     const nox_3ds_net_ops_t *ops = backend_for_fd(fd);
     if (!ops) {
-        last_socket_error = NOX_WSAENOTSOCK;
+        nox_3ds_net_set_last_error(NOX_WSAENOTSOCK);
         errno = EBADF;
         return -1;
     }
@@ -126,7 +149,7 @@ int nox_3ds_net_setsockopt(int fd, int level, int opt, const void *val, unsigned
 {
     const nox_3ds_net_ops_t *ops = backend_for_fd(fd);
     if (!ops) {
-        last_socket_error = NOX_WSAENOTSOCK;
+        nox_3ds_net_set_last_error(NOX_WSAENOTSOCK);
         errno = EBADF;
         return -1;
     }
@@ -137,7 +160,7 @@ int nox_3ds_net_ioctlsocket(int fd, long cmd, unsigned long *argp)
 {
     const nox_3ds_net_ops_t *ops = backend_for_fd(fd);
     if (!ops) {
-        last_socket_error = NOX_WSAENOTSOCK;
+        nox_3ds_net_set_last_error(NOX_WSAENOTSOCK);
         errno = EBADF;
         return -1;
     }
@@ -149,7 +172,7 @@ int nox_3ds_net_sendto(int fd, const void *buf, unsigned int len, int flags,
 {
     const nox_3ds_net_ops_t *ops = backend_for_fd(fd);
     if (!ops) {
-        last_socket_error = NOX_WSAENOTSOCK;
+        nox_3ds_net_set_last_error(NOX_WSAENOTSOCK);
         errno = EBADF;
         return -1;
     }
@@ -161,16 +184,11 @@ int nox_3ds_net_recvfrom(int fd, void *buf, unsigned int len, int flags,
 {
     const nox_3ds_net_ops_t *ops = backend_for_fd(fd);
     if (!ops) {
-        last_socket_error = NOX_WSAENOTSOCK;
+        nox_3ds_net_set_last_error(NOX_WSAENOTSOCK);
         errno = EBADF;
         return -1;
     }
     return ops->recvfrom(fd, buf, len, flags, from, fromlen);
-}
-
-int nox_3ds_net_last_error(void)
-{
-    return (int)last_socket_error;
 }
 
 /* =========================================================================
@@ -178,24 +196,25 @@ int nox_3ds_net_last_error(void)
  * ========================================================================= */
 int WINAPI compatWSAStartup(WORD wVersionRequested, struct WSAData *lpWSAData)
 {
+    nox_3ds_net_mode_t mode = nox_3ds_net_get_mode();
     if (lpWSAData) {
         memset(lpWSAData, 0, sizeof(*lpWSAData));
         lpWSAData->wVersion = wVersionRequested;
         lpWSAData->wHighVersion = 0x0202u;
         snprintf(lpWSAData->szDescription, sizeof(lpWSAData->szDescription),
-                 (g_net_mode == NOX_3DS_NET_MODE_WIFI) ? "Nox 3DS soc:u Wi-Fi" : "Nox 3DS Loopback");
+                 (mode == NOX_3DS_NET_MODE_WIFI) ? "Nox 3DS soc:u Wi-Fi" : "Nox 3DS Loopback");
         snprintf(lpWSAData->szSystemStatus, sizeof(lpWSAData->szSystemStatus), "Running");
-        lpWSAData->iMaxSockets = (g_net_mode == NOX_3DS_NET_MODE_WIFI)
+        lpWSAData->iMaxSockets = (mode == NOX_3DS_NET_MODE_WIFI)
                                  ? NOX_3DS_SOCKETS_FD_MAX : NOX_3DS_LOOPBACK_FD_MAX;
         lpWSAData->iMaxUdpDg = 2048u;
     }
-    last_socket_error = 0;
+    nox_3ds_net_set_last_error(0);
     return 0;
 }
 
 int WINAPI compatWSACleanup(void)
 {
-    last_socket_error = 0;
+    nox_3ds_net_set_last_error(0);
     return 0;
 }
 
@@ -267,7 +286,7 @@ int compatlisten(int sockfd, int backlog)
 {
     const nox_3ds_net_ops_t *ops = backend_for_fd(sockfd);
     if (!ops) {
-        last_socket_error = NOX_WSAENOTSOCK;
+        nox_3ds_net_set_last_error(NOX_WSAENOTSOCK);
         errno = EBADF;
         return -1;
     }
@@ -278,7 +297,7 @@ int compataccept(int sockfd, struct sockaddr *addr, socklen_t *addrlen)
 {
     const nox_3ds_net_ops_t *ops = backend_for_fd(sockfd);
     if (!ops) {
-        last_socket_error = NOX_WSAENOTSOCK;
+        nox_3ds_net_set_last_error(NOX_WSAENOTSOCK);
         errno = EBADF;
         return -1;
     }
@@ -293,7 +312,7 @@ int compatshutdown(int sockfd, int how)
 {
     const nox_3ds_net_ops_t *ops = backend_for_fd(sockfd);
     if (!ops) {
-        last_socket_error = NOX_WSAENOTSOCK;
+        nox_3ds_net_set_last_error(NOX_WSAENOTSOCK);
         errno = EBADF;
         return -1;
     }
@@ -304,7 +323,7 @@ ssize_t compatsend(int sockfd, const void *buf, size_t len, int flags)
 {
     const nox_3ds_net_ops_t *ops = backend_for_fd(sockfd);
     if (!ops) {
-        last_socket_error = NOX_WSAENOTSOCK;
+        nox_3ds_net_set_last_error(NOX_WSAENOTSOCK);
         errno = EBADF;
         return -1;
     }
@@ -315,7 +334,7 @@ ssize_t compatrecv(int sockfd, void *buf, size_t len, int flags)
 {
     const nox_3ds_net_ops_t *ops = backend_for_fd(sockfd);
     if (!ops) {
-        last_socket_error = NOX_WSAENOTSOCK;
+        nox_3ds_net_set_last_error(NOX_WSAENOTSOCK);
         errno = EBADF;
         return -1;
     }

@@ -71,13 +71,19 @@ typedef enum {
     NOX_3DS_GUI_NO_BG   = 2  /* Render all windows except MainBG.wnd (-> Bottom) */
 } nox_3ds_gui_filter_t;
 
+#if !defined(__cplusplus) && defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
+#define NOX_3DS_ATOMIC_BOOL _Atomic bool
+#else
+#define NOX_3DS_ATOMIC_BOOL volatile bool
+#endif
+
 typedef struct {
     bool     is_new_3ds;
     bool     romfs_mounted;
     bool     sdmc_root_ready;
     bool     dsp_audio_ready;     /* true if sdmc:/3ds/dspfirm.cdc present and ndspInit() OK */
-    bool     soc_ready;           /* true once lazy socInit() succeeded on Multiplayer entry */
-    bool     httpc_ready;         /* true once lazy httpcInit() succeeded for OpenNox lobby */
+    NOX_3DS_ATOMIC_BOOL soc_ready;   /* true once lazy socInit() succeeded on Multiplayer entry */
+    NOX_3DS_ATOMIC_BOOL httpc_ready; /* true once lazy httpcInit() succeeded for OpenNox lobby */
     bool     wide_stretch;        /* top screen: true = fill 400x240, false = preserve aspect (4:3 320x240) */
     bool     bottom_console_mode; /* true during boot before citro2d takes GFX_BOTTOM */
     bool     touch_to_aim;        /* false in dual-screen mode (touch is strict bottom UI) */
@@ -87,6 +93,10 @@ typedef struct {
     uint32_t linear_free_bytes;
     uint32_t heap_used_bytes;
 } nox_3ds_state_t;
+
+#if !defined(__cplusplus) && defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
+_Static_assert(sizeof(_Atomic bool) == sizeof(bool), "ABI mismatch on NOX_3DS_ATOMIC_BOOL");
+#endif
 
 bool     nox_3ds_init(void);             /* osSetSpeedupEnable(true), gfx, boot console, romfs, chdir */
 void     nox_3ds_console_detach(void);   /* hand GFX_BOTTOM from boot console to citro2d */
@@ -392,6 +402,9 @@ void     nox_3ds_movie_log(const char *fmt, ...);
 #define NOX_3DS_LOOPBACK_FD_MAX  16
 #define NOX_3DS_SOCKETS_FD_BASE  2048
 #define NOX_3DS_SOCKETS_FD_MAX   32
+#define NOX_3DS_SOCKETS_GEN_BITS 9
+#define NOX_3DS_SOCKETS_GEN_MAX  ((1 << NOX_3DS_SOCKETS_GEN_BITS) - 1)
+#define NOX_3DS_SOCKETS_VFD_END  (NOX_3DS_SOCKETS_FD_BASE + ((NOX_3DS_SOCKETS_GEN_MAX + 1) * NOX_3DS_SOCKETS_FD_MAX))
 
 typedef enum {
     NOX_3DS_NET_MODE_LOOPBACK = 0, /* Solo Campaign & Solo Quest (zero socInit, Airplane Mode OK) */
@@ -460,6 +473,7 @@ int                nox_3ds_net_sendto(int fd, const void *buf, unsigned int len,
 int                nox_3ds_net_recvfrom(int fd, void *buf, unsigned int len, int flags,
                                         void *from, unsigned int *fromlen);
 int                nox_3ds_net_last_error(void);
+void               nox_3ds_net_set_last_error(unsigned int wsa_err);
 
 /* =========================================================================
  * 6. Synchronization & ARM11 Alignment-Safe Helpers
