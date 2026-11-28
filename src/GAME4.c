@@ -17362,8 +17362,117 @@ int sub_50B510()
 }
 
 //----- (0050B520) --------------------------------------------------------
+#ifdef __3DS__
+static void nox_3ds_update_blocker_obj(int a1, uint32_t cls)
+{
+  char saved_shape[60];
+  if ( cls & 0x10000u )
+  {
+    memcpy(saved_shape, (const void *)(a1 + 172), 60);
+    int stype = *(_DWORD *)(a1 + 172);
+    if ( stype == 2 )
+    {
+      float r = *(const float *)&byte_587000[234176] + *(float *)(a1 + 176);
+      *(float *)(a1 + 176) = r;
+      *(float *)(a1 + 180) = r * r;
+    }
+    else if ( stype == 3 )
+    {
+      float pad2 = *(const float *)&byte_587000[234176] + *(const float *)&byte_587000[234176];
+      *(float *)(a1 + 184) += pad2;
+      *(float *)(a1 + 188) += pad2;
+      sub_428270((shape *)(a1 + 172));
+    }
+    sub_4E7290(a1);
+  }
+
+  int x0 = (int)(*(float *)(a1 + 232) * 0.043478262f);
+  int y0 = (int)(*(float *)(a1 + 236) * 0.043478262f);
+  int x1 = (int)(*(float *)(a1 + 240) * 0.043478262f);
+  int y1 = (int)(*(float *)(a1 + 244) * 0.043478262f);
+  if ( x0 < 0 ) x0 = 0;
+  if ( y0 < 0 ) y0 = 0;
+  if ( x1 > 255 ) x1 = 255;
+  if ( y1 > 255 ) y1 = 255;
+
+  uint32_t gen = *(_DWORD *)&byte_5D4594[2386164];
+  for ( int ty = y0; ty <= y1; ++ty )
+  {
+    if ( x0 <= x1 )
+    {
+      float base_y = (float)(ty * 23);
+      int tx = x0;
+      unsigned __int8 *v10 = &byte_5D4594[12 * (ty + (tx << 8)) + 1599724];
+      do
+      {
+        float base_x = (float)(tx * 23);
+        const float *v11 = (const float *)&byte_587000[234108];
+        while ( 1 )
+        {
+          float2 pt;
+          pt.field_0 = base_x + *(v11 - 1);
+          pt.field_4 = base_y + *v11;
+          if ( sub_547DB0(a1, &pt) )
+            break;
+          v11 += 2;
+          if ( (uintptr_t)v11 >= (uintptr_t)&byte_587000[234180] )
+            goto next_cell;
+        }
+        *((_DWORD *)v10 - 1) = gen;
+        uint32_t cls2 = *(_DWORD *)(a1 + 8);
+        uint8_t flg2 = *(_BYTE *)(a1 + 16);
+        if ( (cls2 & 8u) || (flg2 & 2u) )
+        {
+          uint16_t w = *(_WORD *)v10 | 0x100u;
+          if ( !(flg2 & 0x10u) )
+            w |= 0x200u;
+          *(_WORD *)v10 = w;
+        }
+        else if ( cls2 & 0x2000u )
+        {
+          v10[1] |= 4u;
+        }
+next_cell:
+        ++tx;
+        v10 += 3072;
+      }
+      while ( tx <= x1 );
+    }
+  }
+
+  if ( *(_DWORD *)(a1 + 8) & 0x10000u )
+  {
+    memcpy((void *)(a1 + 172), saved_shape, 60);
+    sub_4E7290(a1);
+  }
+}
+#endif
+
 int sub_50B520()
 {
+#ifdef __3DS__
+  uint32_t tick = *(_DWORD *)&byte_5D4594[2598000];
+  if ( tick - *(_DWORD *)&byte_5D4594[2386172] >= 0xFu )
+  {
+    *(_DWORD *)&byte_5D4594[2386172] = tick;
+    ++*(_DWORD *)&byte_5D4594[2386164];
+    for ( int obj = *(_DWORD *)&byte_5D4594[1556844]; obj; obj = *(_DWORD *)(obj + 444) )
+    {
+      uint32_t cls = *(_DWORD *)(obj + 8);
+      if ( cls & 0xC080u )
+        continue;
+      uint8_t flg = *(_BYTE *)(obj + 16);
+      if ( !(cls & 0x2008u) && !(flg & 2u) )
+        continue;
+      if ( !(cls & 0x2000u) && (flg & 0x49u) )
+        continue;
+      nox_3ds_update_blocker_obj(obj, cls);
+    }
+    *(_DWORD *)&byte_5D4594[2386168] = 1;
+    return 0;
+  }
+  return (int)tick;
+#else
   int result; // eax
   int i; // esi
 
@@ -17381,6 +17490,7 @@ int sub_50B520()
     *(_DWORD *)&byte_5D4594[2386168] = 1;
   }
   return result;
+#endif
 }
 
 //----- (0050B580) --------------------------------------------------------
@@ -30116,6 +30226,64 @@ int __cdecl sub_518EE0(_DWORD *a3)
       if ( !result )
         return result;
     }
+#ifdef __3DS__
+    v5 = *(_DWORD *)(v2 + 276);
+    {
+      float cam_x = *(float *)(v5 + 3632);
+      float cam_y = *(float *)(v5 + 3636);
+      float hw_100 = (float)(*(unsigned __int16 *)(v5 + 10) + 100);
+      float hh_100 = (float)(*(unsigned __int16 *)(v5 + 12) + 100);
+      a1.field_0 = cam_x - hw_100;
+      a1.field_4 = cam_y - hh_100;
+      a1.field_8 = cam_x + hw_100;
+      a1.field_C = cam_y + hh_100;
+    }
+    sub_517ED0(&a1, sub_5193B0, (int)a3);
+    v9 = *(_DWORD *)(v2 + 276);
+    {
+      float cam_x = *(float *)(v9 + 3632);
+      float cam_y = *(float *)(v9 + 3636);
+      float hw_128 = (float)(*(unsigned __int16 *)(v9 + 10) + 128);
+      float hh_128 = (float)(*(unsigned __int16 *)(v9 + 12) + 128);
+      a1.field_0 = cam_x - hw_128;
+      a1.field_4 = cam_y - hh_128;
+      a1.field_8 = cam_x + hw_128;
+      a1.field_C = cam_y + hh_128;
+    }
+    sub_517F00(&a1, sub_519660, (int)a3);
+    if ( sub_519710(v2) )
+      sub_519760((int)a3, &a1.field_0);
+    if ( byte_5D4594[2598000] & 8 )
+    {
+      uint8_t p_idx = *(unsigned __int8 *)(*(_DWORD *)(v2 + 276) + 2064);
+      v13 = 0;
+      v14 = 1 << p_idx;
+      v15 = sub_4DA790();
+      while ( 1 )
+      {
+        for ( v16 = v15; v16; v16 = *(_DWORD *)(v16 + 444) )
+        {
+          if ( (v14 & *(_DWORD *)(v16 + 148)) != 0
+            && !(*(_DWORD *)(v16 + 8) & 0x20400000)
+            && !sub_4173D0(*(unsigned __int8 *)(*(_DWORD *)(v2 + 276) + 2064), v16)
+            && (*(float *)(v16 + 232) > a1.field_8
+             || *(float *)(v16 + 240) < a1.field_0
+             || *(float *)(v16 + 236) > a1.field_C
+             || *(float *)(v16 + 244) < a1.field_4) )
+          {
+            sub_528A60(*(unsigned __int8 *)(*(_DWORD *)(v2 + 276) + 2064), (_DWORD *)v16);
+            *(_DWORD *)(v16 + 152) |= v14;
+            *(_DWORD *)(v16 + 148) &= ~v14;
+          }
+        }
+        if ( v13 == 1 )
+          break;
+        v15 = sub_4DA840();
+        v13 = 1;
+      }
+      v1 = a3;
+    }
+#else
     v5 = *(_DWORD *)(v2 + 276);
     v18 = *(unsigned __int16 *)(v5 + 10);
     a1.field_0 = *(float *)(v5 + 3632) - (double)v18 - 100.0;
@@ -30182,6 +30350,7 @@ LABEL_25:
       }
       v1 = a3;
     }
+#endif
   }
   if ( !*(_DWORD *)&byte_5D4594[2650652]
     || !(*(_DWORD *)&byte_5D4594[2598000] % (unsigned int)sub_40A6C0())
@@ -53162,8 +53331,237 @@ LABEL_10:
 // 535128: variable 'v34' is possibly undefined
 
 //----- (00535250) --------------------------------------------------------
+#ifdef __3DS__
+/* Exact truncation toward zero of (v / 23.0) with zero float/double divisions or modf().
+ * 0.04347826168f (0x3d321643) is 1 ULP above 1/23, so q = (int)(v * inv23) is at most
+ * 1 step away from trunc(v / 23.0) and a single exact (q * 23) compare corrects ULP edges. */
+static inline int nox_3ds_trunc_div23(float v)
+{
+  int q = (int)(v * 0.043478261679410934f);
+  float p = (float)(q * 23);
+  if ( q > 0 && p > v )
+    --q;
+  else if ( q < 0 && p < v )
+    ++q;
+  return q;
+}
+#endif
+
 int __cdecl sub_535250(float4 *a1, float2 *a2, int2 *a3, char a4)
 {
+#ifdef __3DS__
+  float x0 = a1->field_0;
+  float y0 = a1->field_4;
+  float x1 = a1->field_8;
+  float y1 = a1->field_C;
+  int tx0 = (int)(x0 * 0.043478262f);
+  int ty0 = (int)(y0 * 0.043478262f);
+  int tx1 = (int)(x1 * 0.043478262f);
+  int ty1 = (int)(y1 * 0.043478262f);
+  float4 hit_out;
+
+  if ( tx0 < 0 || tx0 >= 256 || ty0 < 0 || ty0 >= 256 )
+    return 0;
+
+  if ( tx0 == tx1 )
+  {
+    int step_y = (y1 >= y0) ? 1 : -1;
+    int end_y = ty1 + step_y;
+    int cy = ty0;
+    if ( cy != end_y )
+    {
+      while ( !sub_57C9A0(tx0, cy, (float *)a1, (float *)&hit_out, a4) )
+      {
+        cy += step_y;
+        if ( cy == end_y )
+          return 1;
+      }
+      if ( a2 )
+      {
+        a2->field_0 = hit_out.field_0;
+        a2->field_4 = hit_out.field_4;
+      }
+      if ( a3 )
+      {
+        a3->field_0 = tx0;
+        a3->field_4 = cy;
+      }
+      return 0;
+    }
+    return 1;
+  }
+
+  if ( ty0 == ty1 )
+  {
+    int step_x = (x1 >= x0) ? 1 : -1;
+    int end_x = tx1 + step_x;
+    int cx = tx0;
+    if ( cx != end_x )
+    {
+      while ( !sub_57C9A0(cx, ty0, (float *)a1, (float *)&hit_out, a4) )
+      {
+        cx += step_x;
+        if ( cx == end_x )
+          return 1;
+      }
+      if ( a2 )
+      {
+        a2->field_0 = hit_out.field_0;
+        a2->field_4 = hit_out.field_4;
+      }
+      if ( a3 )
+      {
+        a3->field_0 = cx;
+        a3->field_4 = ty0;
+      }
+      return 0;
+    }
+    return 1;
+  }
+
+  float dx = x1 - x0;
+  float dy = y1 - y0;
+  if ( __builtin_fabsf(dy) >= __builtin_fabsf(dx) )
+  {
+    float slope = dy / dx;
+    int dir_x = (x0 >= x1) ? -1 : 1;
+    int dir_y = (y0 >= y1) ? -1 : 1;
+    float x_min = (dir_x < 0) ? x1 : x0;
+    float x_max = (dir_x < 0) ? x0 : x1;
+    int icell = nox_3ds_trunc_div23(x0);
+    float cell_pos = (float)(icell * 23);
+
+    while ( 1 )
+    {
+      float x_enter, x_exit;
+      if ( dir_x <= 0 )
+      {
+        x_exit = cell_pos;
+        x_enter = cell_pos + 23.0f;
+      }
+      else
+      {
+        x_enter = cell_pos;
+        x_exit = cell_pos + 23.0f;
+      }
+
+      float y_enter = (x_enter - x0) * slope + y0;
+      if ( (dir_y > 0 && y_enter < y0) || (dir_y < 0 && y_enter > y0) )
+        y_enter = y0;
+
+      float y_exit = (x_exit - x0) * slope + y0;
+      if ( (dir_y > 0 && y_exit > y1) || (dir_y < 0 && y_exit < y1) )
+        y_exit = y1;
+
+      int r0 = nox_3ds_trunc_div23(y_enter) - dir_y;
+      int r1 = nox_3ds_trunc_div23(y_exit) + dir_y;
+      int r_step = (r0 >= r1) ? -1 : 1;
+      int r_end = r1 + r_step;
+      for ( int r = r0; r != r_end; r += r_step )
+      {
+        if ( sub_57C9A0(icell, r, (float *)a1, (float *)&hit_out, a4) )
+        {
+          if ( a2 )
+          {
+            a2->field_0 = hit_out.field_0;
+            a2->field_4 = hit_out.field_4;
+          }
+          if ( a3 )
+          {
+            a3->field_0 = icell;
+            a3->field_4 = r;
+          }
+          return 0;
+        }
+      }
+
+      if ( dir_x > 0 )
+      {
+        if ( x_exit + 0.1f > x_max || icell >= 255 )
+          return 1;
+        ++icell;
+        cell_pos += 23.0f;
+      }
+      else
+      {
+        if ( x_exit - 0.1f < x_min || icell <= 0 )
+          return 1;
+        --icell;
+        cell_pos -= 23.0f;
+      }
+    }
+  }
+  else
+  {
+    float inv_slope = dx / dy;
+    int dir_y = (y0 >= y1) ? -1 : 1;
+    int dir_x = (x0 >= x1) ? -1 : 1;
+    float y_min = (dir_y < 0) ? y1 : y0;
+    float y_max = (dir_y < 0) ? y0 : y1;
+    int icell = nox_3ds_trunc_div23(y0);
+    float cell_pos = (float)(icell * 23);
+
+    while ( 1 )
+    {
+      float y_enter, y_exit;
+      if ( dir_y <= 0 )
+      {
+        y_exit = cell_pos;
+        y_enter = cell_pos + 23.0f;
+      }
+      else
+      {
+        y_enter = cell_pos;
+        y_exit = cell_pos + 23.0f;
+      }
+
+      float x_enter = (y_enter - y0) * inv_slope + x0;
+      if ( (dir_x > 0 && x_enter < x0) || (dir_x < 0 && x_enter > x0) )
+        x_enter = x0;
+
+      float x_exit = (y_exit - y0) * inv_slope + x0;
+      if ( (dir_x > 0 && x_exit > x1) || (dir_x < 0 && x_exit < x1) )
+        x_exit = x1;
+
+      int c0 = nox_3ds_trunc_div23(x_enter) - dir_x;
+      int c1 = nox_3ds_trunc_div23(x_exit) + dir_x;
+      int c_step = (c0 >= c1) ? -1 : 1;
+      int c_end = c1 + c_step;
+      for ( int c = c0; c != c_end; c += c_step )
+      {
+        if ( sub_57C9A0(c, icell, (float *)a1, (float *)&hit_out, a4) )
+        {
+          if ( a2 )
+          {
+            a2->field_0 = hit_out.field_0;
+            a2->field_4 = hit_out.field_4;
+          }
+          if ( a3 )
+          {
+            a3->field_0 = c;
+            a3->field_4 = icell;
+          }
+          return 0;
+        }
+      }
+
+      if ( dir_y > 0 )
+      {
+        if ( y_exit + 0.1f > y_max || icell >= 255 )
+          return 1;
+        ++icell;
+        cell_pos += 23.0f;
+      }
+      else
+      {
+        if ( y_exit - 0.1f < y_min || icell <= 0 )
+          return 1;
+        --icell;
+        cell_pos -= 23.0f;
+      }
+    }
+  }
+#else
   int v4; // edi
   int v5; // ebx
   float v6; // eax
@@ -53496,6 +53894,7 @@ LABEL_51:
     }
   }
   return 1;
+#endif
 }
 
 //----- (00535960) --------------------------------------------------------

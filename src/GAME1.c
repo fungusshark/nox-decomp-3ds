@@ -13394,6 +13394,43 @@ int __cdecl sub_40ED40(int a1, int a2)
 //----- (0040ED60) --------------------------------------------------------
 unsigned __int8 *__cdecl sub_40ED60(int a1, unsigned int a2, _DWORD *a3)
 {
+#ifdef __3DS__
+  int ***v3;
+  unsigned int v4;
+  int **v5;
+  unsigned int v6;
+
+  v3 = *(int ****)&byte_5D4594[4 * (a1 + 32 * a2) + 210036];
+  v4 = 0;
+  v5 = sub_420A90(v3, &a2);
+  if ( v5 )
+  {
+    v6 = a2;
+    while ( 1 )
+    {
+      memcpy(&byte_5D4594[207988 + v4], v5, v6);
+      v4 += v6;
+      v5 = sub_420A90(v3, &a2);
+      if ( !v5 )
+        break;
+      v6 = a2;
+      if ( a2 + v4 > 0x800u )
+      {
+        if ( v4 < 0x800u )
+          byte_5D4594[207988 + v4] = 0;
+        *a3 = v4;
+        return &byte_5D4594[207988];
+      }
+    }
+    if ( v4 < 0x800u )
+      byte_5D4594[207988 + v4] = 0;
+    *a3 = v4;
+    return &byte_5D4594[207988];
+  }
+  byte_5D4594[207988] = 0;
+  *a3 = 0;
+  return &byte_5D4594[207988];
+#else
   int ***v3; // ebp
   int v4; // ebx
   int **v5; // eax
@@ -13433,6 +13470,7 @@ unsigned __int8 *__cdecl sub_40ED60(int a1, unsigned int a2, _DWORD *a3)
     result = &byte_5D4594[207988];
   }
   return result;
+#endif
 }
 
 //----- (0040EE10) --------------------------------------------------------
