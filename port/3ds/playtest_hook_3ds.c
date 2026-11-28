@@ -115,7 +115,6 @@ extern void nox_ctrl_inject_key_scancode(int sdl_scancode, int down);
 #define PT_TTL_DEFAULT_MS     250u
 #define PT_TTL_MAX_MS         2000u
 #define PT_AIM_DIR_RADIUS     64.0f
-#define PT_BOTS_OK_TAG        "[bots-ok]"
 #define PT_RETRY_MS           10000u
 #define PT_MAX_ALLOW          8
 
@@ -131,7 +130,8 @@ typedef struct {
     bool     clip_viewport;
     bool     accept_any_src;
     uint32_t n_allow;
-    char     allow[PT_MAX_ALLOW][16]; /* mp_server_allow entries (<=15 chars) */
+    bool     allow_any;      /* mp_server_allow=* (dev-only wildcard) */
+    char     allow[PT_MAX_ALLOW][PT_GATE_NAME_MAX + 1]; /* mp_server_allow entries (<=15 chars) */
 } pt_cfg_t;
 
 typedef enum { TAP_KEY = 0, TAP_MOUSE = 1 } tap_kind_t;
@@ -211,27 +211,6 @@ static void vec_from_orient(uint8_t o, float *dx, float *dy)
     *dy = -sinf(ang);
 }
 
-static bool ci_contains(const char *s, size_t max_len, const char *needle)
-{
-    size_t nl = strlen(needle);
-    size_t sl = strnlen(s, max_len);
-    if (nl == 0 || sl < nl)
-        return false;
-    for (size_t i = 0; i + nl <= sl; ++i) {
-        size_t j = 0;
-        while (j < nl) {
-            char a = s[i + j], b = needle[j];
-            if (a >= 'A' && a <= 'Z') a = (char)(a - 'A' + 'a');
-            if (b >= 'A' && b <= 'Z') b = (char)(b - 'A' + 'a');
-            if (a != b) break;
-            ++j;
-        }
-        if (j == nl)
-            return true;
-    }
-    return false;
-}
-
 /* ---- config ------------------------------------------------------------ */
 static bool cfg_bool(const char *v) { return v[0] == '1' || v[0] == 'y' || v[0] == 'Y' || v[0] == 't' || v[0] == 'T'; }
 
@@ -274,7 +253,9 @@ static bool load_cfg(void)
                 size_t tl = strlen(tok);
                 while (tl && (tok[tl - 1] == ' ' || tok[tl - 1] == '\t')) --tl;
                 if (tl > 15) tl = 15; /* Nox server names are <=15 chars */
-                if (tl) {
+                if (tl == 1 && tok[0] == '*') {
+                    g_cfg.allow_any = true;
+                } else if (tl) {
                     memcpy(g_cfg.allow[g_cfg.n_allow], tok, tl);
                     g_cfg.allow[g_cfg.n_allow][tl] = '\0';
                     ++g_cfg.n_allow;
@@ -420,21 +401,6 @@ static const char *selected_row_name(char *buf)
     return buf;
 }
 
-static bool ci_equal(const char *a, const char *b, size_t max_len)
-{
-    size_t la = strnlen(a, max_len), lb = strnlen(b, max_len);
-    if (la != lb)
-        return false;
-    for (size_t i = 0; i < la; ++i) {
-        char x = a[i], y = b[i];
-        if (x >= 'A' && x <= 'Z') x = (char)(x - 'A' + 'a');
-        if (y >= 'A' && y <= 'Z') y = (char)(y - 'A' + 'a');
-        if (x != y)
-            return false;
-    }
-    return true;
-}
-
 /* Current server name, or NULL while unknown (fail closed).
  * Host: its own configured server name (always current).
  * Client: only the snapshot from a 0xB0 received this session; the engine
@@ -444,22 +410,6 @@ static const char *current_server_name(void)
     if (sub_40A5C0(1))
         return sub_40A4C0();
     return pt_gate_name(&g_gate);
-}
-
-static bool server_has_tag(const char *name)
-{
-    return name && ci_contains(name, 15, PT_BOTS_OK_TAG);
-}
-
-/* Dev-only allowlist (cfg mp_server_allow): case-insensitive exact match. */
-static bool server_allowlisted(const char *name)
-{
-    if (!name || !name[0])
-        return false;
-    for (uint32_t i = 0; i < g_cfg.n_allow; ++i)
-        if (ci_equal(name, g_cfg.allow[i], 15))
-            return true;
-    return false;
 }
 
 /* ---- local-player + visible-object snapshot ---------------------------- */
@@ -1005,9 +955,11 @@ void nox_pt_frame(void)
         g_in_session = is_mp && map_loaded;
     }
     const char *srv = is_mp ? current_server_name() : NULL;
-    bool tag_ok = is_mp && server_has_tag(srv);
-    bool allow_ok = is_mp && server_allowlisted(srv);
-    bool bots_ok = tag_ok || allow_ok;
+    unsigned allow = is_mp ? pt_gate_mp_allow(srv, (const char (*)[PT_GATE_NAME_MAX + 1])g_cfg.allow,
+                                              g_cfg.n_allow, g_cfg.allow_any) : 0u;
+    bool tag_ok = (allow & PT_ALLOW_TAG) != 0;
+    bool allow_ok = (allow & (PT_ALLOW_LIST | PT_ALLOW_WILDCARD)) != 0;
+    bool bots_ok = allow != 0;
     if (menu_shell) flags |= NOX_PT_F_MENU_SHELL;
     if (map_loaded) flags |= NOX_PT_F_MAP_LOADED;
     if (in_world)   flags |= NOX_PT_F_IN_WORLD;
@@ -1015,6 +967,7 @@ void nox_pt_frame(void)
     if (sub_40A5C0(1)) flags |= NOX_PT_F_IS_HOST;
     if (tag_ok)     flags |= NOX_PT_F_BOTS_OK;
     if (allow_ok)   flags |= NOX_PT_F_ALLOWLISTED;
+    if (allow & PT_ALLOW_WILDCARD) flags |= NOX_PT_F_WILDCARD;
 
     pt_view_t v;
     memset(&v, 0, sizeof(v));

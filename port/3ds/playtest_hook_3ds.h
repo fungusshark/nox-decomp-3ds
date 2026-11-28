@@ -43,7 +43,8 @@ extern "C" {
 #define NOX_PT_F_BOTS_OK        0x0100u /* server name contains "[bots-ok]" */
 #define NOX_PT_F_CMDS_ACTIVE    0x0200u /* commands are being accepted this frame */
 #define NOX_PT_F_OBJ_TRUNCATED  0x0400u /* more candidate objects than n_obj */
-#define NOX_PT_F_ALLOWLISTED    0x0800u /* server name matches cfg mp_server_allow */
+#define NOX_PT_F_ALLOWLISTED    0x0800u /* server name matches cfg mp_server_allow (or wildcard) */
+#define NOX_PT_F_WILDCARD       0x1000u /* cfg mp_server_allow=* : any MP server allowed (dev-only) */
 
 /* Command opcodes. */
 enum {

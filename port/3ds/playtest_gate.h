@@ -102,4 +102,66 @@ static inline const char *pt_gate_name(const pt_gate_t *g)
     return g->valid ? g->name : NULL;
 }
 
+/* ---- MP allow decision (pure) ------------------------------------------ */
+#define PT_GATE_BOTS_OK_TAG  "[bots-ok]"
+enum {
+    PT_ALLOW_TAG      = 1u, /* name contains "[bots-ok]" */
+    PT_ALLOW_LIST     = 2u, /* name equals a cfg mp_server_allow entry */
+    PT_ALLOW_WILDCARD = 4u  /* cfg mp_server_allow=* (dev-only, any server) */
+};
+
+static inline char pt_gate_lc(char c) { return (c >= 'A' && c <= 'Z') ? (char)(c - 'A' + 'a') : c; }
+
+static inline size_t pt_gate_len(const char *s, size_t max)
+{
+    size_t n = 0;
+    while (n < max && s[n])
+        ++n;
+    return n;
+}
+
+static inline bool pt_gate_ci_equal(const char *a, const char *b, size_t max)
+{
+    size_t la = pt_gate_len(a, max), lb = pt_gate_len(b, max);
+    if (la != lb)
+        return false;
+    for (size_t i = 0; i < la; ++i)
+        if (pt_gate_lc(a[i]) != pt_gate_lc(b[i]))
+            return false;
+    return true;
+}
+
+static inline bool pt_gate_ci_contains(const char *s, size_t max, const char *needle)
+{
+    size_t sl = pt_gate_len(s, max), nl = strlen(needle);
+    if (nl == 0 || sl < nl)
+        return false;
+    for (size_t i = 0; i + nl <= sl; ++i) {
+        size_t j = 0;
+        while (j < nl && pt_gate_lc(s[i + j]) == pt_gate_lc(needle[j]))
+            ++j;
+        if (j == nl)
+            return true;
+    }
+    return false;
+}
+
+/* Returns PT_ALLOW_* bits; 0 = MP commands/export not allowed. name may be
+ * NULL (unknown, fail closed) -- only the wildcard allows then. */
+static inline unsigned pt_gate_mp_allow(const char *name, const char (*allow)[PT_GATE_NAME_MAX + 1],
+                                        unsigned n_allow, bool wildcard)
+{
+    unsigned bits = wildcard ? PT_ALLOW_WILDCARD : 0u;
+    if (name && name[0]) {
+        if (pt_gate_ci_contains(name, PT_GATE_NAME_MAX, PT_GATE_BOTS_OK_TAG))
+            bits |= PT_ALLOW_TAG;
+        for (unsigned i = 0; i < n_allow; ++i)
+            if (pt_gate_ci_equal(name, allow[i], PT_GATE_NAME_MAX)) {
+                bits |= PT_ALLOW_LIST;
+                break;
+            }
+    }
+    return bits;
+}
+
 #endif /* NOX_PLAYTEST_GATE_H */

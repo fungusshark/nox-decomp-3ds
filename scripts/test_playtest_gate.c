@@ -80,6 +80,24 @@ int main(void)
     in_map(&g);
     CHECK(name_is(&g, "[bots-ok]giraf!"));
 
+    /* 8. MP allow decision: tag, exact allowlist, wildcard, fail closed. */
+    {
+        static const char allow[2][PT_GATE_NAME_MAX + 1] = { "giraffepus", "Other Srv" };
+        CHECK(pt_gate_mp_allow("giraffepus", allow, 2, false) == PT_ALLOW_LIST);
+        CHECK(pt_gate_mp_allow("GIRAFFEPUS", allow, 2, false) == PT_ALLOW_LIST);
+        CHECK(pt_gate_mp_allow("other srv", allow, 2, false) == PT_ALLOW_LIST);
+        CHECK(pt_gate_mp_allow("giraffepus2", allow, 2, false) == 0);   /* exact, not prefix */
+        CHECK(pt_gate_mp_allow("giraffe", allow, 2, false) == 0);
+        CHECK(pt_gate_mp_allow("x [Bots-OK]", allow, 2, false) == PT_ALLOW_TAG);
+        CHECK(pt_gate_mp_allow(NULL, allow, 2, false) == 0);            /* unknown name */
+        CHECK(pt_gate_mp_allow("", allow, 2, false) == 0);
+        CHECK(pt_gate_mp_allow("stranger", allow, 0, false) == 0);
+        /* Wildcard: any server, even with the name unknown. */
+        CHECK(pt_gate_mp_allow("stranger", allow, 0, true) == PT_ALLOW_WILDCARD);
+        CHECK(pt_gate_mp_allow(NULL, allow, 0, true) == PT_ALLOW_WILDCARD);
+        CHECK(pt_gate_mp_allow("giraffepus", allow, 2, true) == (PT_ALLOW_WILDCARD | PT_ALLOW_LIST));
+    }
+
     if (fails) {
         printf("playtest_gate: %d failure(s)\n", fails);
         return 1;

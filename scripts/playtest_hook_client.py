@@ -64,6 +64,7 @@ FLAGS = {
     0x0200: "cmds_active",
     0x0400: "obj_truncated",
     0x0800: "allowlisted",
+    0x1000: "wildcard",
 }
 
 OPS = {

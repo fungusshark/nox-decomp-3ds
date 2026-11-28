@@ -42,7 +42,7 @@ max_objects=32      # 0..32 (default 32)
 commands=1          # 0 = state-only (default 1)
 clip_viewport=1     # only objects inside the camera rect (default 1)
 accept_any_src=0    # 1 = accept commands from any IP, not only host= (default 0)
-mp_server_allow=giraffepus   # dev-only MP allowlist (comma-separated, up to 8, <=15 chars each)
+mp_server_allow=giraffepus   # dev-only MP allowlist (comma-separated, up to 8, <=15 chars each; "*" = any server)
 ```
 
 **LAN risk:** with `accept_any_src=1`, any device on the network that can reach
@@ -195,7 +195,18 @@ allowlist entry: case-insensitive, **exact match**, not prefix, since Nox server
 names are 15 chars max. It uses the same fail-closed session-name state
 machine as the tag check (see below); with no known session name, the
 allowlist does not apply. Flag `0x800 allowlisted` is set on a
-match; `0x100 bots_ok` still reports only the tag. Rationale: this exists for the
+match; `0x100 bots_ok` still reports only the tag.
+
+**Dev wildcard (`mp_server_allow=*`).** If any entry is `*`, MP commands and
+the export of other objects and names are allowed on **every** server. This
+holds even before the server name is known; for example, a Direct-IP join is
+allowed. The packet flags then carry `0x800 allowlisted` and `0x1000
+wildcard`, so logs show that the wildcard opened the gate. It exists for the
+developer's own test server, where checking the name adds nothing. Never use
+it on a bot that may join other people's servers. Like the allowlist, it lives
+only in hook builds, in the bot's own `playtest.cfg`. The decision is
+`pt_gate_mp_allow()` in `port/3ds/playtest_gate.h`, which the host gate test
+covers. Rationale: this exists for the
 developer's own LAN games (for example `giraffepus`), where the host agrees
 but renaming the server to fit `[bots-ok]` into 15 chars is impractical. It
 lives only in hook builds (`NOX_PLAYTEST_HOOK=ON`) and in a cfg file on the
