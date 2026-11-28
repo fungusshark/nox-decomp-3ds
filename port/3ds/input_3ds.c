@@ -1,5 +1,8 @@
 #include "platform_3ds.h"
 #include "perf_3ds.h"
+#ifdef NOX_PLAYTEST_HOOK
+#include "playtest_aim.h"
+#endif
 
 #include <3ds.h>
 #include <SDL2/SDL.h>
@@ -339,10 +342,26 @@ void nox_3ds_input_notify_bottom_ui_hit(bool hit_ui)
     }
 }
 
+#ifdef NOX_PLAYTEST_HOOK
+/* Playtest hook (#36) only: hook aim commands drive the world-aim point so
+ * hover/pickup/melee/skill facing follow them. Cleared by the hook on command
+ * timeout/STOP/gate close. Absent from non-hook builds. */
+static pt_aim_ovr_t g_hook_aim;
+
+void nox_3ds_input_set_hook_world_aim(bool on, int x, int y)
+{
+    pt_aim_ovr_set(&g_hook_aim, on, x, y);
+}
+#endif
+
 void nox_3ds_input_get_world_aim(int *out_x, int *out_y)
 {
+#ifdef NOX_PLAYTEST_HOOK
+    pt_aim_resolve(&g_hook_aim, g_in.world_aim_x, g_in.world_aim_y, out_x, out_y);
+#else
     if (out_x) *out_x = g_in.world_aim_x;
     if (out_y) *out_y = g_in.world_aim_y;
+#endif
 }
 
 void nox_3ds_input_get_bottom_touch(int *out_x, int *out_y)

@@ -205,7 +205,7 @@ any trailing bytes.
 |---|---|---|---|
 | 0 | NOP | | |
 | 1 | MOVE | a = orientation 0..255 (0 E, 64 S, 128 W, 192 N), b = 0 stop / 1 walk / 3 run | `nox_ctrl_set_thumbstick_move` (latched, ttl) |
-| 2 | AIM_WORLD | world x, y | `nox_ctrl_set_radial_aim` + `nox_ctrl_inject_mouse_abs` (latched, ttl) |
+| 2 | AIM_WORLD | world x, y | `nox_3ds_input_set_hook_world_aim` + `nox_ctrl_set_radial_aim` + `nox_ctrl_inject_mouse_abs` (latched, ttl) |
 | 3 | AIM_DIR | a = orientation; point 64 px from the player | same |
 | 4 | ATTACK | a = hold frames (0 = 2) | LMB tap (`nox_ctrl_inject_mouse_button(0)`) |
 | 5 | SLOT | a = 1..5, b != 0 = self-cast | key A/S/D/F/G tap; self-cast = LSHIFT held one frame earlier |
@@ -227,6 +227,22 @@ translates everything exactly as it would a human pad (`sub_42D6B0` sends
 opcode `0x3F` to the server). While moving, the cursor and facing follow the
 move direction, as they do for a human. Aim fully applies when the bot is
 standing still.
+
+**Aim drives the world-aim point, not only the mouse.** The 3DS client
+hovers and picks objects from `input_3ds`'s world-aim point
+(`nox_3ds_input_get_world_aim`, read by `sub_476FA0` hover in `src/GAME2.c`
+and the world cursor in `src/GAME1.c`), which for a human sits 24 px from the
+hero along the last C-Stick / Circle Pad direction. While an AIM_WORLD /
+AIM_DIR latch is on, the hook installs an override
+(`nox_3ds_input_set_hook_world_aim`, `port/3ds/playtest_aim.h`) so
+`nox_3ds_input_get_world_aim` returns the hook's screen aim point. Hover,
+pickup (ATTACK click on a hovered item within 75 px), melee aim and skill
+facing then follow the hook's aim. The override is released on aim timeout,
+STOP, gate close (`cmds_active` false) and shutdown, so the human aim is back
+on the next pump. Only builds with `NOX_PLAYTEST_HOOK` have the override.
+Older hook builds moved only the mouse, so hook aim plus ATTACK hovered
+nothing. The host unit test (`scripts/test_playtest_gate.c`, run by
+`--selftest`) covers the override and world-to-screen clamp.
 
 ## 4. Gating and cheat surface
 

@@ -1,9 +1,10 @@
-/* Host unit test for port/3ds/playtest_gate.h (issue #36).
+/* Host unit test for port/3ds/playtest_gate.h + playtest_aim.h (issue #36).
  *   cc -std=c99 -Wall -Wextra -Iport/3ds scripts/test_playtest_gate.c -o /tmp/t && /tmp/t
  * Also run by: python3 -I scripts/playtest_hook_client.py --selftest */
 #include <stdio.h>
 #include <stdlib.h>
 #include "playtest_gate.h"
+#include "playtest_aim.h"
 
 static int fails;
 #define CHECK(c) do { if (!(c)) { printf("FAIL %s:%d %s\n", __FILE__, __LINE__, #c); ++fails; } } while (0)
@@ -96,6 +97,27 @@ int main(void)
         CHECK(pt_gate_mp_allow("stranger", allow, 0, true) == PT_ALLOW_WILDCARD);
         CHECK(pt_gate_mp_allow(NULL, allow, 0, true) == PT_ALLOW_WILDCARD);
         CHECK(pt_gate_mp_allow("giraffepus", allow, 2, true) == (PT_ALLOW_WILDCARD | PT_ALLOW_LIST));
+    }
+
+    /* World-aim override (hook AIM_* drives nox_3ds_input_get_world_aim). */
+    {
+        pt_aim_ovr_t o = {0};
+        int x, y;
+        pt_aim_resolve(&o, 320, 264, &x, &y);           /* off: human aim */
+        CHECK(x == 320 && y == 264);
+        pt_aim_ovr_set(&o, true, 400, 200);
+        pt_aim_resolve(&o, 320, 264, &x, &y);           /* on: hook aim */
+        CHECK(x == 400 && y == 200);
+        pt_aim_resolve(&o, 320, 264, NULL, &y);         /* NULL-safe */
+        CHECK(y == 200);
+        pt_aim_ovr_set(&o, false, 400, 200);            /* timeout/STOP release */
+        pt_aim_resolve(&o, 111, 222, &x, &y);
+        CHECK(x == 111 && y == 222 && !o.on);
+        /* world -> screen: cam (1000,2000), vp 120..519 x 120..359 */
+        pt_aim_world_to_screen(1200, 2120, 1000, 2000, 120, 120, 519, 359, &x, &y);
+        CHECK(x == 320 && y == 240);
+        pt_aim_world_to_screen(0, 99999, 1000, 2000, 120, 120, 519, 359, &x, &y);
+        CHECK(x == 120 && y == 359);                    /* clamped to viewport */
     }
 
     if (fails) {

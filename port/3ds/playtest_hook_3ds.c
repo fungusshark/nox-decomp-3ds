@@ -20,6 +20,7 @@
 #include "platform_3ds.h"
 #include "playtest_hook_3ds.h"
 #include "playtest_gate.h"
+#include "playtest_aim.h"
 
 #include <3ds.h>
 #include <SDL2/SDL.h>
@@ -855,6 +856,7 @@ static void drop_overrides(void)
 {
     g_move_on = false;
     g_aim_on = false;
+    nox_3ds_input_set_hook_world_aim(false, 0, 0);
     taps_release_all();
 }
 
@@ -965,18 +967,21 @@ static void apply_overrides(const pt_view_t *v, uint32_t now_ms)
             vec_from_orient((uint8_t)(g_aim_a & 255), &dx, &dy);
             sx = psx + (int)lrintf(dx * PT_AIM_DIR_RADIUS);
             sy = psy + (int)lrintf(dy * PT_AIM_DIR_RADIUS);
+            sx = pt_aim_clampi(sx, v->vp_l, v->vp_r);
+            sy = pt_aim_clampi(sy, v->vp_t, v->vp_b);
         } else {
-            sx = g_aim_a - v->cam_x + v->vp_l;
-            sy = g_aim_b - v->cam_y + v->vp_t;
+            pt_aim_world_to_screen(g_aim_a, g_aim_b, v->cam_x, v->cam_y,
+                                   v->vp_l, v->vp_t, v->vp_r, v->vp_b, &sx, &sy);
         }
-        if (sx < v->vp_l) sx = v->vp_l;
-        if (sx > v->vp_r) sx = v->vp_r;
-        if (sy < v->vp_t) sy = v->vp_t;
-        if (sy > v->vp_b) sy = v->vp_b;
         uint8_t o = orient_from_vec((float)(sx - psx), (float)(sy - psy));
         nox_ctrl_set_radial_aim(1, o, sx, sy);
         /* Queued after input_3ds's own mouse_abs this pump, so it wins. */
         nox_ctrl_inject_mouse_abs(sx, sy);
+        /* The client hovers/picks from input_3ds's world-aim point (sub_476FA0,
+         * world cursor), not the mouse: drive it too. Held until timeout. */
+        nox_3ds_input_set_hook_world_aim(true, sx, sy);
+    } else {
+        nox_3ds_input_set_hook_world_aim(false, 0, 0);
     }
 
     taps_step();
@@ -1062,6 +1067,7 @@ void nox_pt_shutdown(void)
 {
     if (g_pt_state == PT_ACTIVE)
         taps_release_all();
+    nox_3ds_input_set_hook_world_aim(false, 0, 0);
     close_sock();
     g_pt_state = PT_DISABLED;
     pt_gate_reset(&g_gate);

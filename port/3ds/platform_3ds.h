@@ -342,6 +342,10 @@ bool nox_3ds_input_is_touch_move_active(void);
 bool nox_3ds_input_is_cpad_move_active(void);
 void nox_3ds_input_notify_bottom_ui_hit(bool hit_ui);
 void nox_3ds_input_get_world_aim(int *out_x, int *out_y);
+#ifdef NOX_PLAYTEST_HOOK
+/* Playtest hook only: override the world-aim point (on=false releases it). */
+void nox_3ds_input_set_hook_world_aim(bool on, int x, int y);
+#endif
 void nox_3ds_input_get_bottom_touch(int *out_x, int *out_y);
 void nox_3ds_input_process_hybrid(void);
 void nox_3ds_input_process_twin_stick_and_touch(void);
