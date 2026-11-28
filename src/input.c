@@ -1423,6 +1423,19 @@ int __cdecl sub_42D6B0(_DWORD *a3, int a4)
         sub_42E670(51, 0);
     }
   }
+#ifdef __3DS__
+  int aim_lock_active = 0;
+  int aim_lock_orient = 0;
+  int aim_lock_x = 0;
+  int aim_lock_y = 0;
+  if ( nox_3ds_input_get_aim_lock(&aim_lock_orient, &aim_lock_x, &aim_lock_y) )
+  {
+    aim_lock_active = 1;
+    /* Queue reticle orientation BEFORE queued attacks/spells so FIFO server
+     * processing aims this frame's attack/spell straight at the reticle. */
+    sub_42E670(1, aim_lock_orient);
+  }
+#endif
   for ( i = a4; i; i = *(_DWORD *)(i + 84) )
   {
     for ( j = 0; j < *(int *)(i + 68); ++j )
@@ -1678,7 +1691,11 @@ int __cdecl sub_42D6B0(_DWORD *a3, int a4)
     }
   }
 #if defined(USE_SDL) && !defined(__EMSCRIPTEN__)
-    if (g_thumbstick_move_active || g_touch_move_active || g_radial_aim_active)
+    if (g_thumbstick_move_active || g_touch_move_active || g_radial_aim_active
+#ifdef __3DS__
+        || aim_lock_active
+#endif
+       )
     {
         int *vp;
         int screen_x, screen_y;
@@ -1687,6 +1704,15 @@ int __cdecl sub_42D6B0(_DWORD *a3, int a4)
         int move_orient = g_thumbstick_move_active ? g_thumbstick_orientation : g_touch_move_orientation;
         int move_cmd    = g_thumbstick_move_active ? g_thumbstick_move_cmd    : g_touch_move_cmd;
 
+#ifdef __3DS__
+        if (aim_lock_active)
+        {
+            /* Orientation already emitted before the attack/spell event loop.
+             * Pause move_cmd during this brief flick window so kiting backward
+             * never runs the hero toward the target being aimed at. */
+        }
+        else
+#endif
         if (move_active)
         {
             /* Keep the movement facing/orientation and move command */
@@ -1700,6 +1726,14 @@ int __cdecl sub_42D6B0(_DWORD *a3, int a4)
             sub_42E670(1, g_radial_aim_orientation);
         }
 
+#ifdef __3DS__
+        if (aim_lock_active)
+        {
+            screen_x = aim_lock_x;
+            screen_y = aim_lock_y;
+        }
+        else
+#endif
         if (move_active
 #ifdef __3DS__
             && !nox_3ds_input_is_cstick_or_r_active()
@@ -1778,6 +1812,82 @@ int __cdecl sub_42D6B0(_DWORD *a3, int a4)
 
         world_x = *(_DWORD *)&byte_5D4594[811084] + screen_x - *(_DWORD *)&byte_5D4594[811068];
         world_y = *(_DWORD *)&byte_5D4594[811088] + screen_y - *(_DWORD *)&byte_5D4594[811072];
+
+#ifdef __3DS__
+        {
+            int pin_wx = 0, pin_wy = 0;
+            if (nox_3ds_input_get_spell_pin(&pin_wx, &pin_wy))
+            {
+                /* Keep 0xAC pinned to the world-space spell target throughout the
+                 * phoneme chant so dodging early on the Circle Pad never drags
+                 * ground-targeted spells in front of your escape path. */
+                world_x = pin_wx;
+                world_y = pin_wy;
+                if (world_x < 1) world_x = 1;
+                if (world_x > 65534) world_x = 65534;
+                if (world_y < 1) world_y = 1;
+                if (world_y > 65534) world_y = 65534;
+            }
+            /* External PC/OpenNox multiplayer servers determine walk vs. run solely
+             * from dist(hero, 0xAC_cursor) <= 100 px (ignoring our local move_cmd|4
+             * flag). While moving with Circle Pad during L-aim or C-Stick aiming
+             * (outside an active attack/cast aim-lock), keep the visual reticle
+             * untouched at (screen_x, screen_y) and project the networked 0xAC
+             * world cursor to match the Circle Pad's walk/run speed. */
+            else if (!aim_lock_active && move_active && move_cmd && nox_3ds_input_is_cstick_or_r_active())
+            {
+                int2 hero_pos;
+                double dx, dy, dist;
+                sub_435670(&hero_pos);
+                dx = (double)(world_x - hero_pos.field_0);
+                dy = (double)(world_y - hero_pos.field_4);
+                dist = sqrt(dx * dx + dy * dy);
+                if (dist < 2.0)
+                {
+                    double ang = (((double)move_orient / 128.0) - 1.0) * M_PI;
+                    dx = -cos(ang);
+                    dy = -sin(ang);
+                    dist = 1.0;
+                }
+                if (move_cmd == 3)
+                {
+                    /* Guarantee > 100 px run threshold on external servers */
+                    if (dist < 140.0)
+                    {
+                        world_x = hero_pos.field_0 + (int)lrint((dx / dist) * 140.0);
+                        world_y = hero_pos.field_4 + (int)lrint((dy / dist) * 140.0);
+                    }
+                    /* sub_43C8F0 substitutes hovered_dr->y for world_y when hovering
+                     * a drawable; ensure effective distance still exceeds 100 px. */
+                    {
+                        int hov = sub_476F80();
+                        if (hov)
+                        {
+                            double ex = (double)(world_x - hero_pos.field_0);
+                            double ey = (double)(nox_read_s32((const uint8_t *)(uintptr_t)hov + 16) - hero_pos.field_4);
+                            if (ex * ex + ey * ey < 120.0 * 120.0)
+                            {
+                                world_x = hero_pos.field_0 + ((dx >= 0.0) ? 140 : -140);
+                            }
+                        }
+                    }
+                }
+                else if (move_cmd == 1)
+                {
+                    /* Guarantee <= 100 px walk threshold on external servers */
+                    if (dist > 65.0)
+                    {
+                        world_x = hero_pos.field_0 + (int)lrint((dx / dist) * 65.0);
+                        world_y = hero_pos.field_4 + (int)lrint((dy / dist) * 65.0);
+                    }
+                }
+                if (world_x < 1) world_x = 1;
+                if (world_x > 65534) world_x = 65534;
+                if (world_y < 1) world_y = 1;
+                if (world_y > 65534) world_y = 65534;
+            }
+        }
+#endif
 
         sub_43C8F0(31, world_x, world_y);
 

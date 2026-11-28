@@ -344,6 +344,7 @@ bool nox_3ds_input_is_bottom_touch_active(void);
 bool nox_3ds_input_is_ranged_aim_held(void);
 bool nox_3ds_input_is_cstick_or_r_active(void);
 bool nox_3ds_input_get_aim_lock(int *out_orient, int *out_x, int *out_y);
+bool nox_3ds_input_get_spell_pin(int *out_wx, int *out_wy);
 bool nox_3ds_input_is_touch_move_active(void);
 bool nox_3ds_input_is_cpad_move_active(void);
 void nox_3ds_input_notify_bottom_ui_hit(bool hit_ui);
