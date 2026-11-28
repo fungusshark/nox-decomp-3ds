@@ -19,6 +19,7 @@
  */
 #include "platform_3ds.h"
 #include "playtest_hook_3ds.h"
+#include "playtest_gate.h"
 
 #include <3ds.h>
 #include <SDL2/SDL.h>
@@ -63,6 +64,10 @@ extern void nox_ctrl_inject_key_scancode(int sdl_scancode, int down);
 #define OFF_DRAWABLE_LIST     1046572u  /* sub_45A060 / sub_45A6F0, GAME2.c:9801 */
 #define OFF_DRAW_GRID         1301784u  /* int** grid[x][y] of bucket heads, chain +400 */
 #define OFF_DRAW_GRID_N       1301788u  /* grid dimension (buckets per axis) */
+#define OFF_SEL_SERVER_ROW     814624u   /* selected server-list row* (sub_43B300) */
+#define OFF_SEL_SERVER_VALID  815056u   /* row join target in use (sub_43B300/sub_43B320) */
+#define ROW_SERVER_IP         12u       /* char[] dotted IP (inet_addr in sub_43B300) */
+#define ROW_SERVER_NAME       120u      /* char[14], strncpy(...,0xE) in sub_4375F0 */
 #define OFF_PLAYERINFO_TABLE  371780u   /* 32 x 4828 B client player table (sub_417040) */
 #define PLAYERINFO_STRIDE     4828u
 #define PLAYERINFO_SLOTS      32u
@@ -165,9 +170,8 @@ static bool       g_open_err_logged;
 /* Client server-name snapshot, filled ONLY by a fresh opcode 0xB0 in this
  * session (nox_pt_note_server_name) and cleared when the player returns to the
  * menu shell from a map or leaves WIFI mode. Fail closed while empty. */
-static char       g_srv_name[16];
-static bool       g_srv_name_valid;
-static bool       g_was_map_loaded;
+static pt_gate_t  g_gate;             /* see playtest_gate.h */
+static bool       g_in_session;       /* is_mp && map_loaded, last frame */
 
 /* Static send buffer: header + max objects. No per-frame allocation. */
 static uint8_t    g_txbuf[sizeof(nox_pt_state_hdr_t) + NOX_PT_MAX_OBJECTS * sizeof(nox_pt_obj_t)
@@ -400,10 +404,20 @@ void nox_pt_note_server_name(const char *name)
 {
     if (g_pt_state != PT_ACTIVE || !name)
         return;
-    size_t n = strnlen(name, 15);
-    memcpy(g_srv_name, name, n);
-    g_srv_name[n] = '\0';
-    g_srv_name_valid = true;
+    pt_gate_note_b0(&g_gate, name, g_in_session);
+}
+
+/* Name of the server-list row selected as the join target, or NULL. */
+static const char *selected_row_name(char *buf)
+{
+    if (!rd_u32(OFF_SEL_SERVER_VALID))
+        return NULL;
+    uint32_t row = rd_u32(OFF_SEL_SERVER_ROW);
+    if (!row)
+        return NULL;
+    memcpy(buf, ptr_of(row) + ROW_SERVER_NAME, PT_GATE_ROW_MAX);
+    buf[PT_GATE_ROW_MAX] = '\0';
+    return buf;
 }
 
 static bool ci_equal(const char *a, const char *b, size_t max_len)
@@ -429,7 +443,7 @@ static const char *current_server_name(void)
 {
     if (sub_40A5C0(1))
         return sub_40A4C0();
-    return g_srv_name_valid ? g_srv_name : NULL;
+    return pt_gate_name(&g_gate);
 }
 
 static bool server_has_tag(const char *name)
@@ -984,9 +998,12 @@ void nox_pt_frame(void)
     bool in_world = map_loaded && nox_3ds_input_is_world_mode() && !npc_dialog_open();
     bool is_mp = session_is_mp();
     /* Session boundary: back to the menu shell after a map, or out of MP. */
-    if ((menu_shell && g_was_map_loaded) || !is_mp)
-        g_srv_name_valid = false;
-    g_was_map_loaded = map_loaded;
+    {
+        char rowbuf[PT_GATE_ROW_MAX + 1];
+        pt_gate_frame(&g_gate, is_mp, menu_shell, map_loaded,
+                      sub_40A5C0(1) ? NULL : selected_row_name(rowbuf));
+        g_in_session = is_mp && map_loaded;
+    }
     const char *srv = is_mp ? current_server_name() : NULL;
     bool tag_ok = is_mp && server_has_tag(srv);
     bool allow_ok = is_mp && server_allowlisted(srv);
@@ -1037,5 +1054,5 @@ void nox_pt_shutdown(void)
         taps_release_all();
     close_sock();
     g_pt_state = PT_DISABLED;
-    g_srv_name_valid = false;
+    pt_gate_reset(&g_gate);
 }

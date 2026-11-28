@@ -270,6 +270,26 @@ def build_cmd(args):
     return encode_cmd(op, a, b, args.ttl, 0)
 
 
+def gate_selftest():
+    """Compile and run the host unit test for port/3ds/playtest_gate.h if a C compiler exists."""
+    import os
+    import shutil
+    import subprocess
+    import tempfile
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    src = os.path.join(root, "scripts", "test_playtest_gate.c")
+    cc = shutil.which("cc") or shutil.which("gcc") or shutil.which("clang")
+    if not cc or not os.path.exists(src):
+        print("gate test SKIPPED (no C compiler)")
+        return
+    with tempfile.TemporaryDirectory() as td:
+        exe = os.path.join(td, "test_playtest_gate")
+        subprocess.run([cc, "-std=c99", "-Wall", "-Wextra", "-Werror",
+                        "-I", os.path.join(root, "port", "3ds"), src, "-o", exe], check=True)
+        out = subprocess.run([exe], check=True, capture_output=True, text=True).stdout.strip()
+        print(out)
+
+
 def selftest():
     abilities = [(1, 1, 0, 1, 0, 300), (2, 0, 1, 2, 120, 300), (3, 0, 0, 1, 75, 150),
                  (4, 1, 0, 3, 0, 30), (5, 0, 0, 0, 0, 600)]
@@ -329,6 +349,7 @@ def selftest():
     assert [orient_from_vec(*d) for d in ((1, 0), (0, 1), (-1, 0), (0, -1))] == [0, 64, 128, 192]
     for o_ in range(0, 256, 7):
         assert orient_from_vec(*vec_from_orient(o_)) == o_
+    gate_selftest()
     print("selftest OK (hdr=%d obj=%d cmd=%d)" % (HDR_SIZE, OBJ_SIZE, CMD_SIZE))
     return 0
 

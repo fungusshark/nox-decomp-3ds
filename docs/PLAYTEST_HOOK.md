@@ -192,8 +192,9 @@ standing still.
 **Dev allowlist (`mp_server_allow`).** MP commands and the export of other
 objects and names are also enabled when the current server name equals an
 allowlist entry: case-insensitive, **exact match**, not prefix, since Nox server
-names are 15 chars max. The same fail-closed name snapshot applies: no
-`0xB0` in this session means not allowed. Flag `0x800 allowlisted` is set on a
+names are 15 chars max. It uses the same fail-closed session-name state
+machine as the tag check (see below); with no known session name, the
+allowlist does not apply. Flag `0x800 allowlisted` is set on a
 match; `0x100 bots_ok` still reports only the tag. Rationale: this exists for the
 developer's own LAN games (for example `giraffepus`), where the host agrees
 but renaming the server to fit `[bots-ok]` into 15 chars is impractical. It
@@ -210,9 +211,30 @@ a bot is present.
   The client never reads the engine copy at `byte_5D4594[371389]` for the gate.
   That copy persists across sessions, so a stale `[bots-ok]` name could leak
   into the next server. Instead, `GAME2.c` forwards each fresh `0xB0` to
-  `nox_pt_note_server_name()`, which keeps a hook-owned snapshot. The snapshot
-  is cleared when the player returns to the menu shell from a map, or when the
-  game leaves MP. The gate fails closed until a new `0xB0` arrives.
+  `nox_pt_note_server_name()`. A hook-owned state machine
+  (`port/3ds/playtest_gate.h`) decides which name counts.
+
+  The live bug was that `0xB0` arrives while **browsing** the server list,
+  before the session counts as MP. It is not resent after the join, so the
+  old "clear when not MP" rule wiped the name and the gate never opened.
+
+  The new rules:
+  - While no map is loaded, the hook captures the name of the server-list row
+    selected as the join target. That row is
+    `*(byte_5D4594[814624]) + 120` (14 chars, valid when `[815056]` is
+    set); it is the row `sub_43B300` / `sub_438A90` actually join.
+  - On the first map-loaded frame in MP, that row name becomes the session
+    name. If the row name is 14 chars and the last browsed `0xB0` name
+    extends it, the full 15-char name is used instead.
+  - `0xB0` names seen while browsing never open the gate by themselves. So
+    browsing several servers and then joining a non-allowlisted one stays
+    closed.
+  - A Direct-IP join has no row, so it stays closed until an in-session `0xB0`
+    arrives (TODO: capture the Direct-IP target).
+  - The session name is cleared on return to the menu shell after a map, or
+    when the game leaves MP. Map rotation within a session keeps it.
+  - `scripts/test_playtest_gate.c` unit-tests these cases on the host. It is
+    run by `playtest_hook_client.py --selftest` when a C compiler is present.
   Nox server names are at most 15 chars, so the tag uses 9 of them.
 - Without the tag, MP state-out sends the header and local player only
   (`n_obj = 0`). If the gate closes, all overrides drop
@@ -317,5 +339,5 @@ swamp item case could not be reproduced on the same map.
   the `.plr` load). The injection point in the join packet is still to be located.
 - Ally HP% for objects (`0x41/0x42` to `sub_495150`/`sub_49A650`); `hp_pct` is always 0xFF for now.
 - Invisibility bit 0 / infravision bit 21 are read from renderer code; confirm them in a dump. Allow invisible allies once a client-only team test exists.
-- Session-boundary heuristic for clearing the server-name snapshot (menu shell after a map): confirm that `0xB0` is resent after each join.
+- Session-name capture from the selected server-list row: confirm it in a live LAN join, and confirm that the row's +120 name matches the `0xB0` name.
 - Gear and inventory fields (playerInfo +4 / +2328).
