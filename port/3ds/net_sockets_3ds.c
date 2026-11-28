@@ -19,6 +19,7 @@
  * BSD socket symbols are called directly without macro remapping.
  */
 #include "platform_3ds.h"
+#include "playtest_hook_3ds.h"
 
 #include <3ds.h>
 #include <arpa/inet.h>
@@ -288,6 +289,20 @@ bool nox_3ds_soc_ensure_ready(void)
     soc_unlock();
     return ok;
 }
+
+#ifdef NOX_PLAYTEST_HOOK
+/* Playtest hook only (port/3ds/playtest_hook_3ds.c): socInit regardless of
+ * net mode so Solo sessions can publish state. Never compiled in release. */
+bool nox_3ds_soc_ensure_ready_any_mode(void)
+{
+    if (__atomic_load_n(&g_soc_inited, __ATOMIC_ACQUIRE))
+        return true;
+    soc_lock();
+    bool ok = soc_ensure_init_locked();
+    soc_unlock();
+    return ok;
+}
+#endif
 
 bool nox_3ds_soc_resolve_ipv4(const char *hostname, uint32_t *out_ip_be)
 {

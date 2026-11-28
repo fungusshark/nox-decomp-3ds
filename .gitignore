@@ -10,6 +10,7 @@ CTestTestfile.cmake
 releases
 build/
 build-3ds/
+build-3ds-hook/
 build-linux/
 .idea/
 build-i386/

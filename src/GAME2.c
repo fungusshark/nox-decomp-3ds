@@ -1,4 +1,7 @@
 #include "proto.h"
+#ifdef __3DS__
+#include "playtest_hook_3ds.h" /* nox_pt_note_server_name(): no-op inline unless NOX_PLAYTEST_HOOK */
+#endif
 
 BYTE *npc_array;
 
@@ -52315,6 +52318,9 @@ LABEL_1099:
           uint32_t b0_f3 = nox_read_u32(v3 + 45);
           v37 = sub_416590(0);
           strncpy(v37 + 9, (const char *)(v3 + 1), 0xFu);
+#ifdef __3DS__
+          nox_pt_note_server_name(v37 + 9);
+#endif
           if ( memcmp(&byte_5D4594[1200732], (const void *)(v3 + 17), 0x14u) )
             *(_DWORD *)&byte_5D4594[1200768] = 1;
           if ( *(_DWORD *)&byte_5D4594[1200752] != (int)b0_f1
